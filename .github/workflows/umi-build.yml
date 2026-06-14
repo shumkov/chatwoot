@@ -5,6 +5,7 @@ on:
   push:
     branches: ["umi"]
     tags: ["umi-v*"]
+    paths-ignore: ["**.md"]
   workflow_dispatch:
 
 permissions:
