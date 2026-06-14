@@ -4,11 +4,15 @@ import { mapGetters } from 'vuex';
 import { useRouter } from 'vue-router';
 import configMixin from 'widget/mixins/configMixin';
 import ArticleContainer from '../components/pageComponents/Home/Article/ArticleContainer.vue';
+import UmiInboxLinks from '../components/pageComponents/Home/UmiInboxLinks.vue';
+import UmiHomeComposer from '../components/pageComponents/Home/UmiHomeComposer.vue';
 export default {
   name: 'Home',
   components: {
     ArticleContainer,
     TeamAvailability,
+    UmiInboxLinks,
+    UmiHomeComposer,
   },
   mixins: [configMixin],
   setup() {
@@ -43,5 +47,9 @@ export default {
     />
 
     <ArticleContainer />
+
+    <!-- UMI: messenger links + type-to-chat composer (see UMI-PATCHES.md) -->
+    <UmiInboxLinks />
+    <UmiHomeComposer />
   </div>
 </template>
