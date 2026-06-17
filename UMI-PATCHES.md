@@ -7,7 +7,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 |---|---|---|---|---|
 | 1 | Facebook Graph API v21 + HUMAN_AGENT tag | `config/initializers/zz_umi_facebook_fix.rb` | Bundled `facebook-messenger` gem pins removed Graph API **v3.2** → outbound FB fails; Chatwoot also sends the deprecated **`ACCOUNT_UPDATE`** tag (Meta subcode 1893061). Repins v21.0 + switches to `HUMAN_AGENT`. | Upstream bumps the gem's Graph version AND replaces the ACCOUNT_UPDATE tag. |
 | 2 | Widget home: composer + messenger links | `app/javascript/widget/views/Home.vue`, `app/javascript/widget/components/pageComponents/Home/UmiHomeComposer.vue`, `app/javascript/widget/components/pageComponents/Home/UmiInboxLinks.vue` | Make the widget home a self-contained assistant: a **type-to-chat composer** (start the chat by typing — skips the "Start conversation" step) and **quick links to WhatsApp / LINE / Messenger / Instagram**, alongside the existing Help Center articles. Lets the storefront "Assistance" button open the widget directly so the custom theme drawer can be retired. | **Frontend core edit — keep** while the storefront relies on it (UMI product behaviour). Re-check `Home.vue` and the `conversation/sendMessage` action on each rebase. |
-| 3 | Help Center → Shopify "help" blog sync | `config/initializers/zz_umi_shopify_help_center.rb`, `app/models/concerns/umi/shopify_help_center_syncable.rb`, `app/jobs/shopify/help_center_sync_job.rb`, `app/services/shopify/help_center_sync_service.rb` | Mirror Chatwoot Help Center articles to the storefront so the FAQ is server-rendered + SEO-indexed at `/blogs/help/<article>`. Reuses the **existing Shopify integration token** (Integrations::Hook `app_id:"shopify"`) — adds `read_content`/`write_content` to its OAuth scopes. Chatwoot stays the source of truth. | A native Chatwoot ↔ Shopify content sync ships upstream, or UMI stops mirroring the FAQ to the storefront. |
+| 3 | Help Center → Shopify "help" blog sync | `umi/app/services/shopify/help_center_sync_service.rb`, `umi/app/jobs/shopify/help_center_sync_job.rb`, `umi/app/models/shopify_help_center_syncable.rb`, `config/initializers/zz_umi_shopify_help_center.rb`, `lib/tasks/umi_help_center.rake`, `spec/services/umi/shopify/help_center_sync_service_spec.rb`; **core edit:** `config/application.rb` (wires the `umi/` overlay under the `Umi::` namespace via `push_dir`); docs: `UMI-SHOPIFY-HELP-CENTER-SPEC.md`, `UMI-SHOPIFY-HELP-CENTER-REVIEW.md` | Mirror Chatwoot Help Center articles to the storefront so the FAQ is server-rendered + SEO-indexed at `/blogs/help/<article>`. Reuses the **existing Shopify integration token** (Integrations::Hook `app_id:"shopify"`) — adds `read_content`/`write_content` + `read_online_store_navigation`/`write_online_store_navigation` to its OAuth scopes. Chatwoot stays the source of truth. | A native Chatwoot ↔ Shopify content sync ships upstream, or UMI stops mirroring the FAQ to the storefront. |
 
 ## Patch details
 
@@ -44,33 +44,48 @@ portal to the inbox to populate them.
 
 Rebase-safe initializer (`zz_umi_shopify_help_center.rb`) that, at boot:
 
-1. Adds `read_content` + `write_content` to
-   `Shopify::IntegrationHelper::REQUIRED_SCOPES` (reassigns the frozen constant —
-   no edit to the helper file), so the **existing** Shopify OAuth token can write
-   blog content. **Requires a one-time reconnect** of the Shopify integration to
-   grant the new scopes.
+1. Adds `read_content` + `write_content` + `read_online_store_navigation` +
+   `write_online_store_navigation` to `Shopify::IntegrationHelper::REQUIRED_SCOPES`
+   (reassigns the frozen constant — no edit to the helper file), so the
+   **existing** Shopify OAuth token can write blog content and URL redirects.
+   **Requires a one-time reconnect** of the Shopify integration to grant the new
+   scopes. The reassign is guarded: if upstream renames the constant or changes it
+   from an Array, the patch no-ops and logs loudly. Upstream value as of v4.14.2:
+   `%w[read_customers read_orders read_fulfillments]` (re-verify on each rebase).
 2. Includes `Umi::ShopifyHelpCenterSyncable` into `Article` — `after_commit`
-   hooks enqueue `Shopify::HelpCenterSyncJob` on create/update/destroy, but only
-   for the configured portal (`UMI_HC_PORTAL_SLUG`, default `umi-help`).
+   hooks enqueue `Umi::Shopify::HelpCenterSyncJob` on create/update/destroy, but
+   only for the configured portal + locale (`UMI_HC_PORTAL_SLUG` default
+   `umi-help`, `UMI_HC_LOCALE` default `en`).
 
-`Shopify::HelpCenterSyncService` does the work off the save path:
+`Umi::Shopify::HelpCenterSyncService` (namespaced under `Umi::` to avoid colliding
+with a future upstream `Shopify::` content sync) does the work off the save path:
 - builds a `ShopifyAPI::Clients::Rest::Admin` from the account's
   `Integrations::Hook` (same pattern as the orders sidebar), API `2025-01`;
 - renders the body with **`ChatwootMarkdownRenderer#render_article`** so the
   storefront HTML matches the portal exactly;
 - upserts the article into the `help` blog, matched idempotently by the
-  `custom.chatwoot_id` metafield (also sets `chatwoot_slug`,
+  `custom.chatwoot_id` metafield, falling back to handle match so a dropped or
+  unavailable metafield can't duplicate (also sets `chatwoot_slug`,
   `chatwoot_category_slug`, `chatwoot_position`, and `global.title_tag` /
   `description_tag` for SEO);
 - published → `published:true`; draft/archived → `published:false`;
   destroyed → delete + a `301` from `/blogs/help/<slug>` to
-  `UMI_HC_DELETE_REDIRECT` (default `/pages/help`); slug rename → `301` old→new.
+  `UMI_HC_DELETE_REDIRECT` (default `/pages/help`); slug rename → `301` old→new
+  (only while published — never 301s to a draft handle);
+- transient Shopify errors (429/5xx) re-raise so Sidekiq retries; permanent 4xx
+  (incl. a duplicate-handle 409) are reported once and skipped, not retried forever.
 
 If the Shopify hook is absent or lacks `write_content`, the sync no-ops with a
 single log line (so it's inert until the integration is reconnected).
 
-Config (all optional): `UMI_HC_PORTAL_SLUG`, `UMI_HC_BLOG_HANDLE` (default
-`help`), `UMI_HC_BLOG_TITLE`, `UMI_HC_ARTICLE_AUTHOR`, `UMI_HC_DELETE_REDIRECT`.
+The full design, the multi-reviewer findings, and the remaining open items /
+accepted MVP limitations (per-edit N+1 metafield scan, 250-article lookup cap,
+category-rename/portal-move propagation) live in `UMI-SHOPIFY-HELP-CENTER-SPEC.md`
+and `UMI-SHOPIFY-HELP-CENTER-REVIEW.md`.
+
+Config (all optional): `UMI_HC_PORTAL_SLUG`, `UMI_HC_LOCALE`, `UMI_HC_BLOG_HANDLE`
+(default `help`), `UMI_HC_BLOG_TITLE`, `UMI_HC_ARTICLE_AUTHOR`,
+`UMI_HC_DELETE_REDIRECT`, `UMI_HC_BACKFILL_SPACING_SECONDS` (default `3`).
 
 <!-- Add new patches here as commits, newest last. -->
 

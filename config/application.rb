@@ -48,6 +48,14 @@ module Chatwoot
     # Add enterprise views to the view paths
     config.paths['app/views'].unshift('enterprise/app/views')
 
+    # UMI fork overlay: autoload umi/app/* under the Umi:: namespace (mirrors the
+    # enterprise/ overlay, but namespaced so constants can't collide with upstream).
+    # e.g. umi/app/services/shopify/x.rb -> Umi::Shopify::X. See CONTRIBUTING-UMI.md.
+    module ::Umi; end
+    Rails.root.join('umi/app').glob('*').each do |umi_dir|
+      Rails.autoloaders.main.push_dir(umi_dir, namespace: Umi) if umi_dir.directory?
+    end
+
     # Load enterprise initializers alongside standard initializers
     enterprise_initializers = Rails.root.join('enterprise/config/initializers')
     Dir[enterprise_initializers.join('**/*.rb')].each { |f| require f } if enterprise_initializers.exist?
