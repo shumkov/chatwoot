@@ -116,3 +116,15 @@ Practical checklist for any change impacting core logic or public APIs
 ## Branding / White-labeling note
 
 - For user-facing strings that currently contain "Chatwoot" but should adapt to branded/self-hosted installs, prefer applying `replaceInstallationName` from `shared/composables/useBranding` in the UI layer (for example tooltip and suggestion labels) instead of adding hardcoded brand-specific copy.
+
+## UMI Fork Conventions
+
+This repo is **UMI's fork of Chatwoot** — a small stack of patches on top of an upstream stable tag (currently `v4.14.2`). Before any non-trivial change, read **`CONTRIBUTING-UMI.md`** (the patch recipe + golden rules), **`UMI-PATCHES.md`** (the patch registry), and **`FORK.md`** (branch/build/deploy model). The rules below are load-bearing — they keep the fork rebasable onto new upstream releases:
+
+- **Prefer an idempotent initializer over editing core files.** A `config/initializers/zz_umi_<name>.rb` that reopens/patches classes at boot survives upstream rebases with zero conflicts. Only edit a core Chatwoot file when an initializer genuinely can't do the job — and guard the patch so it fails loud if upstream changes the thing it depends on.
+- **Put UMI-owned app code in the top-level `umi/` overlay, namespaced under `Umi::`.** New files go in `umi/app/services/…`, `umi/app/jobs/…`, `umi/app/models/…`, `umi/app/controllers/…` (constants `Umi::Foo`, `Umi::Shopify::Bar`) — **not** in `app/`. `config/application.rb` wires the overlay with `Rails.autoloaders.main.push_dir(dir, namespace: Umi)` for each `umi/app/*`, so paths stay flat (no `umi/app/services/umi/` nesting) while constants are namespaced — which avoids colliding with the exact upstream feature a patch may later be replaced by. Concern modules go directly under `umi/app/models/` (an overlay `concerns/` folder is **not** auto-collapsed — it would land under `Umi::Concerns::`). Initializers stay in `config/initializers/zz_umi_*.rb`, rake tasks in `lib/tasks/umi_*.rake`, specs in `spec/`.
+- **One patch = one focused commit, message prefixed `UMI:`.** For UMI patch commits this **overrides** the Conventional Commits preference in "Commit Messages" above. PRs into `umi` may be squash-merged to keep one `UMI:` commit per patch.
+- **Every patch gets a row in `UMI-PATCHES.md`** — what / why / files / *remove-when*. A patch with no remove-when probably belongs upstream, not in the fork.
+- **No secrets in the image.** Config comes from ENV / Chatwoot InstallationConfig, never baked in.
+- **Keep `umi` a clean linear stack** on the base tag — rebase onto new upstream tags (`--force-with-lease`); never merge upstream in.
+- A change can touch **three** trees: OSS (`app/`), the **`enterprise/`** overlay (see Enterprise Edition Notes), and the **`umi/`** overlay (+ `config/initializers/zz_umi_*`) — keep all three compatible.

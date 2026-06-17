@@ -2,10 +2,11 @@
 #
 # Rebase-safe (per CONTRIBUTING-UMI golden rule #1): this initializer reopens
 # Article and extends the Shopify integration scopes at boot instead of editing
-# core files. The actual sync logic lives in autoloaded classes:
-#   app/models/concerns/umi/shopify_help_center_syncable.rb
-#   app/jobs/shopify/help_center_sync_job.rb
-#   app/services/shopify/help_center_sync_service.rb
+# core files. The actual sync logic lives in autoloaded classes in the umi/ overlay
+# (wired under the Umi:: namespace via push_dir in config/application.rb):
+#   umi/app/models/shopify_help_center_syncable.rb       -> Umi::ShopifyHelpCenterSyncable
+#   umi/app/jobs/shopify/help_center_sync_job.rb         -> Umi::Shopify::HelpCenterSyncJob
+#   umi/app/services/shopify/help_center_sync_service.rb -> Umi::Shopify::HelpCenterSyncService
 #
 # Source of truth is Chatwoot; Shopify is a read-only mirror. The article body
 # is rendered with Chatwoot's own ChatwootMarkdownRenderer#render_article so the
@@ -18,23 +19,40 @@
 #   UMI_HC_ARTICLE_AUTHOR   (default "UMI")
 #   UMI_HC_DELETE_REDIRECT  (default "/pages/help")
 #
-# Requires the Shopify integration to be (re-)connected with read_content +
-# write_content scopes (added below). Without write_content the sync no-ops and
-# logs a one-line notice.
+# Requires the Shopify integration to be (re-)connected with the scopes added
+# below. Without write_content the sync no-ops and logs a one-line notice.
+#
+# Scopes added:
+#   read_content / write_content                 -> blog + article read/write
+#   read_online_store_navigation /               -> URL redirects (the 301s on
+#   write_online_store_navigation                   rename and delete)
+# Shopify's docs disagree on whether redirects fall under "content" or
+# "online_store_navigation"; both are requested so the 301s work regardless.
 Rails.application.config.to_prepare do
-  # 1) Expand the Shopify OAuth scopes so the stored token can write blog content.
+  # 1) Expand the Shopify OAuth scopes so the stored token can write blog content
+  #    and URL redirects.
+  #
+  # Upstream value as of v4.14.2 (app/helpers/shopify/integration_helper.rb):
+  #   %w[read_customers read_orders read_fulfillments]
+  # If upstream renames REQUIRED_SCOPES or changes it from an Array, this patch
+  # no-ops and logs loudly instead of silently degrading — re-reconcile on rebase.
   if defined?(Shopify::IntegrationHelper)
-    desired = %w[read_content write_content]
     current = Shopify::IntegrationHelper::REQUIRED_SCOPES
-    unless desired.all? { |scope| current.include?(scope) }
-      merged = (current + desired).uniq.freeze
-      Shopify::IntegrationHelper.send(:remove_const, :REQUIRED_SCOPES)
-      Shopify::IntegrationHelper.const_set(:REQUIRED_SCOPES, merged)
+    if current.is_a?(Array)
+      desired = %w[read_content write_content read_online_store_navigation write_online_store_navigation]
+      unless desired.all? { |scope| current.include?(scope) }
+        merged = (current + desired).uniq.freeze
+        Shopify::IntegrationHelper.send(:remove_const, :REQUIRED_SCOPES)
+        Shopify::IntegrationHelper.const_set(:REQUIRED_SCOPES, merged)
+      end
+    else
+      Rails.logger.error('[umi-hc-sync] Shopify::IntegrationHelper::REQUIRED_SCOPES is not an Array — ' \
+                         'upstream changed its shape; UMI scope patch skipped. Reconcile zz_umi_shopify_help_center.rb.')
     end
+  else
+    Rails.logger.error('[umi-hc-sync] Shopify::IntegrationHelper is undefined — upstream moved/renamed it; UMI scope patch skipped.')
   end
 
   # 2) Mirror article lifecycle (create/update/destroy) to Shopify.
-  if defined?(Article) && !Article.include?(Umi::ShopifyHelpCenterSyncable)
-    Article.include(Umi::ShopifyHelpCenterSyncable)
-  end
+  Article.include(Umi::ShopifyHelpCenterSyncable) if defined?(Article) && Article.ancestors.exclude?(Umi::ShopifyHelpCenterSyncable)
 end
