@@ -105,18 +105,14 @@ const startWhatsappCall = async () => {
 const startTwilioCall = async () => {
   if (contactsUiFlags.value?.isInitiatingCall) return;
   try {
-    const response = await store.dispatch('contacts/initiateCall', {
+    await store.dispatch('contacts/initiateCall', {
       contactId: props.chat?.meta?.sender?.id,
       inboxId: props.inbox?.id,
       conversationId: props.chat.id,
     });
-
-    callsStore.addCall({
-      callSid: response?.call_sid,
-      conversationId: response?.conversation_id ?? props.chat.id,
-      inboxId: props.inbox?.id,
-      callDirection: VOICE_CALL_DIRECTION.OUTBOUND,
-    });
+    // UMI: agents answer on their external SIP softphone (Groundwire); surface a toast
+    // instead of joining an in-browser Twilio Device.
+    useAlert(t('CONVERSATION.HEADER.VOICE_CALL_INITIATED'));
   } catch (error) {
     useAlert(error?.message || t('CONVERSATION.HEADER.VOICE_CALL_FAILED'));
   }
