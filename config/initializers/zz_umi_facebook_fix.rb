@@ -1,49 +1,25 @@
-# Managed by Ansible. Mounted into the Chatwoot rails + sidekiq containers at
-# /app/config/initializers/zz_fb_api_version.rb.
-#
-# Fixes two Facebook Messenger defaults broken in Chatwoot for new Meta apps:
-#  1) bundled facebook-messenger gem hardcodes the removed Graph API v3.2 -> v21.0
-#  2) outbound replies use the deprecated 'ACCOUNT_UPDATE' message tag (Meta
-#     subcode 1893061) -> 'HUMAN_AGENT' (correct 7-day human-agent window)
+# UMI patch. Fixes two Facebook Messenger defaults broken in Chatwoot for new Meta apps:
+#  1) the bundled facebook-messenger gem hardcodes the removed Graph API v3.2 -> v21.0
+#  2) outbound replies should use the 'HUMAN_AGENT' message tag (Meta's 7-day
+#     human-agent window) rather than the default 'RESPONSE'. Chatwoot's OSS service
+#     already implements this behind ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT
+#     (Facebook::SendOnFacebookService#merge_human_agent_tag, and the Instagram
+#     equivalent) — so we just turn the flag on instead of overriding the service.
+#     Skipped in test so the upstream default-RESPONSE specs are unaffected.
+ENV['ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT'] ||= 'true' unless Rails.env.test?
+
 Rails.application.config.after_initialize do
-  if defined?(Facebook::Messenger)
-    graph = 'https://graph.facebook.com/v21.0/me'
-    [Facebook::Messenger::Bot,
-     Facebook::Messenger::Profile,
-     Facebook::Messenger::Subscriptions].each do |klass|
-      opts = klass.instance_variable_get(:@default_options) || {}
-      opts[:base_uri] = graph
-      klass.instance_variable_set(:@default_options, opts)
-    end
-    Rails.logger.info("[fb-api-version] facebook-messenger base_uri pinned to #{graph}")
-  end
+  # Don't repoint FB URLs under test — the suite stubs the gem's default base_uri.
+  next if Rails.env.test?
+  next unless defined?(Facebook::Messenger)
 
-  if defined?(Facebook::SendOnFacebookService)
-    module FacebookSendTagFix
-      def fb_text_message_params
-        {
-          recipient: { id: contact.get_source_id(inbox.id) },
-          message: fb_text_message_payload,
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT'
-        }
-      end
-
-      def fb_attachment_message_params(attachment)
-        {
-          recipient: { id: contact.get_source_id(inbox.id) },
-          message: {
-            attachment: {
-              type: attachment_type(attachment),
-              payload: { url: attachment.download_url }
-            }
-          },
-          messaging_type: 'MESSAGE_TAG',
-          tag: 'HUMAN_AGENT'
-        }
-      end
-    end
-    Facebook::SendOnFacebookService.prepend(FacebookSendTagFix)
-    Rails.logger.info('[fb-api-version] SendOnFacebookService patched: ACCOUNT_UPDATE -> HUMAN_AGENT')
+  graph = 'https://graph.facebook.com/v21.0/me'
+  [Facebook::Messenger::Bot,
+   Facebook::Messenger::Profile,
+   Facebook::Messenger::Subscriptions].each do |klass|
+    opts = klass.instance_variable_get(:@default_options) || {}
+    opts[:base_uri] = graph
+    klass.instance_variable_set(:@default_options, opts)
   end
+  Rails.logger.info("[fb-api-version] facebook-messenger base_uri pinned to #{graph}")
 end
