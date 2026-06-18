@@ -5,7 +5,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | # | Patch | Files | Why | Remove when |
 |---|---|---|---|---|
-| 1 | Facebook Graph API v21 + HUMAN_AGENT tag | `config/initializers/zz_umi_facebook_fix.rb` | Bundled `facebook-messenger` gem pins removed Graph API **v3.2** → outbound FB fails; Chatwoot also sends the deprecated **`ACCOUNT_UPDATE`** tag (Meta subcode 1893061). Repins v21.0 + switches to `HUMAN_AGENT`. | Upstream bumps the gem's Graph version AND replaces the ACCOUNT_UPDATE tag. |
+| 1 | Facebook Graph API v21 + HUMAN_AGENT tag | `config/initializers/zz_umi_facebook_fix.rb` | Bundled `facebook-messenger` gem pins removed Graph API **v3.2** → outbound FB fails. Repins v21.0, and enables Chatwoot's built-in `ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT` (so replies use the 7-day `HUMAN_AGENT` window) instead of the default `RESPONSE` — via the flag, not a service override. | Upstream bumps the gem's Graph version (the HUMAN_AGENT part is just config — drop by unsetting the flag). |
 | 2 | Widget home: composer + messenger links | `app/javascript/widget/views/Home.vue`, `app/javascript/widget/components/pageComponents/Home/UmiHomeComposer.vue`, `app/javascript/widget/components/pageComponents/Home/UmiInboxLinks.vue` | Make the widget home a self-contained assistant: a **type-to-chat composer** (start the chat by typing — skips the "Start conversation" step) and **quick links to WhatsApp / LINE / Messenger / Instagram**, alongside the existing Help Center articles. Lets the storefront "Assistance" button open the widget directly so the custom theme drawer can be retired. | **Frontend core edit — keep** while the storefront relies on it (UMI product behaviour). Re-check `Home.vue` and the `conversation/sendMessage` action on each rebase. |
 | 3 | Help Center → Shopify "help" blog sync | `umi/app/services/shopify/help_center_sync_service.rb`, `umi/app/jobs/shopify/help_center_sync_job.rb`, `umi/app/models/shopify_help_center_syncable.rb`, `config/initializers/zz_umi_shopify_help_center.rb`, `lib/tasks/umi_help_center.rake`, `spec/services/umi/shopify/help_center_sync_service_spec.rb`; **core edit:** `config/application.rb` (wires the `umi/` overlay under the `Umi::` namespace via `push_dir`); docs: `UMI-SHOPIFY-HELP-CENTER-SPEC.md`, `UMI-SHOPIFY-HELP-CENTER-REVIEW.md` | Mirror Chatwoot Help Center articles to the storefront so the FAQ is server-rendered + SEO-indexed at `/blogs/help/<article>`. Reuses the **existing Shopify integration token** (Integrations::Hook `app_id:"shopify"`) — adds `read_content`/`write_content` + `read_online_store_navigation`/`write_online_store_navigation` to its OAuth scopes. Chatwoot stays the source of truth. | A native Chatwoot ↔ Shopify content sync ships upstream, or UMI stops mirroring the FAQ to the storefront. |
 
@@ -14,10 +14,12 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
 Idempotent initializer (safe even if upstream fixes it): re-pins
 `Facebook::Messenger::{Bot,Profile,Subscriptions}` base_uri to
-`graph.facebook.com/v21.0/me` and prepends a module on
-`Facebook::SendOnFacebookService` swapping the `ACCOUNT_UPDATE` message tag for
-`HUMAN_AGENT`. Mirrors the runtime patch previously mounted by `umi-vps-infra`;
-baking it into the image lets us drop that mount.
+`graph.facebook.com/v21.0/me`, and turns on Chatwoot's built-in
+`ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT` (`ENV[...] ||= 'true'`, skipped in test) so
+`Facebook::SendOnFacebookService#merge_human_agent_tag` (and the Instagram
+equivalent) sends the `HUMAN_AGENT` tag. This replaces an earlier `prepend` that
+hardcoded the tag — using the flag keeps the upstream default-`RESPONSE` specs
+green and is one fewer service override to maintain on rebase.
 
 ### 2. Widget home: composer + messenger links
 
