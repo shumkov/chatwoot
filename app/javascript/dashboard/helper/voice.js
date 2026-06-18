@@ -17,6 +17,12 @@ export const TERMINAL_STATUSES = [
   'ended',
 ];
 
+// UMI: this fork answers calls on an external SIP softphone (Groundwire), not an in-browser
+// Twilio Device. Calls still log as voice_call messages (and the bubble status updates), but we
+// suppress the in-browser FloatingCallWidget / Voice SDK by not populating the calls store.
+// Flip to false to restore the upstream in-browser calling widget.
+const UMI_EXTERNAL_SOFTPHONE = true;
+
 export const isInbound = direction => direction === 'inbound';
 
 const isVoiceCallMessage = message => {
@@ -129,6 +135,7 @@ export function handleVoiceCallCreated(
   }
 
   if (!shouldRingInbound(callDirection, currentUserAvailability)) return;
+  if (UMI_EXTERNAL_SOFTPHONE) return;
 
   const callsStore = useCallsStore();
   callsStore.addCall({
@@ -172,6 +179,9 @@ export function handleVoiceCallUpdated(
     callStatus: status,
     callSid,
   });
+
+  // UMI: bubble/call-log status is updated above; skip the in-browser widget (external softphone).
+  if (UMI_EXTERNAL_SOFTPHONE) return;
 
   if (
     !shouldShowCall({
