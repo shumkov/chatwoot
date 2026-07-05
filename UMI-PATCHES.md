@@ -151,10 +151,12 @@ An alternative signed-link trigger (`GET/POST /umi/voice/dial/:token`, `mobile_d
 (e.g. a link inside a message) rather than copy them.
 
 **Number onboarding helper** (`otp_capture`): a phoneless Twilio number can't receive a normal
-verification call, so `POST /umi/voice/:phone/otp_capture` answers + `<Record transcribe>`s the
-caller. Point a number's Twilio **Voice URL** here temporarily while registering it on a provider
-that delivers the OTP by voice (e.g. Meta/WhatsApp Cloud API), read the transcript, then revert the
-Voice URL to `incoming`. Signature-validated like the other webhooks.
+verification call, so `POST /umi/voice/:phone/otp_capture` bridges a provider's voice OTP to a
+human. With `?to=+E164` it forwards to a real phone with **answerOnBridge** (the provider waits for
+the human to answer before reading, so the full code is heard — and a human answer avoids the
+machine-answer errors some providers return); with no `to` it falls back to `<Record transcribe>`.
+Point a number's Twilio **Voice URL** here while registering it on a provider that delivers the OTP
+by voice (e.g. Meta/WhatsApp Cloud API), then revert the Voice URL to `incoming`. Signature-validated.
 
 **Still WIP** (next): hide the `voice_call` bubble's Join/Call-back buttons for the external-softphone
 model; optionally ring the whole on-duty group (conference) on tap-to-call instead of just the
