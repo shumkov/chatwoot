@@ -14,23 +14,27 @@ number). Companion docs: `CALLS_BACKEND_SPEC.md` (voice design + spike results) 
 
 | Channel | Mechanism | Status | The catch |
 |---|---|---|---|
-| **Voice calls** (PSTN in/out) | umi voice backend → Twilio SIP Domain → Groundwire | ✅ built (PR #3) | needs live Twilio number + deploy + per-agent SIP creds |
+| **Voice calls** (PSTN in/out) | umi voice backend → Twilio SIP Domain → Groundwire | ✅ live (inbound + outbound tested) | per-agent SIP creds provisioned |
 | **Mobile click-to-call** | "📞 Call contact" macro → `/umi/voice/macro_dial` | ✅ built (PR #3) | macro created post-deploy via rake |
-| **WhatsApp messaging** | Meta **Cloud API** (`whatsapp_cloud`) on +66975311301 → Chatwoot | ⚙️ config | ⛔ Meta sender approval (weeks) |
-| **WhatsApp Business Calling** | Meta-direct **SIP** → **Jambonz** PBX → Groundwire; logs via `pbx/call_event` → `Umi::Call` | 🚧 later phase | ⛔ Business Verification (weeks); needs a PBX |
-| **LINE messenger** | LINE Official Account → `Channel::Line` | ⚙️ config | separate from the number; LINE OA + Messaging API channel |
+| **WhatsApp messaging** | Twilio **WhatsApp Sender** (`Channel::TwilioSms`, `medium: whatsapp`) on +66975311301 → Chatwoot | ✅ live (inbound tested) | Twilio-managed WABA; auto-verified as BSP |
+| **WhatsApp Business Calling** | Twilio **WhatsApp Business Calling** → TwiML App `<Dial><Sip>` → Groundwire (reuses the PSTN voice stack, no PBX) | 🚧 later phase | ⛔ Business Verification + ≥2,000-conv/24h tier |
+| **LINE messenger** | LINE Official Account → `Channel::Line` | 🚧 in progress | separate from the number; LINE OA + Messaging API channel |
 
-**One-number model (+66975311301):** **Twilio** carries **PSTN voice** (Plan A); **Meta Cloud API** carries
-**WhatsApp messaging now + calling later** — same E.164, two independent rails. LINE is its own LINE Official
-Account, unrelated to the number.
+**One-number model (+66975311301):** **Twilio** carries **everything on this number** — PSTN voice *and* WhatsApp
+(messaging now via a Twilio-managed WABA, calling later via Twilio WhatsApp Business Calling). In Chatwoot this
+lands as **two separate inboxes on the one number** — "WhatsApp (+66)" (`Channel::TwilioSms`, `phone_number:
+whatsapp:+66975311301`) and "Voice (+66)" (`Channel::TwilioSms`, plain `+66975311301`) — because the differing
+`phone_number` strings both satisfy the unique index; they can't be merged. A **separate**, pre-existing number
+**+66800053593** runs WhatsApp on **Meta Cloud API direct** (Chatwoot inbox "Whatsapp") — which is why the two
+numbers use different WhatsApp stacks. LINE is its own LINE Official Account, unrelated to the number.
 
 ---
 
 ## 1. What is code vs. configuration
 
 - **Custom-built (this fork):** the **voice backend** (inbound/outbound/recording/macro). Done, tested, in PR #3.
-- **Native Chatwoot config (no code):** **WhatsApp messaging** and **LINE** are standard OSS inbox types — you create them in the Chatwoot UI and point the provider's webhook at Chatwoot. No fork work.
-- **WhatsApp _calling_ (later phase):** see §6. It works via **Meta-direct SIP** (Meta delivers the call to your SIP server — documented, GA, proven), **not** Twilio (Twilio WA calling only reaches a WebRTC client). Needs a small **PBX (Jambonz)** between Meta and Groundwire; logs in Chatwoot via a `pbx/call_event` → `Umi::Call(provider: whatsapp)` bridge that reuses the existing voice machinery. A defined increment, gated on Meta Business Verification.
+- **Native Chatwoot config (no code):** **WhatsApp messaging** (a Twilio WhatsApp Sender → `Channel::TwilioSms` inbox) and **LINE** are standard OSS inbox types — you register the sender / channel with the provider and point its webhook at Chatwoot. No fork work.
+- **WhatsApp _calling_ (later phase):** see §6. Planned via **Twilio WhatsApp Business Calling**: the Twilio sender's Voice Endpoint → a TwiML App that `<Dial><Sip>`s the agent's Groundwire — **reusing the existing PSTN voice `<Dial><Sip>` stack, no PBX**. Gated on Meta Business Verification + the ≥2,000-conv/24h messaging tier.
 
 ---
 
@@ -38,10 +42,9 @@ Account, unrelated to the number.
 
 | Need | Detail | Lead time |
 |---|---|---|
-| **Twilio number** | Voice-capable; on the existing **US1** account. Used for Voice + WhatsApp. | minutes |
-| **Permanent number** | The current number is **temporary** (test only). WhatsApp sender registration is **number-bound** and takes **weeks** — do NOT register WhatsApp on the temp number; wait for the permanent one (see §3, §5). | — |
+| **Twilio number** | Voice-capable; on the existing **US1** account. Carries Voice + WhatsApp (+66975311301). | minutes |
 | **Twilio SIP Domain** | For agents' Groundwire (register on Singapore edge, dial GLOBAL). Per `CALLS_BACKEND_SPEC.md §10`. | minutes |
-| **Meta Business** | Business Portfolio + **Business Verification** (gates WhatsApp volume tier, and thus calling). | **several weeks** |
+| **Meta Business** | Business Portfolio + **Business Verification** — only needed for WhatsApp **calling** (gates the ≥2,000-conv volume tier). WhatsApp **messaging** does NOT need it: the Twilio-managed WABA auto-verifies. | **several weeks** (calling only) |
 | **LINE Official Account** | + a LINE Developers **Messaging API** channel (id/secret/token). | hours–days |
 | **Deployed umi build** | The branch carrying PR #3 (voice backend) — per `FORK.md`. | per deploy |
 
@@ -53,18 +56,13 @@ Account, unrelated to the number.
 
 ## 3. Provision the Twilio number
 
-> **The current number is temporary** — fine for **voice testing** (voice webhooks are reconfigured in
-> minutes when the permanent number lands). But **do not start WhatsApp** on it: WhatsApp sender
-> registration is bound to the specific number and takes **weeks** of Meta verification, which you'd
-> have to redo. Sequence: test voice on the temp number now → register WhatsApp only on the **permanent** number.
-
-1. Buy a **Voice-capable** number on the US1 account; record its SID and E.164.
+1. Buy a **Voice-capable** number on the US1 account; record its SID and E.164. (**+66975311301** is the live number.)
 2. Voice setup (SIP Domain, credential lists, edges, per-agent SIP users) → follow **`CALLS_BACKEND_SPEC.md §10` + `§14.7`** (the validated build recipe). Don't re-derive here.
-3. Leave WhatsApp registration for §5 — and only on the **permanent** number.
+3. WhatsApp registration is §5 — on the **same** number via a Twilio WhatsApp Sender (near-instant, auto-verified).
 
 ---
 
-## 4. Channel — Voice calls  ✅ (built; deploy + wire)
+## 4. Channel — Voice calls  ✅ (live — inbound + outbound tested)
 
 1. **Deploy** the umi image carrying PR #3 (`FORK.md`: merge → tag `umi-vX.Y.Z-N` → CI builds GHCR image → bump `chatwoot_version` in `umi-vps-infra` → `pg_dump` → deploy).
 2. **Env** on the deploy: `UMI_VOICE_SIP_DOMAIN`, `FRONTEND_URL` (public base, used to build webhook + macro URLs), per-agent SIP creds `agent-<user_id>`, optionally `UMI_VOICE_RECORDING=true`.
@@ -79,77 +77,73 @@ Account, unrelated to the number.
 
 ---
 
-## 5. Channel — WhatsApp messaging (same number, via Meta Cloud API)  ⚙️ + ⛔
+## 5. Channel — WhatsApp messaging (same number, via a Twilio WhatsApp Sender)  ✅ (live — inbound tested)
 
-> **Use Meta Cloud API, not the Twilio WhatsApp sender.** Reason: WhatsApp *calling* later (§6) needs us to own
-> the Cloud-API `calling.sip.servers` setting, which a Twilio-managed sender doesn't expose — and a number can
-> only live on one WhatsApp account. You already operate a Meta app (`2163627007746338`) + a Cloud-API WhatsApp
-> inbox, so this is the natural home. The Twilio number still does PSTN voice; WhatsApp rides Meta's data plane on
-> the same E.164.
+> **Registered via Twilio WhatsApp Senders, not Meta Cloud API direct.** Because the number lives on Twilio, the
+> cleanest path is to let **Twilio** be the BSP: Console → **Messaging → Senders → WhatsApp senders** → add a
+> sender → **"Continue with Facebook"** self-sign-up, which creates a **new Twilio-managed WABA** for the number.
+> Since Twilio owns +66975311301, the sender **auto-verifies** — Twilio catches the OTP as the BSP and shows the
+> code in the Console; **no manual OTP chase**. (The separate number **+66800053593** predates this and runs on
+> **Meta Cloud API direct** — Chatwoot inbox "Whatsapp" — which is why the two numbers use different WhatsApp stacks.)
 
-1. **Register +66975311301 on your WABA via Meta Cloud API** (Meta Business / WhatsApp Manager, under your existing
-   app): add the number → verify ownership via **OTP** (SMS or voice — sent to the number; mind interception, prefer
-   voice-OTP) → submit **display name** → complete **Meta Business Verification**. *(Wizard minutes; verification **weeks**.)*
-   Collect `phone_number_id`, `business_account_id` (WABA ID), and a **permanent access token**.
-2. **Create the Chatwoot inbox:** Settings → Inboxes → Add → **WhatsApp** → **WhatsApp Cloud** (manual). Enter
-   `name`, `phone_number` (E.164), `phone_number_id`, `business_account_id`, `api_key` (permanent token). Chatwoot
-   auto-generates the `webhook_verify_token` and auto-registers the webhook at Meta.
-3. **Webhook** (Chatwoot configures this for `whatsapp_cloud`; verify in Meta if needed):
-   - `GET/POST https://chat.umi.store/webhooks/whatsapp/66975311301`
+1. **Register the sender** (Twilio Console → Messaging → Senders → WhatsApp senders → "Continue with Facebook").
+   Twilio provisions the Twilio-managed WABA and auto-verifies the number. Set the sender's **profile** — name,
+   description, email, website — in the Twilio Console sender form. *(about text, profile photo, and vertical are set
+   on the Meta side in **WhatsApp Manager**; Twilio doesn't mirror those.)*
+2. Set the sender's **"Webhook URL for incoming messages"** → `https://chat.umi.store/twilio/callback`.
+3. **Create the Chatwoot inbox:** this is a **`Channel::TwilioSms`** inbox with **`phone_number = whatsapp:+66975311301`**
+   (WITH the `whatsapp:` prefix — the incoming lookup `find_by(phone_number: params[:To])` and the send
+   `from: phone_number` both use it verbatim) and **`medium: whatsapp`**. Because this string differs from the plain
+   `+66975311301` of the Voice channel, the **unique `phone_number` index allows both** → you end up with **two
+   separate inboxes on one number** ("WhatsApp (+66)" + "Voice (+66)"); they can't be merged.
 4. **Add agents** to the inbox; configure assignment/routing as usual.
 
-**Verify:** a WhatsApp message to the number creates or appends a conversation; agent reply delivers; 24-hour session-window + template rules apply.
+**Verify:** ✅ tested — a WhatsApp message to +66975311301 created a conversation in Chatwoot; the 24-hour
+session-window + template rules apply as normal for Twilio WhatsApp.
 
 ---
 
-## 6. Channel — WhatsApp Business Calling  🚧 (later phase — Meta-direct SIP + PBX; the proven path)
+## 6. Channel — WhatsApp Business Calling  🚧 (later phase — Twilio WhatsApp Business Calling, no PBX)
 
-**WhatsApp calling on a softphone IS achievable — via Meta's own Cloud API SIP delivery, not Twilio.**
-- **Twilio's** WhatsApp Business Calling only terminates to a WebRTC/Voice-SDK `<Client>` (Flex/IVR); it rejects
-  WA→PSTN and is silent on `<Dial><Sip>`. → **not our path.**
-- **Meta-direct SIP** — documented, GA (Jul 2025), proven by practitioners with real Asterisk/FreeSWITCH/Jambonz
-  configs: Meta originates the inbound call straight to *your* SIP server (TLS:5061, Opus + SRTP, tagged
-  `X-FB-External-Domain: wa.meta.vc`). → **this is the path**, and it rings Groundwire through a PBX.
+**Plan changed** from the earlier "Meta-native SIP → Jambonz PBX" idea to **Twilio WhatsApp Business Calling**,
+because the number is a Twilio-managed WhatsApp sender: WhatsApp calls arrive at Twilio and route into
+**Programmable Voice**, so we reuse the PSTN voice stack instead of standing up a PBX.
 
 **Architecture:**
 ```
-WhatsApp call → Meta Cloud API (calling.sip.servers) → Jambonz PBX (Opus+SRTP) → Groundwire (agent)
-                                                        └─ webhook → POST /umi/voice/pbx/call_event
-                                                           → Umi::Call(provider: whatsapp) + voice_call
-                                                           → Chatwoot screen-pop + call log
+WhatsApp call → Twilio sender Voice Endpoint → TwiML App → <Dial><Sip> → Groundwire (agent)
+              → the same umi voice callbacks log Umi::Call(provider: whatsapp) + voice_call → Chatwoot screen-pop
 ```
-- **PBX = Jambonz (recommended):** webhook-native like Twilio, so call control + the event→Chatwoot logging map
-  ~1:1 onto the existing umi backend, keeping Chatwoot *in the loop* (logging, even click-to-call). Asterisk /
-  FreeSWITCH work too but need AMI/ARI/dialplan glue and only let Chatwoot *observe*.
-- **Same Groundwire** rings for both PSTN (Twilio SIP Domain) and WhatsApp (the PBX) — Groundwire speaks Opus+SRTP.
-- **Logging = identical to PSTN, different event source.** New code: the `pbx/call_event` endpoint (shared-secret)
-  + generalize `Umi::Voice::InboundCallBuilder` to accept the WhatsApp Cloud inbox; **reuse** `Umi::Call` (the
-  `whatsapp` provider enum already exists), `CallMessageBuilder`, `CallStatus::Manager`, and contact-by-E.164 match.
+- **No PBX.** The Twilio sender's **Voice Endpoint** → "Connect to a **TwiML Application**" → a TwiML app whose
+  webhook returns the same `<Dial><Sip>sip:agent@…</Sip>` used for PSTN voice, ringing the agent's Groundwire.
+- **Same Groundwire, same backend.** This reuses the existing PSTN voice `<Dial><Sip>` machinery, contact-by-E.164
+  match, `Umi::Call` (the `whatsapp` provider enum already exists), and the call-log/screen-pop path.
+
+**Why not Meta-native SIP → your own PBX:** it remains a theoretical alternative, but it's **mutually exclusive**
+with the webhook/Graph (BSP) mode the number is already in, is **undocumented for BSP-registered numbers**, and
+needs a **PBX** — so we chose the Twilio path.
 
 **Requirements / gates:**
-- WhatsApp on **Meta Cloud API** (`whatsapp_cloud`, §5) — NOT a Twilio sender (Cloud API owns the calling settings).
-- Enable: `POST /{phone_number_id}/settings` → `calling: { status: ENABLED, sip: { status: ENABLED, servers:[{hostname, port:5061}] }}`;
-  retrieve SIP creds with `?fields=calling&include_sip_credentials=true`. SDES- or DTLS-SRTP; **Opus only** (Meta
-  does **not** transcode — the PBX must speak Opus+SRTP).
-- TLS cert on the PBX SIP host; identify inbound by header `X-FB-External-Domain: wa.meta.vc`; `rewrite_contact=no`
-  (a documented practitioner footgun).
-- **≥ 2,000-conv tier → Meta Business Verification (weeks)**; business-initiated WA calls excluded in
-  US/Canada/Egypt/Nigeria/Türkiye/Vietnam (**Thailand is clear**); `VOICE_CALL_REQUEST` consent for business-initiated.
+- **Meta Business Verification + the ≥2,000-conv/24h messaging tier** (not day-one).
+- Business-initiated WhatsApp calling is excluded in some countries; **Thailand is NOT on the outbound-exclusion list.**
 
 **Build steps (later phase):**
-1. Stand up Jambonz (or Asterisk) with a TLS SIP endpoint + Opus; register agents' Groundwire to it.
-2. Enable WhatsApp calling on the number (the `settings` call above) → point `calling.sip.servers` at the PBX.
-3. **Spike:** place a WhatsApp call → PBX rings Groundwire (two-way audio?) → PBX posts the event → confirm an
-   `Umi::Call` + `voice_call` appears in Chatwoot.
-4. Add the `pbx/call_event` endpoint + generalize the inbound builder; fold into PR / `UMI-PATCHES.md`.
+1. Enable WhatsApp Business Calling on the Twilio sender; point its Voice Endpoint → a TwiML App.
+2. Have the TwiML App webhook return the voice `<Dial><Sip>` (reuse the existing `incoming` TwiML).
+3. **Spike:** place a WhatsApp call → Twilio → TwiML App `<Dial><Sip>` → Groundwire rings (two-way audio?) → confirm
+   an `Umi::Call` + `voice_call` appears in Chatwoot.
 
-> **Meantime (calling not enabled):** there is **no WhatsApp call button** for customers → nothing to handle. Voice
-> is covered by **PSTN** on the same number (Plan A) — customers who want to talk call the number normally, or
-> message. Sources: developers.facebook.com/docs/whatsapp/cloud-api/calling/sip, nimblea.pe, orencloud.com.
+> **One honest caveat to verify live:** Twilio docs confirm WhatsApp calls route into Programmable Voice and
+> **can't bridge to PSTN**, but they don't *explicitly* enumerate `<Sip>` as an allowed bridge target — so confirm
+> the `<Dial><Sip>` bridge with a live test when enabling. **Meantime (calling not enabled):** there is **no
+> WhatsApp call button** for customers → nothing to handle. Voice is covered by **PSTN** on the same number —
+> customers who want to talk call the number normally, or message.
 
 ---
 
-## 7. Channel — LINE messenger  ⚙️ (separate from the number)
+## 7. Channel — LINE messenger  🚧 (in progress — separate from the number)
+
+> **Being set up now** via `Channel::Line` — a LINE Official Account + a Messaging API channel wired to a Chatwoot LINE inbox.
 
 1. Create a **LINE Official Account**, then in the **LINE Developers console** create a **Messaging API**
    channel. Collect: **Channel ID**, **Channel secret**, and a long-lived **Channel access token**.
@@ -170,8 +164,8 @@ WhatsApp call → Meta Cloud API (calling.sip.servers) → Jambonz PBX (Opus+SRT
 - **Voice — outbound (web):** open a contact's conversation → **Call** → your softphone rings → bridges to the contact → logged.
 - **Voice — mobile:** in the iOS/Android Chatwoot app, run the **"📞 Call contact"** macro on an assigned conversation → your softphone rings → bridges → logged.
 - **Voice — recording** (if `UMI_VOICE_RECORDING=true`): after a call, the recording attaches to the call/conversation.
-- **WhatsApp messaging:** send a WA message to the number → conversation appears → reply delivers → confirm 24h window / template behavior.
-- **WhatsApp calling** (later phase, §6): place a WhatsApp call → Meta SIP → Jambonz PBX rings Groundwire → PBX posts `pbx/call_event` → an `Umi::Call` + `voice_call` logs in Chatwoot.
+- **WhatsApp messaging** ✅: send a WA message to +66975311301 → conversation appears → reply delivers → confirm 24h window / template behavior. *(Verified — inbound message received.)*
+- **WhatsApp calling** (later phase, §6): place a WhatsApp call → Twilio → TwiML App `<Dial><Sip>` rings Groundwire → an `Umi::Call` + `voice_call` logs in Chatwoot.
 - **LINE:** message the LINE OA → conversation appears → reply delivers → media renders.
 
 ---
@@ -187,30 +181,31 @@ WhatsApp call → Meta Cloud API (calling.sip.servers) → Jambonz PBX (Opus+SRT
 ## 10. Cutover order, rollback, ownership
 
 **Order (don't block fast channels on the slow one):**
-1. Deploy the umi voice build → wire Twilio voice webhooks → create the macro → **test voice** (OK on the temp number). ✅ live.
-2. Register **WhatsApp on +66975311301 via Meta Cloud API** + Meta Business Verification (the multi-week critical path).
-3. Once verified: create the **WhatsApp Cloud** messaging inbox → test → live.
-4. Create the **LINE** inbox (independent; can be done anytime) → test → live.
-5. **WhatsApp calling last** — stand up the Jambonz PBX, enable Meta SIP calling, run the spike, add the `pbx/call_event` bridge.
+1. Deploy the umi voice build → wire Twilio voice webhooks → create the macro → **test voice**. ✅ live (inbound + outbound tested).
+2. Register the **Twilio WhatsApp Sender** on +66975311301 (self-sign-up, auto-verified) → create the `Channel::TwilioSms` WhatsApp inbox → test. ✅ live (inbound tested).
+3. Create the **LINE** inbox (independent; in progress) → test → live.
+4. **WhatsApp calling last** — enable Twilio WhatsApp Business Calling, point the sender's Voice Endpoint at a TwiML App that `<Dial><Sip>`s Groundwire, run the spike. Gated on Meta Business Verification + the ≥2,000-conv tier.
 
 **Rollback (per channel):** disable/delete the inbox in Chatwoot and remove the provider-side webhook;
 voice rolls back by reverting the number's Voice webhooks + redeploying the prior image tag.
 
-**Ownership:** deploy + Twilio/Meta/LINE config = ops (you); voice backend + the WhatsApp-calling `pbx/call_event` bridge = this fork.
+**Ownership:** deploy + Twilio/Meta/LINE config = ops (you); voice backend (reused for WhatsApp calling) = this fork.
 
 ---
 
 ## 11. Open decisions & gates (resolve these)
 
-1. **WhatsApp provider — DECIDED: Meta Cloud API** (`whatsapp_cloud`) on +66975311301, not the Twilio sender (§5),
-   so the Cloud-API `calling.sip.servers` setting stays under our control for the calling phase.
-2. **WhatsApp calling — path DECIDED: Meta-direct SIP + Jambonz PBX** (§6), logged via `pbx/call_event` →
-   `Umi::Call`. Open sub-decision: when to schedule the PBX build (defer until messaging is live + verified).
-3. **Callee geography.** Business-initiated WA calls are blocked to US/Canada/Egypt/Nigeria/Türkiye/Vietnam.
-   If your customers are there, WA *calling* won't reach them outbound.
+1. **WhatsApp provider — DECIDED: Twilio WhatsApp Sender** (`Channel::TwilioSms`, `medium: whatsapp`) on
+   +66975311301 (§5). Twilio owns the number, so the sender auto-verifies as BSP and messaging went live near-instantly.
+   (The separate +66800053593 stays on Meta Cloud API direct.)
+2. **WhatsApp calling — path DECIDED: Twilio WhatsApp Business Calling** (§6) — sender Voice Endpoint → TwiML App
+   `<Dial><Sip>` → Groundwire, reusing the PSTN voice stack (no PBX). Open sub-decision: when to schedule it
+   (defer until Business Verification + the ≥2,000-conv tier land). Verify the `<Dial><Sip>` bridge live.
+3. **Callee geography.** Business-initiated WA calls are blocked in some countries; **Thailand is clear.**
+   If your customers are elsewhere-excluded, WA *calling* won't reach them outbound.
 4. **Data residency.** Accept US1 (US) for Twilio-side data, or request **Singapore WABA localization** for
-   WhatsApp content (Meta-side).
-5. **Meta Business Verification owner + timeline.** This is the multi-week critical path for everything WhatsApp.
+   WhatsApp content (Meta-side, via Twilio support).
+5. **Meta Business Verification owner + timeline.** Now only the critical path for WhatsApp **calling** (messaging is already live).
 
 ---
 
@@ -220,8 +215,8 @@ voice rolls back by reverting the number's Voice webhooks + redeploying the prio
 |---|---|
 | Voice (incoming) | `POST {FRONTEND_URL}/umi/voice/<digits>/incoming` |
 | Voice (status) | `POST {FRONTEND_URL}/umi/voice/<digits>/status` |
-| WhatsApp (Cloud API) inbound | `GET/POST {FRONTEND_URL}/webhooks/whatsapp/66975311301` *(Chatwoot auto-registers)* |
-| WhatsApp calling (later) | Meta `calling.sip.servers` → PBX; PBX → `POST {FRONTEND_URL}/umi/voice/pbx/call_event` |
+| WhatsApp (Twilio Sender) inbound | `POST https://chat.umi.store/twilio/callback` *(set on the sender's "Webhook URL for incoming messages")* |
+| WhatsApp calling (later) | Twilio sender Voice Endpoint → TwiML App → `<Dial><Sip>` (the existing voice TwiML) |
 | LINE inbound | `POST {FRONTEND_URL}/webhooks/line/<line_channel_id>` |
 
 `{FRONTEND_URL}` is the public base of the Chatwoot install (same value the voice backend uses to build URLs).

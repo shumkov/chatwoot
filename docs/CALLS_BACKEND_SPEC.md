@@ -87,7 +87,7 @@ Account-scoped under `/api/v1/accounts/:account_id`. Owned (in `umi/`).
 - Reuse the migrated `calls` table + `channel_twilio_sms` voice columns (no new migrations P0–P2). Top-level **`Call`** model in `umi/app/models/call.rb`.
 - `umi/` extension tree wired via `lib/chatwoot_app.rb` (`umi?` + `extensions`), `config/application.rb` (eager-load `umi/app/**`), `config/routes.rb` (our routes, EE voice routes removed). Decorators `Umi::Message`, `Umi::Channel::TwilioSms` auto-prepended via the existing `prepend_mod_with` calls. **Remove the EE voice + EE WhatsApp-Cloud-calling subtrees** (license).
 - **Per-agent SIP credentials** (not shared) — needed for attribution (which agent answered) and per-agent ring sets. Stored/managed per agent (a `umi` model or on the user/inbox); SIP password encrypted.
-- Channel mapping: PSTN = `Channel::TwilioSms` medium `sms`; WhatsApp = `Channel::TwilioSms` medium `whatsapp`; contact-leg address gets `whatsapp:` prefix for WA.
+- Channel mapping: PSTN Voice = `Channel::TwilioSms` medium `sms`, `phone_number: +66975311301`; WhatsApp = `Channel::TwilioSms` medium `whatsapp`, `phone_number: whatsapp:+66975311301` (the `whatsapp:` prefix is stored verbatim — incoming `find_by(phone_number: params[:To])` and outbound `from: phone_number` both rely on it). The two distinct `phone_number` strings both satisfy the unique index → **two separate inboxes on one number**; the contact-leg address also gets the `whatsapp:` prefix for WA.
 
 ---
 
@@ -104,38 +104,39 @@ Account-scoped under `/api/v1/accounts/:account_id`. Owned (in `umi/`).
 - **Deep-link:** Chatwoot shows `groundwire:<contact-e164>?dialAction=autoCall`; tap → Groundwire dials (the contact sees the agent's SIP/registered identity; for a business caller-ID, prefer the bridge variant).
 - **Server-bridge:** `POST contacts/:id/call` → create `Call`(outgoing) + message → (outside the DB txn) `calls.create(to: 'sip:agentN@domain', url: …/outbound_twiml)` → agent's Groundwire rings → on answer, TwiML `<Dial callerId="<business#>"><Number>+E164</Number></Dial>` (PSTN) or `<WhatsApp>+E164</WhatsApp>` (WA) bridges to the contact. Logged + status-tracked.
 
-### 5.3 WhatsApp specifics — calling goes Meta-direct SIP, not Twilio (corrected 2026-06-26)
-**Two facts, opposite conclusions:**
-- **Twilio's** WhatsApp Business Calling does NOT reach a SIP softphone — it terminates only to a WebRTC/Voice-SDK
-  `<Client>` (Flex/IVR), explicitly rejects WA→PSTN, and is silent on `<Dial><Sip>`. So **Twilio is not the
-  WhatsApp-calling path.**
-- **Meta's own** WhatsApp Cloud API Calling has a **documented, GA (Jul 2025), practitioner-proven SIP delivery
-  mode**: Meta originates the inbound call straight to *your* SIP server (TLS:5061, Opus + SRTP, tagged
-  `X-FB-External-Domain: wa.meta.vc`). This reaches the softphone via a PBX and **is** the WhatsApp-calling path.
+### 5.3 WhatsApp specifics — messaging live on a Twilio Sender; calling via Twilio WhatsApp Business Calling (corrected 2026-07-04)
+**WhatsApp messaging is LIVE** on +66975311301 via a **Twilio WhatsApp Sender** (Console → Messaging → Senders →
+WhatsApp senders → "Continue with Facebook" self-sign-up → a new **Twilio-managed WABA**). Because Twilio owns the
+number it **auto-verifies** as the BSP (Twilio catches the OTP and shows it in the Console — no manual OTP chase).
+In Chatwoot this is a **`Channel::TwilioSms`** inbox, `phone_number: whatsapp:+66975311301`, `medium: whatsapp` — a
+*separate* inbox from the plain-`+66975311301` Voice channel (both `phone_number` strings satisfy the unique index).
 
-**Chosen architecture (later phase):** WhatsApp on **Meta Cloud API** (`whatsapp_cloud`, NOT the Twilio sender) →
-Meta SIP → a programmable **PBX (Jambonz recommended; Asterisk/FreeSWITCH possible)** speaking Opus+SRTP → rings the
-agent's **Groundwire** (same softphone as PSTN; Groundwire does Opus+SRTP). Groundwire can't receive from Meta
-directly — Meta pushes to a registered server — so the PBX is required.
+**Rejected path — hand-adding the number to your own Meta WABA (Cloud API direct).** We tried
+`POST /{waba}/phone_numbers` + `request_code` on our own WABA first; it **does not work on a VoIP/Twilio number** —
+the SMS OTP never arrives and the voice OTP fails. The spoken *"we're sorry, an application error has occurred"* is
+**Twilio error 11200** (the number's own voice webhook/TwiML erroring), **not** a Meta bug; Meta also rates VoIP
+numbers SMS-"Not Recommended". (Hours burned here before switching to the Twilio-Sender path.) Cleanup note: a
+pending number added this way can't be `DELETE`d via Graph API — remove it in **Meta Business Settings → WhatsApp
+Accounts**. The separate **+66800053593** predates all this and stays on **Meta Cloud API direct** (Chatwoot inbox
+"Whatsapp") — that's why the two numbers use different WhatsApp stacks.
 
-**Logging in Chatwoot — identical to PSTN, different event source.** The PBX fires call-lifecycle webhooks to a new
-endpoint `POST /umi/voice/pbx/call_event` (shared-secret) → reuses the existing builders to create
-`Umi::Call(provider: :whatsapp)` + a `voice_call` message → same screen-pop + call log. **Reused:** `Umi::Call`
-(the `whatsapp` provider enum already exists), `CallMessageBuilder`, `CallStatus::Manager`, contact-by-E.164 match.
-**New:** the `pbx/call_event` endpoint + generalizing `InboundCallBuilder` to accept the WhatsApp Cloud inbox as its
-source. **Jambonz is recommended** because it is webhook-native (Twilio-like) — call control + events map ~1:1 onto
-the existing umi backend, keeping Chatwoot in the loop (logging, even click-to-call). Asterisk works but needs
-AMI/ARI/dialplan glue and only lets Chatwoot observe.
+**WhatsApp calling (later phase) — Twilio WhatsApp Business Calling, no PBX.** Since the number is a Twilio-managed
+sender, WhatsApp calls arrive at Twilio and route into **Programmable Voice**. Plan: the sender's **Voice Endpoint** →
+"Connect to a **TwiML Application**" → a TwiML app that returns the **same `<Dial><Sip>`** used for PSTN voice,
+ringing the agent's **Groundwire**. This **reuses the existing PSTN voice stack** — `Umi::Call(provider: :whatsapp)`
+(the enum already exists), `CallMessageBuilder`, `CallStatus::Manager`, contact-by-E.164 match — so the same
+screen-pop + call log apply. **No PBX.**
 
-**The number (+66975311301) runs two rails:** Twilio = PSTN voice (Plan A); Meta Cloud API = WhatsApp messaging now
-+ calling later. Same E.164, no conflict — WhatsApp runs over Meta's data plane, independent of Twilio's PSTN
-routing. WhatsApp messaging therefore uses the **`whatsapp_cloud`** provider so the Cloud-API `calling.sip.servers`
-setting stays under our control.
+**Why not Meta-native SIP → your own PBX:** it stays a theoretical alternative, but it's **mutually exclusive** with
+the webhook/Graph (BSP) mode the number is already in, is **undocumented for BSP-registered numbers**, and needs a
+**PBX** — so we chose the Twilio path.
 
-**External gates (unchanged):** ≥2,000-conv tier → Meta Business Verification (weeks); business-initiated WA calls
-excluded in US/Canada/Egypt/Nigeria/Türkiye/Vietnam (Thailand is clear); `VOICE_CALL_REQUEST` consent for
-business-initiated. **Meantime (calling not enabled): no WhatsApp call button exists → nothing to handle**; voice is
-covered by PSTN on the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
+**External gates:** ≥2,000-conv/24h tier → Meta **Business Verification** (weeks); business-initiated WA calls are
+excluded in some countries (**Thailand is clear**). **Honest caveat to verify live:** Twilio docs confirm WhatsApp
+calls route into Programmable Voice and **can't bridge to PSTN**, but they don't *explicitly* enumerate `<Sip>` as an
+allowed bridge target — so confirm the `<Dial><Sip>` bridge with a live test when enabling (this is Spike S3).
+**Meantime (calling not enabled): no WhatsApp call button exists → nothing to handle**; voice is covered by PSTN on
+the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
 
 ---
 
@@ -184,7 +185,7 @@ covered by PSTN on the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
 1. **Twilio**: account (in the chosen Region) → voice-capable number (shared business number).
 2. **Twilio SIP Domain** (`umi.sip.singapore.twilio.com`, Singapore edge): Credential List with **one SIP username/password per agent**; enable SIP Registration; lock to the credential list; point the domain/number Voice URL → `…/umi/voice/<number>/incoming`.
 3. **Groundwire** on each agent's iPhone/Android: install ($9.99), register with that agent's SIP creds + domain, **enable Push** (SIPIS, free/hosted).
-4. **WhatsApp (P2)**: register/activate a WhatsApp sender (Twilio WhatsApp Business Platform) + Meta Business Verification + ≥2000-conv tier; enable Business Calling on the sender (set `voice_application_sid`); create the `VOICE_CALL_REQUEST` template. **Confirm the sender's country is not outbound-excluded.**
+4. **WhatsApp messaging (LIVE)**: register a **Twilio WhatsApp Sender** on +66975311301 (Console → Messaging → Senders → WhatsApp senders → "Continue with Facebook" → Twilio-managed WABA, auto-verified); set its incoming webhook → `https://chat.umi.store/twilio/callback`; create the `Channel::TwilioSms` inbox (`phone_number: whatsapp:+66975311301`, `medium: whatsapp`). **WhatsApp calling (later)**: enable Business Calling on the sender → Voice Endpoint → a TwiML App returning the voice `<Dial><Sip>`; needs Meta Business Verification + ≥2,000-conv tier. **Thailand is not outbound-excluded.**
 5. **Chatwoot**: Twilio SID/auth-token + per-agent SIP creds on the voice inbox; `ACTIVE_RECORD_ENCRYPTION` keys; enable `channel_voice`.
 
 ---
@@ -193,7 +194,7 @@ covered by PSTN on the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
 
 - **P0 — inbound PSTN → Groundwire, with name + logging:** `umi/` wiring; `Call` + `Umi::Message`; provisioning (SIP domain/per-agent creds + number Voice URL); `incoming` webhook (proxy-verified signature) building `<Dial><Sip>` with **Remote-Party-ID name injection**; `dial_status`/`status` (attribution, no-answer, duration); `voice_call` message + realtime screen-pop. **Exit:** a real PSTN call rings the on-duty agents' locked iPhones **showing the contact name**, first answers, two-way audio, and the conversation + live bubble appear in Chatwoot. (Gated on Spikes S1, S2, S6.)
 - **P1 — outbound click-to-call:** `groundwire:` deep link + server-bridge variant + throttle.
-- **P2 — WhatsApp via Twilio:** gated on Spike S3; sender provisioning, `whatsapp:` addressing, consent template + counter, geography pre-check.
+- **P2 — WhatsApp via Twilio:** messaging **LIVE** (Twilio WhatsApp Sender → `Channel::TwilioSms` inbox, `whatsapp:` addressing). Calling later via **Twilio WhatsApp Business Calling** (sender Voice Endpoint → TwiML App `<Dial><Sip>`), gated on Spike S3 + Business Verification + ≥2,000-conv tier + geography pre-check.
 - **P3 — recording + voicemail:** `<Dial record>` + recording webhook/job/attach + authenticated access + consent; `<Record>` voicemail on no-answer.
 
 ---
@@ -204,7 +205,7 @@ covered by PSTN on the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
 |---|---|---|---|---|
 | **S1** | **Groundwire + SIPIS, registered to a Twilio SIP Domain, rings a LOCKED iPhone** after the registration window lapses (>10 min idle). | The make-or-break. SIPIS push-on-behalf is provider-agnostic *in design* but unverified end-to-end with Twilio (credential-list vs IP-ACL; Twilio max-Expires 3600s). | Med-High (architecturally sound) | P0 (whole mobile model) |
 | **S2** | **Contact NAME shows on the locked CallKit screen** when we set `From`/`Remote-Party-ID` display-name on the `<Dial><Sip>` INVITE (SIPIS forwards it into the push). | "See who's calling" depends on it; Twilio default puts bare E.164 with empty display-name. | Med | P0 (name display; falls back to number / WS-contacts) |
-| **S3** | **WhatsApp ↔ SIP**: inbound WhatsApp call `<Dial><Sip>` rings Groundwire; outbound `<Dial><WhatsApp>` from a SIP-answered leg. | Twilio forbids WhatsApp↔PSTN; SIP is VoIP so it *should* work but is undocumented. If it fails, WhatsApp-to-softphone via Twilio is impossible. | Med (likely OK) | P2 (all WhatsApp) |
+| **S3** | **WhatsApp ↔ SIP**: inbound WhatsApp call via **Twilio WhatsApp Business Calling** → TwiML App `<Dial><Sip>` rings Groundwire (two-way audio). | Twilio confirms WA calls route into Programmable Voice and can't bridge to PSTN, but doesn't *explicitly* enumerate `<Sip>` as an allowed bridge target. If it fails, WhatsApp-to-softphone via Twilio is impossible. | Med (likely OK) | P2 (WhatsApp calling only; messaging is live) |
 | **S4** | **Click-to-call**: `groundwire:<e164>?dialAction=autoCall` auto-dials on iOS from a Chatwoot link; AND server-bridge `calls.create(to: sip:AOR)` rings a registered Groundwire then bridges (incl. caller-ID + unregistered-AOR error 32009). | Both click-to-call paths. | Med-High | P1 |
 | **S5** | **Attribution**: identify the answering agent via `DialSipHeader_X-AgentId` echo and/or per-`<Sip>` `statusCallback?agentId=N`. | "Handled by X" + auto-assign. | Med (endpoint-dependent) | P0/P1 polish |
 | **S6** | **Webhook signature behind the proxy**: validation passes with reconstructed public URL (`X-Forwarded-Proto`). | All-or-nothing 403 freezes every call. | High (known fix) | P0 |
@@ -220,7 +221,7 @@ covered by PSTN on the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
 2. **Per-agent SIP credentials**; `<Dial><Sip>` group ring (≤10), first-answer-wins; attribution via per-agent leg id.
 3. **Contact name on the call screen via SIP display-name injection** (RPID/From); WS-contacts sync fallback; Chatwoot screen-pop always.
 4. **Click-to-call** via `groundwire:` deep link (primary) + Twilio server-bridge (robust).
-5. **Both PSTN and WhatsApp** to the softphone; WhatsApp gated on Spike S3 + Meta verification + geography check.
+5. **Both PSTN and WhatsApp** to the softphone. WhatsApp **messaging is live** (Twilio WhatsApp Sender → `Channel::TwilioSms`); WhatsApp **calling** later via Twilio WhatsApp Business Calling, gated on Spike S3 + Meta verification + geography check.
 6. `umi/` tree + `prepend_mod_with`; reuse `calls` schema + `voice_call` message + realtime; remove EE voice + EE WhatsApp-Cloud paths; add webhook signature validation + toll-fraud throttle.
 7. **Phasing:** P0 inbound PSTN (name+logging) → P1 outbound click-to-call → P2 WhatsApp → P3 recording + voicemail.
 8. **Spike register §12 is the gate** — S1 (locked-iPhone ring) and S3 (WhatsApp↔SIP) are the two that can force a rethink; both confirmable cheaply.
@@ -237,7 +238,7 @@ covered by PSTN on the same number. Full plan: `GO_LIVE_RUNBOOK.md §6`.
 - **S2 (caller name on the softphone): PASS** ✅ — the injected name now shows on the call screen. **Method:** (1) backend injects the contact name into the SIP **`Remote-Party-ID`** header on the dial-to-agent leg (Twilio forwards RPID; it does NOT forward `P-Asserted-Identity`); (2) in Groundwire, **Incoming Caller ID** priority must list **Remote-Party-ID at the top** — by default `From Username` sits above it, so it shows the *number* (that was the earlier "no contact" result). With RPID first, "Test Contact" displayed. **No contact-sync needed.** This is a one-time per-device Groundwire setting (documented in the agent setup guide) + a backend header. (Contact-sync remains an alternative if RPID-reorder isn't acceptable.)
 - **S4 (click-to-call): PASS** (desk + unit) — server-bridge `POST contacts/:id/call` rings the agent SIP then `<Dial>`s the contact; covered by umi specs.
 - **Mobile trigger (2026-06-23, live): PASS via MACRO** — a `link`-type custom attribute is **copied, not opened** by the iOS app, but a macro's `send_webhook_event` runs **server-side from the app** (verified: tapping a test macro on the phone added a private note). So **`📞 Call contact` macro → `umi/voice/macro_dial` → server-bridge** is the no-fork mobile path.
-- **S3 (WhatsApp): PENDING** (gated on an approved sender).
+- **S3 (WhatsApp): messaging LIVE** (2026-07 — Twilio WhatsApp Sender on +66975311301, auto-verified; inbound message received). **Calling-over-SIP still PENDING** — the `<Dial><Sip>` bridge for Twilio WhatsApp Business Calling is unverified (see §5.3).
 - Trial notes: no owned number (used a placeholder `From`, accepted for SIP); a trial whisper may precede audio.
 
 ---
