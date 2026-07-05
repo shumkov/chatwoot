@@ -58,13 +58,22 @@ class Umi::Voice::WebhooksController < ApplicationController
     head :no_content
   end
 
-  # Number-onboarding helper: answer the call and record + transcribe the caller. A
-  # phoneless Twilio number can't receive a normal verification call, so when a provider
-  # (e.g. Meta/WhatsApp Cloud API) delivers an OTP by voice, point the number's Voice URL
-  # here during onboarding to capture the spoken code, then revert it to `incoming`.
+  # Number-onboarding helper for a phoneless Twilio number that a provider (e.g.
+  # Meta/WhatsApp Cloud API) verifies with a voice OTP. Point the number's Voice URL
+  # here during onboarding, then revert it to `incoming`.
+  # - `?to=+E164`: forward to a real phone with answerOnBridge, so the provider waits for
+  #   a human to answer before reading — the human hears the full code (some providers
+  #   error when a machine answers). This is the reliable path.
+  # - no `to`: answer + record + transcribe the caller (fallback when no human can answer).
   def otp_capture
     response = ::Twilio::TwiML::VoiceResponse.new
-    response.record(transcribe: true, max_length: 30, timeout: 10, play_beep: false)
+    if params[:to].present?
+      response.dial(answer_on_bridge: true, caller_id: @channel.phone_number, timeout: 25) do |dial|
+        dial.number(params[:to].to_s)
+      end
+    else
+      response.record(transcribe: true, max_length: 30, timeout: 10, play_beep: false)
+    end
     render xml: response.to_s
   end
 
