@@ -58,6 +58,16 @@ class Umi::Voice::WebhooksController < ApplicationController
     head :no_content
   end
 
+  # Number-onboarding helper: answer the call and record + transcribe the caller. A
+  # phoneless Twilio number can't receive a normal verification call, so when a provider
+  # (e.g. Meta/WhatsApp Cloud API) delivers an OTP by voice, point the number's Voice URL
+  # here during onboarding to capture the spoken code, then revert it to `incoming`.
+  def otp_capture
+    response = ::Twilio::TwiML::VoiceResponse.new
+    response.record(transcribe: true, max_length: 30, timeout: 10, play_beep: false)
+    render xml: response.to_s
+  end
+
   private
 
   def set_channel
