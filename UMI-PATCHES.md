@@ -9,6 +9,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 2 | Widget home: composer + messenger links | `app/javascript/widget/views/Home.vue`, `app/javascript/widget/components/pageComponents/Home/UmiHomeComposer.vue`, `app/javascript/widget/components/pageComponents/Home/UmiInboxLinks.vue` | Make the widget home a self-contained assistant: a **type-to-chat composer** (start the chat by typing — skips the "Start conversation" step) and **quick links to WhatsApp / LINE / Messenger / Instagram**, alongside the existing Help Center articles. Lets the storefront "Assistance" button open the widget directly so the custom theme drawer can be retired. | **Frontend core edit — keep** while the storefront relies on it (UMI product behaviour). Re-check `Home.vue` and the `conversation/sendMessage` action on each rebase. |
 | 3 | Help Center → Shopify "help" blog sync | `umi/app/services/shopify/help_center_sync_service.rb`, `umi/app/jobs/shopify/help_center_sync_job.rb`, `umi/app/models/shopify_help_center_syncable.rb`, `config/initializers/zz_umi_shopify_help_center.rb`, `lib/tasks/umi_help_center.rake`, `spec/services/umi/shopify/help_center_sync_service_spec.rb`; **core edit:** `config/application.rb` (wires the `umi/` overlay under the `Umi::` namespace via `push_dir`); docs: `UMI-SHOPIFY-HELP-CENTER-SPEC.md`, `UMI-SHOPIFY-HELP-CENTER-REVIEW.md` | Mirror Chatwoot Help Center articles to the storefront so the FAQ is server-rendered + SEO-indexed at `/blogs/help/<article>`. Reuses the **existing Shopify integration token** (Integrations::Hook `app_id:"shopify"`) — adds `read_content`/`write_content` + `read_online_store_navigation`/`write_online_store_navigation` to its OAuth scopes. Chatwoot stays the source of truth. | A native Chatwoot ↔ Shopify content sync ships upstream, or UMI stops mirroring the FAQ to the storefront. |
 | 4 | Voice (calls): inbound Twilio → SIP softphone | `umi/app/services/voice.rb`, `umi/app/services/voice/twiml/dial_builder.rb`, `umi/app/services/voice/inbound_resolver.rb`, `umi/app/controllers/voice/webhooks_controller.rb`, `umi/app/models/channel/twilio_sms.rb`, `config/initializers/zz_umi_voice.rb`, `spec/umi/voice/twiml/dial_builder_spec.rb`; docs: `docs/CALLS_BACKEND_SPEC.md`, `docs/GROUNDWIRE_AGENT_SETUP.md` | Agent calling on phones via Twilio + Acrobits Groundwire SIP softphone — no native app, no premium-gated EE voice. Inbound Twilio call → `<Dial><Sip>` rings the on-duty agents' Groundwire with the Chatwoot contact name injected via `Remote-Party-ID`, **and logs the call** (Contact→Conversation→`voice_call` message screen-pop + status/duration tracking). **Outbound click-to-call** rings the agent's softphone then bridges to the contact, plus **optional call recording**. WhatsApp follows. | Voice/calls ships upstream unlocked, or is extracted into a standalone engine. |
+| 5 | Email inbox: read a Gmail label, not INBOX | `umi/app/services/imap/configurable_folder.rb`, `umi/app/services/imap/preserve_provider_config.rb`, `config/initializers/zz_umi_email_imap_folder.rb` | Stock Chatwoot hardcodes `imap.select('INBOX')`, so a shared reader mailbox (`shumabit@`, a member of the `info@`/`support@` Google Groups) would pull its whole inbox in. Prepends a configurable folder read from `channel.provider_config['imap_folder']` (+ a companion that preserves that key across OAuth token refresh); a Gmail filter labels only the group mail → the inbox ingests only that label, leaving the mailbox's other mail untouched (no archiving, no extra Workspace seat). | Upstream adds a per-inbox source folder/label for the email channel. |
 
 ## Patch details
 
@@ -161,6 +162,31 @@ by voice (e.g. Meta/WhatsApp Cloud API), then revert the Voice URL to `incoming`
 **Still WIP** (next): hide the `voice_call` bubble's Join/Call-back buttons for the external-softphone
 model; optionally ring the whole on-duty group (conference) on tap-to-call instead of just the
 assignee; WhatsApp-via-Twilio — gated on the WhatsApp↔SIP live spike (spec §12 R1).
+
+### 5. Email inbox: read a Gmail label instead of INBOX
+
+`Imap::BaseFetchEmailService#build_imap_client` hardcodes `imap.select('INBOX')` (and
+`fetch_available_mail_sequence_numbers` searches everything `SINCE` yesterday — no label
+or read/unread filter). So an Email inbox connected to a **shared reader mailbox** —
+`shumabit@`, a member of the `info@` and `support@` Google Groups — would ingest that
+mailbox's *entire* inbox, not just the group mail.
+
+`zz_umi_email_imap_folder.rb` prepends `Umi::Imap::ConfigurableFolder`, which re-selects
+the folder named in `channel.provider_config['imap_folder']` after `super` (unset / `INBOX`
+→ stock behaviour; a bad label name fails loud on the next fetch rather than silently
+ingesting the whole inbox). Paired with a Gmail filter that applies a label (e.g. `Chatwoot`)
+to mail addressed to the groups, and that label set to **Show in IMAP**, the inbox ingests
+only the labelled group mail — the reader mailbox's other inbox mail is left untouched (no
+archiving, no dedicated Workspace seat).
+
+It also prepends `Umi::Imap::PreserveProviderConfig` onto `BaseRefreshOauthTokenService`:
+stock `update_channel_provider_config` *replaces* the whole `provider_config` with just the
+refreshed tokens, which would drop `imap_folder` on the first Google token refresh (~hourly)
+and silently revert to a full-INBOX read — so it **merges** the tokens instead.
+
+`provider_config['imap_folder']` has no UI/API (it's excluded from `Channel::Email::EDITABLE_ATTRS`);
+set it via console:
+`channel.update!(provider_config: channel.provider_config.merge('imap_folder' => 'Chatwoot'))`.
 
 <!-- Add new patches here as commits, newest last. -->
 
