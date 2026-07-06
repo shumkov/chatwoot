@@ -18,7 +18,7 @@ number). Companion docs: `CALLS_BACKEND_SPEC.md` (voice design + spike results) 
 | **Mobile click-to-call** | "📞 Call contact" macro → `/umi/voice/macro_dial` | ✅ built (PR #3) | macro created post-deploy via rake |
 | **WhatsApp messaging** | Twilio **WhatsApp Sender** (`Channel::TwilioSms`, `medium: whatsapp`) on +66975311301 → Chatwoot | ✅ live (inbound tested) | Twilio-managed WABA; auto-verified as BSP |
 | **WhatsApp Business Calling** | Twilio **WhatsApp Business Calling** → TwiML App `<Dial><Sip>` → Groundwire (reuses the PSTN voice stack, no PBX) | 🚧 later phase | ⛔ Business Verification + ≥2,000-conv/24h tier |
-| **LINE messenger** | LINE Official Account → `Channel::Line` | 🚧 in progress | separate from the number; LINE OA + Messaging API channel |
+| **LINE messenger** | LINE OA **@umi.store** → `Channel::Line` | ✅ live | separate from the number; Bot mode + webhooks on, auto-reply off |
 
 **One-number model (+66975311301):** **Twilio** carries **everything on this number** — PSTN voice *and* WhatsApp
 (messaging now via a Twilio-managed WABA, calling later via Twilio WhatsApp Business Calling). In Chatwoot this
@@ -141,7 +141,7 @@ needs a **PBX** — so we chose the Twilio path.
 
 ---
 
-## 7. Channel — LINE messenger  🚧 (in progress — separate from the number)
+## 7. Channel — LINE messenger  ✅ (live — @umi.store, separate from the number)
 
 > **Being set up now** via `Channel::Line` — a LINE Official Account + a Messaging API channel wired to a Chatwoot LINE inbox.
 
@@ -155,6 +155,15 @@ needs a **PBX** — so we chose the Twilio path.
 4. **Add agents** to the inbox.
 
 **Verify:** a message to the LINE OA creates a conversation in Chatwoot; agent replies deliver; media works.
+
+### Storefront contact links — keep in sync when a number/handle changes
+
+The customer-facing contact details live in **three** places; update all three together:
+- **Chatwoot widget** — `app/javascript/widget/components/pageComponents/Home/UmiInboxLinks.vue` (hardcoded WhatsApp / LINE / Messenger / Instagram quick-links; baked into the image → needs a rebuild + deploy).
+- **Storefront theme** — `umi-store-theme` → `templates/page.stand.json` (`phone_number`, `whatsapp_url`, `line_url`).
+- **Shopify store settings** — Settings → Store details → phone.
+
+Current values: **phone / WhatsApp = `+66975311301`**, **LINE = `@umi.store`** (`line.me/R/ti/p/~@umi.store`), Messenger = `m.me/umi.clothing.store`, Instagram = `ig.me/m/umi.asia`.
 
 ---
 
@@ -183,7 +192,7 @@ needs a **PBX** — so we chose the Twilio path.
 **Order (don't block fast channels on the slow one):**
 1. Deploy the umi voice build → wire Twilio voice webhooks → create the macro → **test voice**. ✅ live (inbound + outbound tested).
 2. Register the **Twilio WhatsApp Sender** on +66975311301 (self-sign-up, auto-verified) → create the `Channel::TwilioSms` WhatsApp inbox → test. ✅ live (inbound tested).
-3. Create the **LINE** inbox (independent; in progress) → test → live.
+3. Create the **LINE** inbox (independent) → test → **live (@umi.store)**.
 4. **WhatsApp calling last** — enable Twilio WhatsApp Business Calling, point the sender's Voice Endpoint at a TwiML App that `<Dial><Sip>`s Groundwire, run the spike. Gated on Meta Business Verification + the ≥2,000-conv tier.
 
 **Rollback (per channel):** disable/delete the inbox in Chatwoot and remove the provider-side webhook;
