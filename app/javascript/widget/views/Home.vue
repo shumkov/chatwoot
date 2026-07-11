@@ -1,54 +1,28 @@
 <script>
-import TeamAvailability from 'widget/components/TeamAvailability.vue';
-import { mapGetters } from 'vuex';
-import { useRouter } from 'vue-router';
-import configMixin from 'widget/mixins/configMixin';
+// UMI home layout: welcome → articles → messenger links → composer.
+// The "We are online / Start conversation" availability card is dropped — the
+// header already shows availability, and the composer is the single input.
+// See docs/UMI-WIDGET-HOME-SPEC.md.
 import ArticleContainer from '../components/pageComponents/Home/Article/ArticleContainer.vue';
+import UmiHomeWelcome from '../components/pageComponents/Home/UmiHomeWelcome.vue';
 import UmiInboxLinks from '../components/pageComponents/Home/UmiInboxLinks.vue';
 import UmiHomeComposer from '../components/pageComponents/Home/UmiHomeComposer.vue';
+
 export default {
   name: 'Home',
   components: {
     ArticleContainer,
-    TeamAvailability,
+    UmiHomeWelcome,
     UmiInboxLinks,
     UmiHomeComposer,
-  },
-  mixins: [configMixin],
-  setup() {
-    const router = useRouter();
-    return { router };
-  },
-  computed: {
-    ...mapGetters({
-      availableAgents: 'agent/availableAgents',
-      conversationSize: 'conversation/getConversationSize',
-      unreadMessageCount: 'conversation/getUnreadMessageCount',
-    }),
-  },
-  methods: {
-    startConversation() {
-      if (this.preChatFormEnabled && !this.conversationSize) {
-        return this.router.replace({ name: 'prechat-form' });
-      }
-      return this.router.replace({ name: 'messages' });
-    },
   },
 };
 </script>
 
 <template>
-  <div class="z-50 flex flex-col justify-end flex-1 w-full p-4 gap-4">
-    <TeamAvailability
-      :available-agents="availableAgents"
-      :has-conversation="!!conversationSize"
-      :unread-count="unreadMessageCount"
-      @start-conversation="startConversation"
-    />
-
+  <div class="z-50 flex flex-col justify-end flex-1 w-full gap-4 p-4">
+    <UmiHomeWelcome />
     <ArticleContainer />
-
-    <!-- UMI: messenger links + type-to-chat composer (see UMI-PATCHES.md) -->
     <UmiInboxLinks />
     <UmiHomeComposer />
   </div>

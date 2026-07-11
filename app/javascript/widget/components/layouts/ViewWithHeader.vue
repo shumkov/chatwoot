@@ -128,7 +128,7 @@ export default {
         />
         <ChatHeader
           v-if="isHeaderCollapsed"
-          :title="channelConfig.websiteName"
+          :title="$t('UMI.ASSISTANCE')"
           :avatar-url="channelConfig.avatarUrl"
           :show-popout-button="appConfig.showPopoutButton"
           :available-agents="availableAgents"
