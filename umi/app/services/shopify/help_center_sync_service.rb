@@ -10,8 +10,8 @@
 # metafield never duplicate.
 class Umi::Shopify::HelpCenterSyncService
   API_VERSION = '2025-01'
-  # Serializes the one-time, process-global ShopifyAPI::Context.setup across
-  # concurrent Sidekiq threads (see #ensure_shopify_context!).
+  # Serializes the process-global ShopifyAPI::Context.setup so concurrent Sidekiq
+  # threads never reload its shared Zeitwerk loader at once (see #ensure_shopify_context!).
   CONTEXT_SETUP_MUTEX = Mutex.new
 
   def initialize(attrs)
@@ -241,15 +241,13 @@ class Umi::Shopify::HelpCenterSyncService
 
   # ShopifyAPI::Context.setup reloads shopify_api's shared Zeitwerk loader on every
   # call, so calling it per job across Sidekiq's concurrent threads races the loader
-  # mid-reload and raises Zeitwerk::SetupRequired. Serialize it with a mutex and set
-  # up only if not already configured, so it runs once per process. setup? only
-  # checks creds are present, so this assumes one API_VERSION per process — fine
-  # here: Sidekiq and Puma (core ShopifyController) are separate processes both
-  # pinned to '2025-01', and OAuth scope is irrelevant to token-authenticated REST.
+  # mid-reload and raises Zeitwerk::SetupRequired. Serialize it with a mutex so only
+  # one thread ever runs setup at a time. We can't skip a repeat setup via
+  # ShopifyAPI::Context.setup? — it raises (T.must on nil) until the first setup —
+  # and re-running setup is exactly what core ShopifyController does per request;
+  # the plugin uses only the raw REST client, unaffected by the resource reload.
   def ensure_shopify_context!
     CONTEXT_SETUP_MUTEX.synchronize do
-      return if ShopifyAPI::Context.setup?
-
       ShopifyAPI::Context.setup(
         api_key: GlobalConfigService.load('SHOPIFY_CLIENT_ID', nil),
         api_secret_key: GlobalConfigService.load('SHOPIFY_CLIENT_SECRET', nil),
