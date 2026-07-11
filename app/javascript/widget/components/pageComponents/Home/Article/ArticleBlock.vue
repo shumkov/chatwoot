@@ -16,20 +16,18 @@ const widgetColor = useMapGetter('appConfig/getWidgetColor');
 
 const articlesToDisplay = computed(() => props.articles.slice(0, 6));
 
-const onArticleClick = link => {
-  emit('view', link);
+const onArticleClick = slug => {
+  emit('view', slug);
 };
 </script>
 
 <template>
   <div class="flex flex-col gap-3">
-    <h3 class="font-medium text-n-slate-12">
-      {{ $t('PORTAL.POPULAR_ARTICLES') }}
-    </h3>
     <div class="flex flex-col gap-4">
       <ArticleListItem
         v-for="article in articlesToDisplay"
         :key="article.slug"
+        :slug="article.slug"
         :link="article.link"
         :title="article.title"
         @select-article="onArticleClick"

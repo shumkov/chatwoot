@@ -3,16 +3,22 @@ import { computed, onMounted, watch } from 'vue';
 import ArticleBlock from 'widget/components/pageComponents/Home/Article/ArticleBlock.vue';
 import ArticleCardSkeletonLoader from 'widget/components/pageComponents/Home/Article/SkeletonLoader.vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
 import { useStore } from 'dashboard/composables/store';
 import { useMapGetter } from 'dashboard/composables/store.js';
-import { useDarkMode } from 'widget/composables/useDarkMode';
 import { getMatchingLocale } from 'shared/helpers/portalHelper';
 
+// UMI: articles open on the storefront Help Center (see UMI-WIDGET-HOME-SPEC.md).
+const STOREFRONT_FALLBACK = 'https://umi.store';
+const storefrontOrigin = () => {
+  try {
+    return new URL(document.referrer).origin;
+  } catch (error) {
+    return STOREFRONT_FALLBACK;
+  }
+};
+
 const store = useStore();
-const router = useRouter();
 const i18n = useI18n();
-const { prefersDarkMode } = useDarkMode();
 
 const portal = computed(() => window.chatwootWebChannel.portal);
 
@@ -37,23 +43,13 @@ const fetchArticles = () => {
   }
 };
 
-const openArticleInArticleViewer = link => {
-  const params = new URLSearchParams({
-    show_plain_layout: 'true',
-    theme: prefersDarkMode.value ? 'dark' : 'light',
-    ...(locale.value && { locale: locale.value }),
-  });
-
-  // Combine link with query parameters
-  const linkToOpen = `${link}?${params.toString()}`;
-  router.push({ name: 'article-viewer', query: { link: linkToOpen } });
+// Open the matching storefront blog article (same tab).
+const openArticleOnHelpPage = slug => {
+  window.top.location.href = `${storefrontOrigin()}/blogs/help/${slug}`;
 };
 
 const viewAllArticles = () => {
-  const {
-    portal: { slug },
-  } = window.chatwootWebChannel;
-  openArticleInArticleViewer(`/hc/${slug}/${locale.value}`);
+  window.top.location.href = `${storefrontOrigin()}/pages/help`;
 };
 
 const hasArticles = computed(
@@ -82,7 +78,7 @@ onMounted(() => fetchArticles());
     <ArticleBlock
       v-if="hasArticles"
       :articles="popularArticles"
-      @view="openArticleInArticleViewer"
+      @view="openArticleOnHelpPage"
       @view-all="viewAllArticles"
     />
     <ArticleCardSkeletonLoader v-if="articleUiFlags.isFetching" />

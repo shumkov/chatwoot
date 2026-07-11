@@ -1,10 +1,9 @@
 <script setup>
-// UMI patch: a composer on the widget home screen so visitors can start typing
-// immediately instead of clicking through a "Start conversation" screen.
-//
-// Submitting sends the first message via the same action ChatFooter uses
-// (`conversation/sendMessage`, which creates the conversation when none exists)
-// and navigates into the chat. See UMI-PATCHES.md.
+// UMI patch: the widget home's single input block.
+// - No conversation yet → a composer; typing sends the first message
+//   (`conversation/sendMessage` creates the conversation) and opens the chat.
+// - A conversation already exists → a "Continue conversation" button into the chat.
+// See UMI-PATCHES.md / docs/UMI-WIDGET-HOME-SPEC.md.
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useStore, useMapGetter } from 'dashboard/composables/store.js';
@@ -13,17 +12,18 @@ const store = useStore();
 const router = useRouter();
 const conversationSize = useMapGetter('conversation/getConversationSize');
 const widgetColor = useMapGetter('appConfig/getWidgetColor');
-const sendLabel = 'Send';
 
 const content = ref('');
 const isSending = ref(false);
+
+const openChat = () => router.replace({ name: 'messages' });
 
 const submit = async () => {
   const text = content.value.trim();
   if (!text || isSending.value) return;
 
-  // If a pre-chat form is configured for a brand-new visitor, fall back to the
-  // standard flow — we can't carry the draft through the form.
+  // Pre-chat form for a brand-new visitor: fall back to the standard flow —
+  // we can't carry the draft through the form.
   if (
     window.chatwootWebChannel?.preChatFormEnabled &&
     conversationSize.value === 0
@@ -35,7 +35,7 @@ const submit = async () => {
   isSending.value = true;
   content.value = '';
   await store.dispatch('conversation/sendMessage', { content: text });
-  router.replace({ name: 'messages' });
+  openChat();
 };
 
 const onKeydown = e => {
@@ -47,21 +47,35 @@ const onKeydown = e => {
 </script>
 
 <template>
+  <button
+    v-if="conversationSize > 0"
+    type="button"
+    class="flex items-center justify-between w-full gap-2 px-4 py-3 font-medium outline outline-1 outline-n-container rounded-xl bg-n-background dark:bg-n-solid-2 text-n-slate-12"
+    @click="openChat"
+  >
+    <span>{{ $t('UMI.CONTINUE') }}</span>
+    <span
+      class="i-lucide-chevron-right size-5 shrink-0"
+      :style="{ color: widgetColor }"
+    />
+  </button>
+
   <form
-    class="flex items-end w-full gap-2 p-2 outline-1 outline outline-n-container rounded-xl bg-n-background dark:bg-n-solid-2"
+    v-else
+    class="flex items-end w-full gap-2 p-2 outline outline-1 outline-n-container rounded-xl bg-n-background dark:bg-n-solid-2"
     @submit.prevent="submit"
   >
     <textarea
       v-model="content"
       rows="1"
-      placeholder="Type your message…"
-      class="flex-1 px-1 py-1.5 text-sm bg-transparent border-0 outline-none resize-none text-n-slate-12 placeholder:text-n-slate-10 max-h-24"
+      :placeholder="$t('UMI.TYPE_MESSAGE')"
+      class="flex-1 px-2 py-2 text-sm bg-transparent border-0 outline-none resize-none text-n-slate-12 placeholder:text-n-slate-10 max-h-24"
       @keydown="onKeydown"
     />
     <button
       type="submit"
       :disabled="!content.trim()"
-      :aria-label="sendLabel"
+      :aria-label="$t('UMI.SEND')"
       class="inline-flex items-center justify-center text-white rounded-lg shrink-0 size-9 disabled:opacity-40"
       :style="{ backgroundColor: widgetColor || '#1f93ff' }"
     >

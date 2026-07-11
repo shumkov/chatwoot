@@ -1,4 +1,11 @@
 {
+  "UMI": {
+    "ASSISTANCE": "Assistance",
+    "WELCOME": "Our team is here to help with sizing, orders, or anything else — Mon–Sat, 9 AM–9 PM (Bangkok). Message us below or use the links.",
+    "TYPE_MESSAGE": "Type your message…",
+    "SEND": "Send",
+    "CONTINUE": "Continue conversation"
+  },
   "COMPONENTS": {
     "FILE_BUBBLE": {
       "DOWNLOAD": "Download",

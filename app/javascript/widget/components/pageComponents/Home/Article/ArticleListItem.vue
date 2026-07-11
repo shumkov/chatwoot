@@ -1,5 +1,9 @@
 <script setup>
 const props = defineProps({
+  slug: {
+    type: String,
+    default: '',
+  },
   link: {
     type: String,
     default: '',
@@ -11,7 +15,7 @@ const props = defineProps({
 });
 const emit = defineEmits(['selectArticle']);
 const onClick = () => {
-  emit('selectArticle', props.link);
+  emit('selectArticle', props.slug || props.link);
 };
 </script>
 
