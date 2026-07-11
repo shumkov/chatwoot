@@ -10,6 +10,9 @@
 # metafield never duplicate.
 class Umi::Shopify::HelpCenterSyncService
   API_VERSION = '2025-01'
+  # Serializes the one-time, process-global ShopifyAPI::Context.setup across
+  # concurrent Sidekiq threads (see #ensure_shopify_context!).
+  CONTEXT_SETUP_MUTEX = Mutex.new
 
   def initialize(attrs)
     @attrs = attrs.respond_to?(:with_indifferent_access) ? attrs.with_indifferent_access : attrs
@@ -231,16 +234,27 @@ class Umi::Shopify::HelpCenterSyncService
 
   def client
     @client ||= begin
+      ensure_shopify_context!
+      ShopifyAPI::Clients::Rest::Admin.new(session: ShopifyAPI::Auth::Session.new(shop: hook.reference_id, access_token: hook.access_token))
+    end
+  end
+
+  # ShopifyAPI::Context.setup reloads shopify_api's shared Zeitwerk loader on every
+  # call, so calling it per job across Sidekiq's concurrent threads races the loader
+  # mid-reload and raises Zeitwerk::SetupRequired. Serialize it with a mutex and set
+  # up only if not already configured, so it runs once per process. setup? only
+  # checks creds are present, so this assumes one API_VERSION per process — fine
+  # here: Sidekiq and Puma (core ShopifyController) are separate processes both
+  # pinned to '2025-01', and OAuth scope is irrelevant to token-authenticated REST.
+  def ensure_shopify_context!
+    CONTEXT_SETUP_MUTEX.synchronize do
+      return if ShopifyAPI::Context.setup?
+
       ShopifyAPI::Context.setup(
         api_key: GlobalConfigService.load('SHOPIFY_CLIENT_ID', nil),
         api_secret_key: GlobalConfigService.load('SHOPIFY_CLIENT_SECRET', nil),
-        api_version: API_VERSION,
-        scope: '',
-        is_embedded: true,
-        is_private: false
+        api_version: API_VERSION, scope: '', is_embedded: true, is_private: false
       )
-      session = ShopifyAPI::Auth::Session.new(shop: hook.reference_id, access_token: hook.access_token)
-      ShopifyAPI::Clients::Rest::Admin.new(session: session)
     end
   end
 
