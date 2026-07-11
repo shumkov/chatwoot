@@ -72,54 +72,48 @@ RSpec.describe Umi::Shopify::HelpCenterSyncService do
   end
 
   # ShopifyAPI::Context.setup reloads the gem's shared Zeitwerk loader on every
-  # call, so running it per job across Sidekiq's concurrent threads raced the
-  # loader and raised Zeitwerk::SetupRequired. The client must configure the
-  # global context at most once per process.
+  # call, so two threads running it at once raced the loader and raised
+  # Zeitwerk::SetupRequired. The client must serialize setup across threads.
   describe '#client Shopify context guard' do
     let(:service) { described_class.new('account_id' => 1) }
     let(:hook) { instance_double(Integrations::Hook, reference_id: 'shop.myshopify.com', access_token: 'token') }
 
     before do
       allow(service).to receive(:hook).and_return(hook)
+      allow(ShopifyAPI::Context).to receive(:setup)
       allow(ShopifyAPI::Auth::Session).to receive(:new).and_return(instance_double(ShopifyAPI::Auth::Session))
       allow(ShopifyAPI::Clients::Rest::Admin).to receive(:new).and_return(instance_double(ShopifyAPI::Clients::Rest::Admin))
     end
 
-    it 'does not re-run the global Context.setup once it is already configured' do
-      allow(ShopifyAPI::Context).to receive(:setup?).and_return(true)
-      expect(ShopifyAPI::Context).not_to receive(:setup)
+    it 'configures the Shopify context before building the REST client' do
+      expect(ShopifyAPI::Context).to receive(:setup)
 
       service.send(:client)
     end
 
-    it 'configures the context once when it is not yet set up' do
-      allow(ShopifyAPI::Context).to receive(:setup?).and_return(false)
-      expect(ShopifyAPI::Context).to receive(:setup).once
+    # Pins the mutex: many threads run setup at once. With the mutex, setup never
+    # executes in two threads simultaneously (max concurrency 1); drop the
+    # CONTEXT_SETUP_MUTEX and concurrent threads overlap inside setup, which is the
+    # shared-loader reload race that raised Zeitwerk::SetupRequired.
+    it 'never runs the global Context.setup concurrently' do
+      lock = Mutex.new
+      in_flight = 0
+      max_in_flight = 0
 
-      service.send(:client)
-    end
-
-    # Pins the mutex, not just the branch: many threads race the first-time setup.
-    # With the mutex, ShopifyAPI::Context.setup runs exactly once; without it,
-    # concurrent threads all see setup? == false and re-run it, re-triggering the
-    # shared-loader reload race.
-    it 'runs the global Context.setup exactly once under concurrent first access' do
-      configured = false
-      count_lock = Mutex.new
-      setup_calls = 0
-
-      allow(ShopifyAPI::Context).to receive(:setup?) { configured }
       allow(ShopifyAPI::Context).to receive(:setup) do
-        sleep 0.01 # widen the window so an unguarded reload would collide
-        count_lock.synchronize { setup_calls += 1 }
-        configured = true
+        lock.synchronize do
+          in_flight += 1
+          max_in_flight = [max_in_flight, in_flight].max
+        end
+        sleep 0.01 # hold the "reload" open so an unguarded overlap is observable
+        lock.synchronize { in_flight -= 1 }
       end
 
       Array.new(8) { described_class.new('account_id' => 1) }
            .map { |svc| Thread.new { svc.send(:ensure_shopify_context!) } }
            .each(&:join)
 
-      expect(setup_calls).to eq(1)
+      expect(max_in_flight).to eq(1)
     end
   end
 end
