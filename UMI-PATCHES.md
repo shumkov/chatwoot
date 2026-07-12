@@ -82,6 +82,12 @@ with a future upstream `Shopify::` content sync) does the work off the save path
 If the Shopify hook is absent or lacks `write_content`, the sync no-ops with a
 single log line (so it's inert until the integration is reconnected).
 
+`ShopifyAPI::Context.setup` reloads the `shopify_api` gem's shared Zeitwerk loader
+on every call, so running it per job across Sidekiq's concurrent worker threads
+raced the loader and raised `Zeitwerk::SetupRequired`. The service now configures
+the context **once per process**, guarded by `ShopifyAPI::Context.setup?` +
+a class `Mutex` (double-checked locking), instead of on every `#client` build.
+
 The full design, the multi-reviewer findings, and the remaining open items /
 accepted MVP limitations (per-edit N+1 metafield scan, 250-article lookup cap,
 category-rename/portal-move propagation) live in `UMI-SHOPIFY-HELP-CENTER-SPEC.md`
