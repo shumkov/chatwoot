@@ -37,3 +37,14 @@ body {
 .text-woot-600 {
   color: #121212 !important;
 }
+
+/* Home composer input: Chatwoot's base <textarea> styles leak a border-radius
+   and a 10px padding past the utility classes, so the field looks rounded and
+   the text sits off-centre. Square it, drop the padding (the form's px-3 gives
+   the horizontal inset), and kill any focus ring. Scoped to the home composer
+   so the in-conversation reply box is untouched. */
+.umi-composer-input {
+  border-radius: 0 !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
