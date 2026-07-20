@@ -61,11 +61,7 @@ const onKeydown = e => {
     />
   </button>
 
-  <form
-    v-else
-    class="flex items-center w-full px-3 border border-n-container bg-n-background"
-    @submit.prevent="submit"
-  >
+  <form v-else class="umi-composer w-full" @submit.prevent="submit">
     <textarea
       v-model="content"
       rows="1"
