@@ -11,6 +11,7 @@ const props = defineProps({
   title: { type: String, default: '' },
   showPopoutButton: { type: Boolean, default: false },
   showBackButton: { type: Boolean, default: false },
+  showStatus: { type: Boolean, default: false },
   availableAgents: { type: Array, default: () => [] },
 });
 
@@ -41,9 +42,7 @@ const onBackButtonClick = () => {
         alt="avatar"
       />
       <div class="flex flex-col gap-1">
-        <div
-          class="flex items-center text-base font-medium leading-4 text-n-slate-12"
-        >
+        <div class="flex items-center text-xl font-semibold text-n-slate-12">
           <span v-dompurify-html="title" class="ltr:mr-1 rtl:ml-1" />
           <div
             :class="`h-2 w-2 rounded-full
@@ -51,6 +50,7 @@ const onBackButtonClick = () => {
           />
         </div>
         <AvailabilityContainer
+          v-if="showStatus"
           :agents="availableAgents"
           :show-header="false"
           :show-avatars="false"
@@ -58,6 +58,9 @@ const onBackButtonClick = () => {
         />
       </div>
     </div>
-    <HeaderActions :show-popout-button="showPopoutButton" />
+    <HeaderActions
+      :show-popout-button="showPopoutButton"
+      :show-end-conversation-button="false"
+    />
   </header>
 </template>

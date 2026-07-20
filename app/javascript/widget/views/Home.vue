@@ -20,7 +20,7 @@ export default {
 </script>
 
 <template>
-  <div class="z-50 flex flex-col justify-end flex-1 w-full gap-4 p-4">
+  <div class="z-50 flex flex-col justify-start flex-1 w-full gap-8 px-5 py-4">
     <UmiHomeWelcome />
     <ArticleContainer />
     <UmiInboxLinks />

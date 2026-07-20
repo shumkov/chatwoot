@@ -26,7 +26,7 @@ const onClick = () => {
     @click="onClick"
   >
     <button
-      class="underline-offset-2 leading-6 ltr:text-left rtl:text-right text-base"
+      class="underline-offset-2 leading-5 ltr:text-left rtl:text-right text-base"
     >
       {{ title }}
     </button>

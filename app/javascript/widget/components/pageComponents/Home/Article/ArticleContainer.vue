@@ -43,9 +43,9 @@ const fetchArticles = () => {
   }
 };
 
-// Open the matching storefront blog article (same tab).
+// Open the matching topic on the storefront Help Center page, expanded (same tab).
 const openArticleOnHelpPage = slug => {
-  window.top.location.href = `${storefrontOrigin()}/blogs/help/${slug}`;
+  window.top.location.href = `${storefrontOrigin()}/pages/help#q-${slug}`;
 };
 
 const viewAllArticles = () => {
@@ -73,7 +73,7 @@ onMounted(() => fetchArticles());
 <template>
   <div
     v-if="portal && (articleUiFlags.isFetching || !!popularArticles.length)"
-    class="w-full shadow outline-1 outline outline-n-container rounded-xl bg-n-background dark:bg-n-solid-2 px-5 py-4"
+    class="w-full mb-2"
   >
     <ArticleBlock
       v-if="hasArticles"
