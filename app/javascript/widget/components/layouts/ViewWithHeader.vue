@@ -103,7 +103,7 @@ export default {
 
 <template>
   <div
-    class="w-full h-full bg-n-slate-2 dark:bg-n-solid-1"
+    class="w-full h-full bg-n-background dark:bg-n-solid-1"
     :class="{ 'overflow-auto': isOnHomeView }"
     @keydown.esc="closeWindow"
   >
@@ -128,11 +128,12 @@ export default {
         />
         <ChatHeader
           v-if="isHeaderCollapsed"
-          :title="$t('UMI.ASSISTANCE')"
+          :title="isOnHomeView ? $t('UMI.ASSISTANCE') : $t('UMI.CHAT')"
           :avatar-url="channelConfig.avatarUrl"
           :show-popout-button="appConfig.showPopoutButton"
           :available-agents="availableAgents"
           :show-back-button="showBackButton"
+          :show-status="!isOnHomeView"
         />
       </div>
       <Banner />
