@@ -69,6 +69,9 @@ const onKeydown = e => {
       class="umi-composer-input flex-1 h-8 min-h-8 py-1 my-2 text-sm bg-transparent border-none outline-none resize-none text-n-slate-12 placeholder:text-n-slate-10 max-h-24"
       @keydown="onKeydown"
     />
-    <ChatSendButton v-if="content.trim()" :color="widgetColor || '#121212'" />
+    <ChatSendButton
+      :color="widgetColor || '#121212'"
+      :disabled="!content.trim()"
+    />
   </form>
 </template>
