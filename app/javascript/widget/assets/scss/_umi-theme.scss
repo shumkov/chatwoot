@@ -69,3 +69,10 @@ body {
   background: transparent !important;
   resize: none;
 }
+
+/* The send button is always visible (so the field reads as a message box), but
+   dimmed until there's text to send. */
+.umi-composer button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
