@@ -1,10 +1,14 @@
 {
   "UMI": {
     "ASSISTANCE": "Assistance",
-    "WELCOME": "Our team is here to help with sizing, orders, or anything else — Mon–Sat, 9 AM–9 PM (Bangkok). Message us below or use the links.",
+    "CHAT": "Chat",
+    "WELCOME_ONLINE": "Our team is available within minutes to assist you with any inquiries you may have. You'll also find quick answers in the topics below.",
+    "WELCOME_AWAY": "Our team will be available in {time} (9 AM GMT+7) to assist you with any inquiries you may have. You'll also find quick answers in the topics below.",
+    "FAQ": "FAQ",
     "TYPE_MESSAGE": "Type your message…",
     "SEND": "Send",
-    "CONTINUE": "Continue conversation"
+    "CONTINUE": "Continue conversation",
+    "ALL_TOPICS": "All topics"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {
