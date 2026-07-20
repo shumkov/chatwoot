@@ -38,13 +38,34 @@ body {
   color: #121212 !important;
 }
 
-/* Home composer input: Chatwoot's base <textarea> styles leak a border-radius
-   and a 10px padding past the utility classes, so the field looks rounded and
-   the text sits off-centre. Square it, drop the padding (the form's px-3 gives
-   the horizontal inset), and kill any focus ring. Scoped to the home composer
-   so the in-conversation reply box is untouched. */
+/* Home composer: the utility `border` doesn't render on this <form>, so give it
+   an explicit squared box with the border matching the channel tiles above it,
+   keep the send button inside, and make the input tall enough that the text sits
+   centred (Chatwoot's base <textarea> styles otherwise cramp and round it).
+   Scoped to the home composer so the in-conversation reply box is untouched. */
+.umi-composer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 14px;
+  border: 1px solid #ececec;
+  border-radius: 0;
+  background: #fff;
+}
+
 .umi-composer-input {
+  flex: 1;
+  height: 44px;
+  min-height: 44px;
+  max-height: 120px;
+  padding: 10px 0 !important;
+  margin: 0 !important;
+  line-height: 24px;
+  font-size: 15px;
+  border: none !important;
   border-radius: 0 !important;
-  padding: 0 !important;
+  outline: none !important;
   box-shadow: none !important;
+  background: transparent !important;
+  resize: none;
 }
