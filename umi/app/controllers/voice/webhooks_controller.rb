@@ -45,7 +45,9 @@ class Umi::Voice::WebhooksController < ApplicationController
     head :no_content
   end
 
-  # <Dial action> result — the outcome of ringing the agents.
+  # <Dial action> result — the outcome of ringing the agents. Must answer with TwiML:
+  # anything else makes Twilio speak its "an application error has occurred" message
+  # to the caller when the dial fails.
   def dial_status
     call = Umi::Call.find_by(account_id: @channel.account_id, provider: :twilio, provider_call_id: params[:CallSid])
     if call
@@ -55,7 +57,7 @@ class Umi::Voice::WebhooksController < ApplicationController
       when 'no-answer', 'busy', 'failed', 'canceled' then manager.process('no_answer')
       end
     end
-    head :no_content
+    render xml: dial_result_twiml
   end
 
   # TwiML the agent's leg fetches on answer (click-to-call): bridge to the contact.
@@ -101,8 +103,13 @@ class Umi::Voice::WebhooksController < ApplicationController
   def validate_twilio_signature
     return if Umi::Voice.skip_signature_validation?
 
+    signature = request.headers['X-Twilio-Signature']
+    # The validator crashes on a nil signature (nil.bytesize), so unsigned scans must be
+    # rejected before it runs.
+    return head :forbidden if signature.blank?
+
     validator = ::Twilio::Security::RequestValidator.new(@channel.auth_token)
-    valid = validator.validate(Umi::Voice.webhook_url(request), request.request_parameters, request.headers['X-Twilio-Signature'])
+    valid = validator.validate(Umi::Voice.webhook_url(request), request.request_parameters, signature)
     return if valid
 
     head :forbidden
@@ -121,6 +128,17 @@ class Umi::Voice::WebhooksController < ApplicationController
     return override.split(',').map(&:strip) if override.present?
 
     resolver.agent_usernames
+  end
+
+  # A failed ring gets a spoken apology (never dead air / Twilio's error message);
+  # a bridged call that ended just hangs up.
+  def dial_result_twiml
+    response = ::Twilio::TwiML::VoiceResponse.new
+    unless %w[answered completed].include?(params[:DialCallStatus])
+      response.say(message: 'We are sorry, no one is available to take your call right now. Please try again later, or message us on WhatsApp.')
+    end
+    response.hangup
+    response.to_s
   end
 
   def recording_status_url
