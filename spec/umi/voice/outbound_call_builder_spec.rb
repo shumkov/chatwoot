@@ -24,6 +24,23 @@ RSpec.describe Umi::Voice::OutboundCallBuilder do
     )
   end
 
+  it 'requests status callbacks on the agent leg so the call log can leave ringing' do
+    # REST-originated calls only get status webhooks when StatusCallback is passed on
+    # create (the number-level callback covers incoming calls only) — without it every
+    # outbound call stays "ringing" forever.
+    with_modified_env(FRONTEND_URL: 'https://app.example.com') do
+      described_class.perform!(account: account, channel: channel, user: user, contact: contact)
+    end
+
+    expect(calls_resource).to have_received(:create).with(
+      hash_including(
+        status_callback: 'https://app.example.com/umi/voice/15550000000/status',
+        status_callback_event: %w[initiated ringing answered completed],
+        status_callback_method: 'POST'
+      )
+    )
+  end
+
   it 'creates an outgoing Umi::Call keyed on the Twilio SID' do
     call = described_class.perform!(account: account, channel: channel, user: user, contact: contact)
 
