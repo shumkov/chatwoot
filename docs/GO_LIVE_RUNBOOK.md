@@ -6,7 +6,7 @@ number). Companion docs: `CALLS_BACKEND_SPEC.md` (voice design + spike results) 
 `GROUNDWIRE_AGENT_SETUP.md` (per-agent softphone setup).
 
 > **Status legend:** ✅ built & tested · ⚙️ native Chatwoot config (no code) · 🚧 needs build · ⛔ gated (external approval).
-> Facts below are verified against this codebase (v4.14.2 + UMI patches) and current Twilio/Meta docs (Jun 2026).
+> Facts below are verified against this codebase (v4.16.0 + UMI patches) and current Twilio/Meta docs (Jun 2026).
 
 ---
 

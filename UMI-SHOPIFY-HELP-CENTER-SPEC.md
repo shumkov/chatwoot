@@ -22,7 +22,7 @@ the FAQ is server-rendered, SEO-indexed, and searchable at
 
 ## 2. Why a Chatwoot plugin (not a separate bridge)
 
-The deployed fork is `umi-v4.14.2`, which already ships Chatwoot's native Shopify
+The deployed fork is `umi-v4.16.0`, which already ships Chatwoot's native Shopify
 integration: an OAuth app (`SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET`,
 `/shopify/callback`) whose per-account access token is stored as an
 `Integrations::Hook` (`app_id "shopify"`, `access_token`, `reference_id` = shop
@@ -117,7 +117,7 @@ endpoint, no TLS/domain.
 
 Per `CONTRIBUTING-UMI`: merge PR #2 into the `umi` branch → CI builds a preview
 image (`ghcr.io/shumkov/chatwoot:umi-<branch>`) for staging smoke-test → tag
-`umi-v4.14.2` (re-tag) or next release → GHCR build → bump `chatwoot_version` in
+`umi-v4.16.0` (re-tag) or next release → GHCR build → bump `chatwoot_version` in
 `umi-vps-infra` and deploy (pg_dump first).
 
 ## 8. Required manual steps
