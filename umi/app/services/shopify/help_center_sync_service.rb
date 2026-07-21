@@ -8,7 +8,7 @@
 # Idempotent: articles are matched by the custom.chatwoot_id metafield and, as a
 # fallback, by handle — so replays, reconciles, and a dropped/unavailable
 # metafield never duplicate.
-class Umi::Shopify::HelpCenterSyncService
+class Umi::Shopify::HelpCenterSyncService # rubocop:disable Metrics/ClassLength
   API_VERSION = '2025-01'
   # Serializes the process-global ShopifyAPI::Context.setup so concurrent Sidekiq
   # threads never reload its shared Zeitwerk loader at once (see #ensure_shopify_context!).
@@ -43,10 +43,16 @@ class Umi::Shopify::HelpCenterSyncService
       body_html: rendered_body,
       summary_html: summary_html,
       handle: self.class.slugify(@attrs[:title]),
-      tags: @attrs[:category_name].to_s,
+      tags: article_tags,
       published: published,
       metafields: metafields
     }
+  end
+
+  # Category tag (topical grouping) + `featured` when the article is in the storefront
+  # featured set. Shopify overwrites all tags on PUT, so un-featuring drops it next sync.
+  def article_tags
+    [@attrs[:category_name].to_s.strip.presence, ('featured' if @attrs[:featured])].compact.join(', ')
   end
 
   private
@@ -125,19 +131,25 @@ class Umi::Shopify::HelpCenterSyncService
   end
 
   def metafields
-    fields = [{ namespace: 'custom', key: 'chatwoot_id', type: 'number_integer', value: @attrs[:id].to_s }]
-    fields << text_mf('custom', 'chatwoot_slug', @attrs[:slug])
-    fields << text_mf('custom', 'chatwoot_category_slug', @attrs[:category_slug])
-    fields << { namespace: 'custom', key: 'chatwoot_position', type: 'number_integer', value: @attrs[:position].to_s } if @attrs[:position].present?
-    fields << text_mf('global', 'title_tag', @attrs[:title])
-    fields << text_mf('global', 'description_tag', @attrs[:description].to_s[0, 320]) if @attrs[:description].present?
-    fields.compact
+    [
+      number_mf('chatwoot_id', @attrs[:id]),
+      text_mf('custom', 'chatwoot_slug', @attrs[:slug]),
+      text_mf('custom', 'chatwoot_category_slug', @attrs[:category_slug]),
+      (number_mf('chatwoot_position', @attrs[:position]) if @attrs[:position].present?),
+      (number_mf('featured_position', @attrs[:featured_position]) if @attrs[:featured] && @attrs[:featured_position].present?),
+      text_mf('global', 'title_tag', @attrs[:title]),
+      (text_mf('global', 'description_tag', @attrs[:description].to_s[0, 320]) if @attrs[:description].present?)
+    ].compact
   end
 
   def text_mf(namespace, key, value)
     return nil if value.blank?
 
     { namespace: namespace, key: key, type: 'single_line_text_field', value: value.to_s }
+  end
+
+  def number_mf(key, value)
+    { namespace: 'custom', key: key, type: 'number_integer', value: value.to_s }
   end
 
   # ---- Shopify lookups ----

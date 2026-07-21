@@ -37,7 +37,9 @@ module Umi::ShopifyHelpCenterSyncable
       'status' => status.to_s,
       'position' => position,
       'category_name' => category&.name,
-      'category_slug' => category&.slug
+      'category_slug' => category&.slug,
+      'featured' => meta.is_a?(Hash) && meta['featured'].to_s == 'true',
+      'featured_position' => (meta['featured_position'] if meta.is_a?(Hash))
     }
   end
 

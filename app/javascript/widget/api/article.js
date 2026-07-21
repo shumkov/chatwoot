@@ -5,3 +5,8 @@ export const getMostReadArticles = async (slug, locale) => {
   const urlData = endPoints.getMostReadArticles(slug, locale);
   return API.get(urlData.url, { params: urlData.params });
 };
+
+export const getFeaturedArticles = async (slug, locale) => {
+  const urlData = endPoints.getFeaturedArticles(slug, locale);
+  return API.get(urlData.url, { params: urlData.params });
+};
