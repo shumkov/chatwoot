@@ -11,6 +11,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 4 | Voice (calls): inbound Twilio → SIP softphone | `umi/app/services/voice.rb`, `umi/app/services/voice/twiml/dial_builder.rb`, `umi/app/services/voice/inbound_resolver.rb`, `umi/app/controllers/voice/webhooks_controller.rb`, `umi/app/models/channel/twilio_sms.rb`, `config/initializers/zz_umi_voice.rb`, `spec/umi/voice/twiml/dial_builder_spec.rb`; docs: `docs/CALLS_BACKEND_SPEC.md`, `docs/GROUNDWIRE_AGENT_SETUP.md` | Agent calling on phones via Twilio + Acrobits Groundwire SIP softphone — no native app, no premium-gated EE voice. Inbound Twilio call → `<Dial><Sip>` rings the on-duty agents' Groundwire with the Chatwoot contact name injected via `Remote-Party-ID`, **and logs the call** (Contact→Conversation→`voice_call` message screen-pop + status/duration tracking). **Outbound click-to-call** rings the agent's softphone then bridges to the contact, plus **optional call recording**. WhatsApp follows. Includes `Umi::Call#direction_label` so upstream's native `GET /calls` serializer renders the repointed `calls` association without a 500. | **Remove-when now firing:** upstream v4.16.0 shipped native voice on the same `calls` table (a `GET /calls` endpoint + a native `Call` model). Reconcile `Umi::Call` with that native `Call` (extend it, or retire the repoint) — see the reconciliation note below — or drop this patch once native voice is unlocked/usable for UMI. |
 | 5 | Email inbox: read a Gmail label, not INBOX | `umi/app/services/imap/configurable_folder.rb`, `umi/app/services/imap/preserve_provider_config.rb`, `config/initializers/zz_umi_email_imap_folder.rb` | Stock Chatwoot hardcodes `imap.select('INBOX')`, so a shared reader mailbox (`shumabit@`, a member of the `info@`/`support@` Google Groups) would pull its whole inbox in. Prepends a configurable folder read from `channel.provider_config['imap_folder']` (+ a companion that preserves that key across OAuth token refresh); a Gmail filter labels only the group mail → the inbox ingests only that label, leaving the mailbox's other mail untouched (no archiving, no extra Workspace seat). | Upstream adds a per-inbox source folder/label for the email channel. |
 | 6 | Featured Help Center articles (storefront FAQ shortlist) | `umi/app/models/article_featurable.rb`, `umi/app/controllers/public/api/v1/portals/articles_controller.rb`, `config/initializers/zz_umi_featured_articles.rb`, `spec/models/umi/article_featurable_spec.rb`; **edits (UMI-owned):** `umi/app/models/shopify_help_center_syncable.rb`, `umi/app/services/shopify/help_center_sync_service.rb`, `spec/services/umi/shopify/help_center_sync_service_spec.rb`; **widget:** `app/javascript/widget/api/{article,endPoints}.js`, `app/javascript/widget/store/modules/articles.js` (+ spec) | A `featured` axis on Help Center articles, stored in `meta` (orthogonal to `category_id` — no duplication). Concern adds `featured` / `order_by_featured_position` scopes; a prepend extends the public articles endpoint with `?featured=true&sort=featured`; the sync projects `featured`→`featured` tag + `featured_position`→`custom.featured_position` metafield; the widget fetches the featured set (fallback to most-read). Drives the storefront Assistance drawer + Explore FAQ from one curated list. | Upstream ships native article tags / multi-category, or a first-class featured/pinned-article flag. |
+| 7 | Shopify customers → Chatwoot contacts sync | `umi/app/services/shopify/{client_factory,sync_lock,contact_sync_watermark,customer_contact_mapper,contact_sync_service}.rb`, `umi/app/jobs/shopify/{contact_backfill_job,contact_poll_job}.rb`, `umi/app/controllers/webhooks/shopify_compliance.rb`, `umi/app/controllers/shopify/persist_customer_link.rb`, `config/initializers/zz_umi_shopify_contacts.rb`, `lib/tasks/umi_shopify_contacts.rake`, specs in `spec/services/umi/shopify/`, `spec/jobs/umi/shopify/`, `spec/controllers/`; refactors patch #3's client construction into the shared `Umi::Shopify::ClientFactory`; docs: `UMI-SHOPIFY-CONTACT-SYNC-INVESTIGATION.md`, `UMI-SHOPIFY-CONTACT-SYNC-SPEC.md` | Proactively seed every Shopify customer as a Chatwoot contact (one-time throttled backfill + 30-min watermark poll on the existing integration token) so first-ever inbound calls/WhatsApp resolve to a real name (voice caller-ID injection is synchronous — only a pre-existing contact helps), agents can outbound-call any customer, and the base is segmentable. Adds the `customers/redact`/`customers/data_request` compliance handlers (core ignores them) and on-touch persistence of `shopify_customer_id` from the orders sidebar. Inert by default: backfill is a manual rake task; the poll cron registers only with `UMI_SHOPIFY_CONTACT_SYNC_ENABLED`. | Upstream ships a native Shopify customer sync, or UMI stops proactive contact seeding. |
 
 ## Patch details
 
@@ -213,6 +214,39 @@ and silently revert to a full-INBOX read — so it **merges** the tokens instead
 `provider_config['imap_folder']` has no UI/API (it's excluded from `Channel::Email::EDITABLE_ATTRS`);
 set it via console:
 `channel.update!(provider_config: channel.provider_config.merge('imap_folder' => 'Chatwoot'))`.
+
+### 7. Shopify customers → Chatwoot contacts sync
+
+Full design + three-lens review record in `UMI-SHOPIFY-CONTACT-SYNC-SPEC.md`
+(pros/cons + alternatives in `UMI-SHOPIFY-CONTACT-SYNC-INVESTIGATION.md`). Summary:
+
+- **Backfill**: `rake umi:shopify_contacts:backfill[account_id]` — a self-enqueuing
+  page chain (250 customers/page, spaced, own `retry_on` with long backoff because
+  the global Sidekiq retry cap is 3), ceiling-guarded by `customers/count.json`.
+  Idempotent. **Runbook: after the chain finishes, verify
+  `hook.settings['umi_contact_sync_watermark']` exists** — absence means the chain
+  died (also reported to the tracker).
+- **Poll**: every 30 min (sidekiq-cron, registered via per-job `create` with
+  `source: 'umi'` — never `load_from_hash!`, whose purge filter is hardcoded to
+  `source: "schedule"` and would wipe the core schedule), fetches
+  `updated_at_min=watermark−5min`, advances the watermark only after a fully
+  successful run, aborts (without advancing) past a page cap.
+- **Single-writer Redis lock** per account (`Redis::Alfred`, NX+EX; the production
+  Rails.cache is per-container FileStore and can't lock) shared by backfill + poll.
+- **Upsert rules**: match by email then phone; fill-blanks-only (placeholder names —
+  phone number / email local part / Haikunator — count as blank); never overwrite a
+  different existing `shopify_customer_id` (`conflicted`); in-batch phone dedup
+  (no unique DB index on phone); no-change saves skipped.
+- **Compliance**: `customers/redact` → destroy (no conversations) / anonymize (has
+  conversations) / strip-only on a phone-only match; `customers/data_request` →
+  tracker + error log (manual export). Always answers 200 (Shopify never
+  redelivers — failures go to the tracker). **Deploy gate: verify the app's
+  compliance-webhook URLs in the Partner Dashboard actually point at
+  `POST /webhooks/shopify` and test one delivery**; an admin-created custom app
+  never receives these (manual runbook then).
+- Patch #3's help-center sync now builds its client through the shared
+  `Umi::Shopify::ClientFactory` (single `Context.setup` mutex for all UMI Shopify
+  services — two mutexes would reintroduce the Zeitwerk race).
 
 <!-- Add new patches here as commits, newest last. -->
 

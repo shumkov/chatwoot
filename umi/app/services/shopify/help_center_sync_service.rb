@@ -8,12 +8,7 @@
 # Idempotent: articles are matched by the custom.chatwoot_id metafield and, as a
 # fallback, by handle — so replays, reconciles, and a dropped/unavailable
 # metafield never duplicate.
-class Umi::Shopify::HelpCenterSyncService # rubocop:disable Metrics/ClassLength
-  API_VERSION = '2025-01'
-  # Serializes the process-global ShopifyAPI::Context.setup so concurrent Sidekiq
-  # threads never reload its shared Zeitwerk loader at once (see #ensure_shopify_context!).
-  CONTEXT_SETUP_MUTEX = Mutex.new
-
+class Umi::Shopify::HelpCenterSyncService
   def initialize(attrs)
     @attrs = attrs.respond_to?(:with_indifferent_access) ? attrs.with_indifferent_access : attrs
   end
@@ -244,28 +239,11 @@ class Umi::Shopify::HelpCenterSyncService # rubocop:disable Metrics/ClassLength
     error.code if error.respond_to?(:code)
   end
 
+  # Context.setup serialization (the Zeitwerk-reload race) lives in the shared
+  # factory — every UMI Shopify service must build its client there so one mutex
+  # guards all of them.
   def client
-    @client ||= begin
-      ensure_shopify_context!
-      ShopifyAPI::Clients::Rest::Admin.new(session: ShopifyAPI::Auth::Session.new(shop: hook.reference_id, access_token: hook.access_token))
-    end
-  end
-
-  # ShopifyAPI::Context.setup reloads shopify_api's shared Zeitwerk loader on every
-  # call, so calling it per job across Sidekiq's concurrent threads races the loader
-  # mid-reload and raises Zeitwerk::SetupRequired. Serialize it with a mutex so only
-  # one thread ever runs setup at a time. We can't skip a repeat setup via
-  # ShopifyAPI::Context.setup? — it raises (T.must on nil) until the first setup —
-  # and re-running setup is exactly what core ShopifyController does per request;
-  # the plugin uses only the raw REST client, unaffected by the resource reload.
-  def ensure_shopify_context!
-    CONTEXT_SETUP_MUTEX.synchronize do
-      ShopifyAPI::Context.setup(
-        api_key: GlobalConfigService.load('SHOPIFY_CLIENT_ID', nil),
-        api_secret_key: GlobalConfigService.load('SHOPIFY_CLIENT_SECRET', nil),
-        api_version: API_VERSION, scope: '', is_embedded: true, is_private: false
-      )
-    end
+    @client ||= Umi::Shopify::ClientFactory.client_for(hook)
   end
 
   def log_skip(reason)
