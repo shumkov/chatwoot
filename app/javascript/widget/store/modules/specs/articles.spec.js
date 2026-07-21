@@ -1,5 +1,5 @@
 import { mutations, actions, getters } from '../articles';
-import { getMostReadArticles } from 'widget/api/article';
+import { getFeaturedArticles, getMostReadArticles } from 'widget/api/article';
 import { getFromCache, setCache } from 'shared/helpers/cache';
 
 vi.mock('widget/api/article');
@@ -78,45 +78,74 @@ describe('Vuex Articles Module', () => {
         await actions.fetch({ commit }, { slug, locale });
 
         expect(getFromCache).toHaveBeenCalledWith(
-          `chatwoot_most_read_articles_${slug}_${locale}`
+          `chatwoot_featured_articles_${slug}_${locale}`
         );
+        expect(getFeaturedArticles).not.toHaveBeenCalled();
         expect(getMostReadArticles).not.toHaveBeenCalled();
         expect(setCache).not.toHaveBeenCalled();
         expect(commit).toHaveBeenCalledWith('setArticles', articles);
         expect(commit).toHaveBeenCalledWith('setError', false);
       });
 
-      it('fetches and caches data if no cache available', async () => {
+      it('uses the featured set when available, without the most-read fallback', async () => {
         getFromCache.mockReturnValue(null);
-        getMostReadArticles.mockReturnValue({ data: { payload: articles } });
+        getFeaturedArticles.mockResolvedValue({ data: { payload: articles } });
 
         await actions.fetch({ commit }, { slug, locale });
 
-        expect(getFromCache).toHaveBeenCalledWith(
-          `chatwoot_most_read_articles_${slug}_${locale}`
-        );
-        expect(getMostReadArticles).toHaveBeenCalledWith(slug, locale);
+        expect(getFeaturedArticles).toHaveBeenCalledWith(slug, locale);
+        expect(getMostReadArticles).not.toHaveBeenCalled();
         expect(setCache).toHaveBeenCalledWith(
-          `chatwoot_most_read_articles_${slug}_${locale}`,
+          `chatwoot_featured_articles_${slug}_${locale}`,
           articles
         );
         expect(commit).toHaveBeenCalledWith('setArticles', articles);
         expect(commit).toHaveBeenCalledWith('setError', false);
       });
 
-      it('handles API errors correctly', async () => {
+      it('falls back to most-read when the featured set is empty', async () => {
         getFromCache.mockReturnValue(null);
-        getMostReadArticles.mockRejectedValue(new Error('API Error'));
+        getFeaturedArticles.mockResolvedValue({ data: { payload: [] } });
+        getMostReadArticles.mockResolvedValue({ data: { payload: articles } });
+
+        await actions.fetch({ commit }, { slug, locale });
+
+        expect(getMostReadArticles).toHaveBeenCalledWith(slug, locale);
+        expect(commit).toHaveBeenCalledWith('setArticles', articles);
+        expect(commit).toHaveBeenCalledWith('setError', false);
+      });
+
+      it('falls back to most-read when the featured request errors', async () => {
+        getFromCache.mockReturnValue(null);
+        getFeaturedArticles.mockRejectedValue(new Error('featured boom'));
+        getMostReadArticles.mockResolvedValue({ data: { payload: articles } });
+
+        await actions.fetch({ commit }, { slug, locale });
+
+        expect(getMostReadArticles).toHaveBeenCalledWith(slug, locale);
+        expect(commit).toHaveBeenCalledWith('setArticles', articles);
+        expect(commit).toHaveBeenCalledWith('setError', false);
+      });
+
+      it('sets error when both featured and most-read fail', async () => {
+        getFromCache.mockReturnValue(null);
+        getFeaturedArticles.mockRejectedValue(new Error('featured boom'));
+        getMostReadArticles.mockRejectedValue(new Error('most-read boom'));
 
         await actions.fetch({ commit }, { slug, locale });
 
         expect(commit).toHaveBeenCalledWith('setError', true);
         expect(commit).toHaveBeenCalledWith('setIsFetching', false);
+        expect(commit).not.toHaveBeenCalledWith(
+          'setArticles',
+          expect.any(Array)
+        );
       });
 
-      it('does not mutate state when fetching returns an empty payload', async () => {
+      it('does not mutate state when both sources return empty', async () => {
         getFromCache.mockReturnValue(null);
-        getMostReadArticles.mockReturnValue({ data: { payload: [] } });
+        getFeaturedArticles.mockResolvedValue({ data: { payload: [] } });
+        getMostReadArticles.mockResolvedValue({ data: { payload: [] } });
 
         await actions.fetch({ commit }, { slug, locale });
 
@@ -131,28 +160,13 @@ describe('Vuex Articles Module', () => {
 
       it('sets loading state during fetch', async () => {
         getFromCache.mockReturnValue(null);
-        getMostReadArticles.mockReturnValue({ data: { payload: articles } });
+        getFeaturedArticles.mockResolvedValue({ data: { payload: articles } });
 
         await actions.fetch({ commit }, { slug, locale });
 
         expect(commit).toHaveBeenCalledWith('setIsFetching', true);
         expect(commit).toHaveBeenCalledWith('setIsFetching', false);
       });
-    });
-
-    it('sets error state when fetching fails', async () => {
-      const commit = vi.fn();
-      getMostReadArticles.mockRejectedValueOnce(new Error('Network error'));
-
-      await actions.fetch(
-        { commit },
-        { websiteToken: 'token', slug: 'slug', locale: 'en' }
-      );
-
-      expect(commit).toHaveBeenCalledWith('setIsFetching', true);
-      expect(commit).toHaveBeenCalledWith('setError', true);
-      expect(commit).not.toHaveBeenCalledWith('setArticles', expect.any(Array));
-      expect(commit).toHaveBeenCalledWith('setIsFetching', false);
     });
   });
 

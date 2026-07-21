@@ -1,7 +1,7 @@
-import { getMostReadArticles } from 'widget/api/article';
+import { getFeaturedArticles, getMostReadArticles } from 'widget/api/article';
 import { getFromCache, setCache } from 'shared/helpers/cache';
 
-const CACHE_KEY_PREFIX = 'chatwoot_most_read_articles_';
+const CACHE_KEY_PREFIX = 'chatwoot_featured_articles_';
 
 const state = {
   records: [],
@@ -30,11 +30,25 @@ export const actions = {
         return;
       }
 
-      const { data } = await getMostReadArticles(slug, locale);
-      const { payload = [] } = data;
+      // Prefer the storefront-curated featured set; fall back to most-read when
+      // nothing is featured yet, or if the featured request errors — so the drawer
+      // FAQ is never blank.
+      let payload = [];
+      try {
+        const { data } = await getFeaturedArticles(slug, locale);
+        payload = data.payload || [];
+      } catch (error) {
+        payload = [];
+      }
+      if (!payload.length) {
+        const { data } = await getMostReadArticles(slug, locale);
+        payload = data.payload || [];
+      }
 
-      setCache(`${CACHE_KEY_PREFIX}${slug}_${locale}`, payload);
+      // Only cache a non-empty result — caching [] would mask a later curated set
+      // for the full cache TTL and keep the drawer FAQ blank.
       if (payload.length) {
+        setCache(`${CACHE_KEY_PREFIX}${slug}_${locale}`, payload);
         commit('setArticles', payload);
       }
     } catch (error) {

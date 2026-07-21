@@ -69,6 +69,36 @@ RSpec.describe Umi::Shopify::HelpCenterSyncService do
         expect(payload[:summary_html]).to include('Heading')
       end
     end
+
+    context 'when the article is featured' do
+      let(:attrs) { super().merge('featured' => true, 'featured_position' => 20) }
+
+      it 'appends the `featured` tag alongside the category tag' do
+        expect(payload[:tags]).to eq('Returns & Exchanges, featured')
+      end
+
+      it 'sets the custom.featured_position metafield' do
+        mf = payload[:metafields].find { |m| m[:key] == 'featured_position' }
+        expect(mf).to include(namespace: 'custom', type: 'number_integer', value: '20')
+      end
+    end
+
+    # Un-featuring drops the `featured` tag from the payload; since Shopify overwrites
+    # the whole tag string on PUT, the tag-filtered Explore FAQ excludes the article on
+    # the next sync — no metafield delete needed (the stale featured_position is inert).
+    context 'when the article is no longer featured' do
+      let(:attrs) { super().merge('featured' => false, 'featured_position' => nil) }
+
+      it 'omits the `featured` tag, keeping only the category' do
+        expect(payload[:tags]).to eq('Returns & Exchanges')
+        expect(payload[:tags]).not_to include('featured')
+      end
+
+      it 'omits the featured_position metafield' do
+        keys = payload[:metafields].map { |m| "#{m[:namespace]}.#{m[:key]}" }
+        expect(keys).not_to include('custom.featured_position')
+      end
+    end
   end
 
   # ShopifyAPI::Context.setup reloads the gem's shared Zeitwerk loader on every
