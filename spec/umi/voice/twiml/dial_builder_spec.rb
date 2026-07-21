@@ -54,6 +54,21 @@ RSpec.describe Umi::Voice::Twiml::DialBuilder do
     expect(xml).not_to include('record=')
   end
 
+  it 'omits per-leg status callbacks unless a sip_status_url is given' do
+    expect(xml).not_to include('statusCallback')
+  end
+
+  it 'sets an answered status callback per <Sip> leg carrying the agent username' do
+    with_attribution = described_class.new(
+      domain: 'd.sip.twilio.com', agent_usernames: %w[agent-1 agent-2],
+      caller_number: '+15551112222', caller_name: nil, dial_action_url: 'https://x/cb',
+      sip_status_url: 'https://app.example.com/umi/voice/15550000000/sip_status'
+    ).to_xml
+    expect(with_attribution).to include('statusCallbackEvent="answered"')
+    expect(with_attribution).to include('statusCallback="https://app.example.com/umi/voice/15550000000/sip_status?agent=agent-1"')
+    expect(with_attribution).to include('statusCallback="https://app.example.com/umi/voice/15550000000/sip_status?agent=agent-2"')
+  end
+
   it 'records dual-channel + sets the recording callback when a recording_status_url is given' do
     recorded = described_class.new(
       domain: 'd.sip.twilio.com', agent_usernames: ['agent-1'], caller_number: '+1',

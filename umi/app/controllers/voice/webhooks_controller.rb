@@ -18,9 +18,22 @@ class Umi::Voice::WebhooksController < ApplicationController
       caller_number: resolver.caller_number,
       caller_name: call.contact&.name,
       dial_action_url: "#{Umi::Voice.public_base}/umi/voice/#{params[:phone]}/dial_status",
-      recording_status_url: recording_status_url
+      recording_status_url: recording_status_url,
+      sip_status_url: "#{Umi::Voice.public_base}/umi/voice/#{params[:phone]}/sip_status"
     ).to_xml
     render xml: xml
+  end
+
+  # Per-<Sip>-leg answered callback: records which agent picked up (first-answer-wins),
+  # flips the call to in_progress and assigns the conversation to that agent.
+  def sip_status
+    call = Umi::Call.find_by(account_id: @channel.account_id, provider: :twilio, provider_call_id: params[:ParentCallSid])
+    if call
+      agent = answering_agent
+      Umi::Voice::CallStatus::Manager.new(call: call).process('in_progress', agent: agent)
+      call.conversation.update!(assignee: agent) if agent && call.conversation.assignee_id.nil?
+    end
+    head :no_content
   end
 
   # Twilio per-call status callback (in-progress / completed / failed …).
@@ -93,6 +106,13 @@ class Umi::Voice::WebhooksController < ApplicationController
     return if valid
 
     head :forbidden
+  end
+
+  # SIP usernames follow `agent-<user_id>` (pilot overrides like `agent1` resolve to nil —
+  # the call still goes in_progress, just unattributed).
+  def answering_agent
+    user_id = params[:agent].to_s[/\Aagent-(\d+)\z/, 1]
+    user_id && @channel.account.users.find_by(id: user_id)
   end
 
   # Allow an explicit override (e.g. the pilot's `agent1`) via env; otherwise ring the inbox agents.

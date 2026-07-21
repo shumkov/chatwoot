@@ -24,6 +24,7 @@ Rails.application.routes.append do
     post 'voice/:phone/incoming', to: 'voice/webhooks#incoming'
     post 'voice/:phone/status', to: 'voice/webhooks#status'
     post 'voice/:phone/dial_status', to: 'voice/webhooks#dial_status'
+    post 'voice/:phone/sip_status', to: 'voice/webhooks#sip_status'
     post 'voice/:phone/outbound_twiml', to: 'voice/webhooks#outbound_twiml'
     post 'voice/:phone/recording', to: 'voice/webhooks#recording'
     # Number onboarding: capture a voice-delivered OTP on a phoneless number (temporary Voice URL).

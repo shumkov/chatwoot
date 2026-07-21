@@ -33,6 +33,25 @@ RSpec.describe 'Umi::Voice inbound webhook', type: :request do
     expect(response).to have_http_status(:not_found)
   end
 
+  it 'rings agents with a per-leg answered callback for attribution' do
+    post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAreq4', Direction: 'inbound' }
+
+    expect(response.body).to include('statusCallbackEvent="answered"')
+    expect(response.body).to include('/umi/voice/15550009999/sip_status?agent=agent1')
+  end
+
+  it 'attributes the answering agent, flips the call in_progress and assigns the conversation' do
+    agent = create(:user, account: account)
+    post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAreq3', Direction: 'inbound' }
+    post '/umi/voice/15550009999/sip_status',
+         params: { CallSid: 'CAchild1', ParentCallSid: 'CAreq3', CallStatus: 'in-progress', agent: "agent-#{agent.id}" }
+
+    call = Umi::Call.find_by(provider_call_id: 'CAreq3')
+    expect(call.status).to eq('in_progress')
+    expect(call.accepted_by_agent).to eq(agent)
+    expect(call.conversation.assignee).to eq(agent)
+  end
+
   it 'marks the call no_answer when the dial result is no-answer' do
     post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAreq2', Direction: 'inbound' }
     post '/umi/voice/15550009999/dial_status', params: { CallSid: 'CAreq2', DialCallStatus: 'no-answer' }
