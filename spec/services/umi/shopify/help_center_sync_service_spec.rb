@@ -101,49 +101,19 @@ RSpec.describe Umi::Shopify::HelpCenterSyncService do
     end
   end
 
-  # ShopifyAPI::Context.setup reloads the gem's shared Zeitwerk loader on every
-  # call, so two threads running it at once raced the loader and raised
-  # Zeitwerk::SetupRequired. The client must serialize setup across threads.
-  describe '#client Shopify context guard' do
+  # The Context.setup serialization (Zeitwerk-reload race) moved to the shared
+  # Umi::Shopify::ClientFactory with the client construction; its concurrency
+  # examples live in spec/services/umi/shopify/client_factory_spec.rb.
+  describe '#client' do
     let(:service) { described_class.new('account_id' => 1) }
     let(:hook) { instance_double(Integrations::Hook, reference_id: 'shop.myshopify.com', access_token: 'token') }
 
-    before do
+    it 'builds the client through the shared factory' do
+      client = instance_double(ShopifyAPI::Clients::Rest::Admin)
       allow(service).to receive(:hook).and_return(hook)
-      allow(ShopifyAPI::Context).to receive(:setup)
-      allow(ShopifyAPI::Auth::Session).to receive(:new).and_return(instance_double(ShopifyAPI::Auth::Session))
-      allow(ShopifyAPI::Clients::Rest::Admin).to receive(:new).and_return(instance_double(ShopifyAPI::Clients::Rest::Admin))
-    end
+      allow(Umi::Shopify::ClientFactory).to receive(:client_for).with(hook).and_return(client)
 
-    it 'configures the Shopify context before building the REST client' do
-      expect(ShopifyAPI::Context).to receive(:setup)
-
-      service.send(:client)
-    end
-
-    # Pins the mutex: many threads run setup at once. With the mutex, setup never
-    # executes in two threads simultaneously (max concurrency 1); drop the
-    # CONTEXT_SETUP_MUTEX and concurrent threads overlap inside setup, which is the
-    # shared-loader reload race that raised Zeitwerk::SetupRequired.
-    it 'never runs the global Context.setup concurrently' do
-      lock = Mutex.new
-      in_flight = 0
-      max_in_flight = 0
-
-      allow(ShopifyAPI::Context).to receive(:setup) do
-        lock.synchronize do
-          in_flight += 1
-          max_in_flight = [max_in_flight, in_flight].max
-        end
-        sleep 0.01 # hold the "reload" open so an unguarded overlap is observable
-        lock.synchronize { in_flight -= 1 }
-      end
-
-      Array.new(8) { described_class.new('account_id' => 1) }
-           .map { |svc| Thread.new { svc.send(:ensure_shopify_context!) } }
-           .each(&:join)
-
-      expect(max_in_flight).to eq(1)
+      expect(service.send(:client)).to eq(client)
     end
   end
 end
