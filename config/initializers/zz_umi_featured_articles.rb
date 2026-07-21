@@ -7,10 +7,23 @@
 #   umi/app/models/article_featurable.rb                          -> Umi::ArticleFeaturable
 #   umi/app/controllers/public/api/v1/portals/articles_controller.rb
 #                                                                  -> Umi::Public::Api::V1::Portals::ArticlesController
+#   umi/app/controllers/help_center/featured_articles_controller.rb
+#                                                                  -> Umi::HelpCenter::FeaturedArticlesController
+#   umi/app/services/featured_articles.rb                          -> Umi::FeaturedArticles
 #
 # Kept separate from zz_umi_shopify_help_center.rb because it is an independently
 # removable patch (its remove-when — upstream native tags / featured-article flag —
 # differs from the sync patch's).
+
+# Dashboard endpoints for the "Featured" manager, added without editing config/routes.rb
+# (mirrors zz_umi_voice.rb). Admin-only + portal-scoped in the controller.
+Rails.application.routes.append do
+  scope 'api/v1/accounts/:account_id/portals/:portal_id', module: 'umi/help_center' do
+    get 'featured_articles', to: 'featured_articles#index'
+    post 'featured_articles', to: 'featured_articles#update'
+  end
+end
+
 Rails.application.config.to_prepare do
   # 1) meta.featured / meta.featured_position axis + scopes on Article.
   Article.include(Umi::ArticleFeaturable) if defined?(Article) && Article.ancestors.exclude?(Umi::ArticleFeaturable)
