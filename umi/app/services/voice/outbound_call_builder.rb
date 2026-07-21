@@ -42,13 +42,21 @@ class Umi::Voice::OutboundCallBuilder
     @channel.umi_voice_client.calls.create(
       to: "sip:agent-#{@user.id}@#{@channel.umi_sip_domain}",
       from: @channel.phone_number,
-      url: outbound_twiml_url
+      url: outbound_twiml_url,
+      # REST-originated calls only send status webhooks when asked on create (the
+      # number-level callback covers incoming calls only).
+      status_callback: "#{Umi::Voice.public_base}/umi/voice/#{phone_digits}/status",
+      status_callback_event: %w[initiated ringing answered completed],
+      status_callback_method: 'POST'
     )
   end
 
   def outbound_twiml_url
-    digits = @channel.phone_number.to_s.gsub(/\D/, '')
-    "#{Umi::Voice.public_base}/umi/voice/#{digits}/outbound_twiml?to=#{CGI.escape(@contact.phone_number.to_s)}"
+    "#{Umi::Voice.public_base}/umi/voice/#{phone_digits}/outbound_twiml?to=#{CGI.escape(@contact.phone_number.to_s)}"
+  end
+
+  def phone_digits
+    @channel.phone_number.to_s.gsub(/\D/, '')
   end
 
   def find_or_create_conversation
