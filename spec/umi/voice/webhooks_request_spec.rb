@@ -33,6 +33,31 @@ RSpec.describe 'Umi::Voice inbound webhook', type: :request do
     expect(response).to have_http_status(:not_found)
   end
 
+  it 'rejects a request with no Twilio signature with 403, not a 500' do
+    with_modified_env(UMI_VOICE_SKIP_SIGNATURE: 'false') do
+      post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAunsigned' }
+    end
+
+    expect(response).to have_http_status(:forbidden)
+  end
+
+  it 'answers a failed dial with a spoken apology instead of dead air' do
+    post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAreq5', Direction: 'inbound' }
+    post '/umi/voice/15550009999/dial_status', params: { CallSid: 'CAreq5', DialCallStatus: 'no-answer' }
+
+    expect(response).to have_http_status(:ok)
+    expect(response.body).to include('<Say>')
+    expect(response.body).to include('<Hangup/>')
+  end
+
+  it 'hangs up silently when the dial completed normally' do
+    post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAreq6', Direction: 'inbound' }
+    post '/umi/voice/15550009999/dial_status', params: { CallSid: 'CAreq6', DialCallStatus: 'completed', DialCallDuration: '42' }
+
+    expect(response.body).to include('<Hangup/>')
+    expect(response.body).not_to include('<Say>')
+  end
+
   it 'rings agents with a per-leg answered callback for attribution' do
     post '/umi/voice/15550009999/incoming', params: { From: '+15551112222', CallSid: 'CAreq4', Direction: 'inbound' }
 

@@ -13,7 +13,7 @@ Each agent has their **own** SIP login. Ask your admin for these three values:
 | Field | What it is | Example / current pilot value |
 |---|---|---|
 | **Domain** (SIP server) | the phone system address | `umi-spike-2c9dbf.sip.singapore.twilio.com` |
-| **Username** | your agent SIP user | `agent1` |
+| **Username** | your agent SIP user — `agent-<your Chatwoot user id>` (it links answered calls to you in Chatwoot) | `agent-1` |
 | **Password** | your SIP password | *(issued to you privately)* |
 
 > ⚠️ Treat these like a password — they are your phone line. Don't share or reuse them.
@@ -32,7 +32,7 @@ Each agent has their **own** SIP login. Ask your admin for these three values:
 1. Open Groundwire → **Settings** → **Accounts** → **＋** (add) → choose **Generic SIP account** (or "SIP Account").
 2. Fill in the **New Account** form:
    - **Title:** `UMI` (any label you like)
-   - **Username:** *(your username, e.g. `agent1`)*
+   - **Username:** *(your username, e.g. `agent-1`)*
    - **Password:** *(your password — case-sensitive, type it carefully)*
    - **Domain:** *(your domain, e.g. `umi-spike-2c9dbf.sip.singapore.twilio.com`)*
 3. **Incoming Calls:** tap it → select **Push Notifications**.
