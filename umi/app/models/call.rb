@@ -9,6 +9,11 @@ class Umi::Call < ApplicationRecord
   STATUSES = %w[ringing in_progress completed no_answer failed missed].freeze
   TERMINAL_STATUSES = %w[completed no_answer failed missed].freeze
 
+  # Chatwoot's native calls API serializes `direction` through this label
+  # (stored direction → wire direction). Mirror it so the account `calls`
+  # association, which points here, renders through that serializer unchanged.
+  DISPLAY_DIRECTION = { 'incoming' => 'inbound', 'outgoing' => 'outbound' }.freeze
+
   belongs_to :account
   belongs_to :inbox
   belongs_to :conversation
@@ -33,6 +38,10 @@ class Umi::Call < ApplicationRecord
   # Wire format the MIT frontend reads (helper/voice.js): hyphenated status, raw direction.
   def display_status
     status.to_s.tr('_', '-')
+  end
+
+  def direction_label
+    DISPLAY_DIRECTION[direction]
   end
 
   def recording_url
