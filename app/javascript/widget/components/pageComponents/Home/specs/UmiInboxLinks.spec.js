@@ -2,15 +2,16 @@ import { mount } from '@vue/test-utils';
 import UmiInboxLinks from '../UmiInboxLinks.vue';
 
 describe('UmiInboxLinks', () => {
-  it('renders the four UMI messenger links with the expected hrefs', () => {
+  it('renders the five UMI messenger links with the expected hrefs', () => {
     const wrapper = mount(UmiInboxLinks);
     const links = wrapper.findAll('a');
-    expect(links).toHaveLength(4);
+    expect(links).toHaveLength(5);
     expect(links.map(link => link.attributes('href'))).toEqual([
       'https://wa.me/66975311301',
       'https://line.me/R/ti/p/~@umi.store',
       'https://m.me/umi.clothing.store',
       'https://ig.me/m/umi.asia',
+      'tel:+66975311301',
     ]);
   });
 
@@ -24,7 +25,7 @@ describe('UmiInboxLinks', () => {
 
   it('labels each channel', () => {
     const text = mount(UmiInboxLinks).text();
-    ['WhatsApp', 'LINE', 'Messenger', 'Instagram'].forEach(label => {
+    ['WhatsApp', 'LINE', 'Messenger', 'Instagram', 'Call'].forEach(label => {
       expect(text).toContain(label);
     });
   });
