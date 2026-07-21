@@ -2,8 +2,8 @@
   "UMI": {
     "ASSISTANCE": "Assistance",
     "CHAT": "Chat",
-    "WELCOME_ONLINE": "Our team is available within minutes to assist you with any inquiries you may have. You'll also find quick answers in the topics below.",
-    "WELCOME_AWAY": "Our team will be available in {time} (9 AM GMT+7) to assist you with any inquiries you may have. You'll also find quick answers in the topics below.",
+    "WELCOME_ONLINE": "Our team is available within minutes to assist you with any inquiries you may have. You'll also find quick answers below.",
+    "WELCOME_AWAY": "Our team will be available in {time} (9 AM GMT+7) to assist you with any inquiries you may have. You'll also find quick answers below.",
     "FAQ": "FAQ",
     "TYPE_MESSAGE": "Type your message…",
     "SEND": "Send",
