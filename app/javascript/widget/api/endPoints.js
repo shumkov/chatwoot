@@ -125,6 +125,20 @@ const getMostReadArticles = (slug, locale) => ({
   },
 });
 
+// UMI: the storefront-curated featured set (Featured FAQ), ordered by
+// meta.featured_position. Falls back to getMostReadArticles when nothing is
+// featured (see the article store's fetch action).
+const getFeaturedArticles = (slug, locale) => ({
+  url: `/hc/${slug}/${locale}/articles.json`,
+  params: {
+    page: 1,
+    featured: true,
+    sort: 'featured',
+    status: 1,
+    per_page: 6,
+  },
+});
+
 export default {
   createConversation,
   sendMessage,
@@ -135,4 +149,5 @@ export default {
   getCampaigns,
   triggerCampaign,
   getMostReadArticles,
+  getFeaturedArticles,
 };
