@@ -16,6 +16,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 9 | IG mixed-batch event dispatch fix | `config/initializers/zz_umi_ig_event_dispatch_fix.rb`, `umi/app/jobs/webhooks_instagram_event_dispatch.rb`, `spec/umi/webhooks/instagram_events_job_dispatch_spec.rb` | Upstream `Webhooks::InstagramEventsJob#event_name` memoizes the first messaging item's event type across the batch loop, so a webhook batching `read` + `message` items dispatches later items to the wrong handler — the message crashes ReadStatusService and is **permanently lost**. Prepend resolves the event per item. | Upstream drops the `@event_name ||=` memoization (good first-PR candidate to chatwoot/chatwoot). |
 | 10 | IG fallback contact (persist DMs when profile fetch fails) | `config/initializers/zz_umi_ig_fallback_contact.rb`, `umi/app/services/instagram_fallback_contact.rb`, `spec/umi/services/instagram/messenger/message_text_fallback_spec.rb` | On the FB-page-linked IG path, a first-time contact's DM is silently dropped whenever the Graph profile fetch fails — missing **Advanced Access** to `instagram_manage_messages` (chatwoot#11578), error 230 (user consent), 9010, expired token. Prepend creates the contact from the IG-scoped id with a placeholder name (`Instagram user <last4>`) so the DM always persists; placeholder sticks until an agent renames it. | Upstream persists the message (or creates a fallback contact) on profile-fetch failure, and UMI's `instagram_manage_messages` Advanced Access is approved + verified. |
 | 11 | Keep FB/IG message when attachment download fails | `config/initializers/zz_umi_fbig_attachment_resilience.rb`, `umi/app/builders/messenger_attachment_resilience.rb`, `spec/umi/builders/messages/facebook/message_builder_attachment_spec.rb` | Both Messenger-family builders download attachments **inside** the message-creation transaction; an expired Meta CDN URL (`Down::Error`) rolled back the message row and lost the whole message, text included. Prepend rescues per attachment (logs `stage=attachment_failed` + tracker) so the message survives with whatever attachments could be stored. | Upstream moves attachment downloads out of the message transaction or rescues per attachment. |
+| 12 | FB/IG reconciliation vs Meta Conversations API (+opt-in auto-heal) | `umi/app/services/fbig/{conversation_recon_service,message_heal_service}.rb`, `umi/app/jobs/fbig/conversation_recon_job.rb`, `config/initializers/zz_umi_fbig_recon.rb`, specs in `spec/services/umi/fbig/`, `spec/jobs/umi/fbig/`; docs: `docs/UMI-FBIG-RECON-SPEC.md` | Webhook-side code can't see messages **Meta never delivered** (subscription outages/misconfig — e.g. the `message_echoes` gap found 2026-07-22 — or drops predating the pipeline patches). Daily cron (03:30 Bangkok, `low` queue) lists all in-window (48 h) message ids from the Graph Conversations API for both platforms and anti-joins against `messages.source_id`: misses log `reconcile_missing` lines (direction+sender, `suspect=multipart` labeling for the N-parts-one-row outbound class) + an always-emitted per-platform `reconcile_summary` (from `ensure`; auth errors stand down without retries). With `UMI_FBIG_RECON_HEAL=true` (default **off**), inbound hard misses are replayed through the regular webhook builders and stamped `umi_recovered`. Kill switch `UMI_FBIG_RECON_DISABLED=true`. Spike-validated against prod (mid formats match; found a real missing FB message from 2026-06-29 — the Business-Suite echo class). | Upstream ships webhook-delivery reconciliation for Meta channels, or Meta provides delivery guarantees/replay. |
 
 ## Patch details
 
@@ -304,6 +305,22 @@ Prod verification: DM the IG account + FB page, then
 `webhook_received → persisted`; any real drop now leaves a
 `rejected/dropped/error reason=…` line. Env-level causes still apply (Advanced
 Access approval, token freshness, subscription fields) — see the spec's runbook.
+
+### 12. FB/IG reconciliation vs Meta's Conversations API
+
+Design + three-lens review record + spike results in
+`docs/UMI-FBIG-RECON-SPEC.md`. The third layer of the FB/IG stack: webhooks
+(live) → trace #8 (diagnose) → recon #12 (detect what Meta never delivered).
+Daily scan, 48 h window (double-covers the daily cadence), grep-able
+`reconcile_missing` / `reconcile_summary` lines in the same `[UMI-FBIG]`
+prefix (own logging helper — removable independently of #8). Auth failures
+stand down without Sidekiq retries (sustained 4xx against Graph is itself a
+subscription-health risk). Auto-heal (`UMI_FBIG_RECON_HEAL=true`, default
+off) replays inbound hard misses through the regular webhook builders —
+contact creation, dedup and attachment degradation behave exactly as live —
+and stamps rows `content_attributes.umi_recovered`. Enable heal only after a
+few days of clean detection summaries. Recovered rows carry heal-time
+`created_at` (accepted; original timestamp stays in the log line).
 
 <!-- Add new patches here as commits, newest last. -->
 
