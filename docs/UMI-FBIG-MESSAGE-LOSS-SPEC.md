@@ -212,10 +212,12 @@ code. Material corrections folded in:
    Chatwoot handler; seen-events also feed the I3 batch shape).
 3. **`SENTRY_DSN` is NOT set in prod** (verified in the rails container env) —
    the `[UMI-FBIG]` lines are the primary forensic trail.
-4. **Log retention fixed** (umi-vps-infra `4a50982`): rails/sidekiq json-file
-   logs capped at 5×50 MB, and an hourly root cron appends all `[UMI-FBIG]`
-   lines to `/var/log/umi-fbig-trail.log` — container logs are otherwise
-   destroyed by every deploy (compose recreation).
+4. **Log retention fixed** (umi-vps-infra, evolved 2026-07-22): containers now
+   log to the **journald driver** (2 G cap, raised burst limits) — logs
+   survive deploys natively. Query the trail with
+   `journalctl CONTAINER_NAME=umi-chatwoot-rails-1 -g 'UMI-FBIG'` (and
+   `…-sidekiq-1` for job/builder stages). The flat
+   `/var/log/umi-fbig-trail.log` remains only as pre-journald history.
 5. **FB Messenger had zero inbound since 2026-06-21** (IG flowing daily) while
    the page subscription shows active — either genuinely no FB traffic or an
    upstream delivery problem; the `webhook_received` trace lines decide this
