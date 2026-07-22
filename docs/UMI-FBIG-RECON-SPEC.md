@@ -43,7 +43,7 @@ message-loss spec's runbook tells a human to do by hand ("absence of
 
 `Umi::Fbig::ConversationReconService` (per `Channel::FacebookPage`; the
 `Umi::Fbig` namespace keeps the 8–12 family cohesive, and the `[UMI-FBIG]`
-log prefix is load-bearing — the trail cron and planned Netdata check grep it):
+log prefix is load-bearing — the journald trail and planned Netdata check grep it):
 
 1. For each platform in `%w[messenger instagram]`, **independently rescued**:
    - Page through `/{page_id}/conversations` (fields `id,updated_time`,
@@ -198,11 +198,9 @@ summaries, then enable via env + restart.
 
 ## Known limitations (stated, not silent)
 
-- Deploy fragility of the daily burst: recon logs at 20:30 UTC, the trail cron
-  captures at :07 — a compose recreation inside that window loses that day's
-  lines from the persistent trail. Detection is stateless and the 48 h window
-  re-reports still-missing mids next day; only a self-healed <24 h transient
-  could slip. Accepted.
+- ~~Deploy fragility of the daily burst~~ — resolved: containers log via the
+  journald driver (umi-vps-infra, 2026-07-22), which captures lines instantly
+  and survives deploys; there is no cron-capture window anymore.
 - **IG unsupported-only inbound** is intentionally dropped by upstream with
   no row (`base_message_builder.rb:101`: blank text + every attachment type ∈
   {template, unsupported_type, ephemeral}) — recon reports these as

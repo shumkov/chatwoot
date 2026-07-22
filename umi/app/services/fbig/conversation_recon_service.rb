@@ -11,7 +11,7 @@
 # optional heal pass (UMI_FBIG_RECON_HEAL=true) replays missing INBOUND
 # messages through the regular webhook builders via Umi::Fbig::MessageHealService.
 #
-# Reporting contract (grep-able, consumed by the trail cron + future alert):
+# Reporting contract (grep-able, consumed by the journald trail + future alert):
 #   [UMI-FBIG] stage=reconcile_missing platform=… thread=… mid=… created=…
 #              direction=in|out sender=… [suspect=multipart]
 #   [UMI-FBIG] stage=reconcile_summary platform=… threads=… mids=… missing=…
