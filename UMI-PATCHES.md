@@ -12,6 +12,10 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 5 | Email inbox: read a Gmail label, not INBOX | `umi/app/services/imap/configurable_folder.rb`, `umi/app/services/imap/preserve_provider_config.rb`, `config/initializers/zz_umi_email_imap_folder.rb` | Stock Chatwoot hardcodes `imap.select('INBOX')`, so a shared reader mailbox (`shumabit@`, a member of the `info@`/`support@` Google Groups) would pull its whole inbox in. Prepends a configurable folder read from `channel.provider_config['imap_folder']` (+ a companion that preserves that key across OAuth token refresh); a Gmail filter labels only the group mail → the inbox ingests only that label, leaving the mailbox's other mail untouched (no archiving, no extra Workspace seat). | Upstream adds a per-inbox source folder/label for the email channel. |
 | 6 | Featured Help Center articles (storefront FAQ shortlist) | `umi/app/models/article_featurable.rb`, `umi/app/controllers/public/api/v1/portals/articles_controller.rb`, `config/initializers/zz_umi_featured_articles.rb`, `spec/models/umi/article_featurable_spec.rb`; **edits (UMI-owned):** `umi/app/models/shopify_help_center_syncable.rb`, `umi/app/services/shopify/help_center_sync_service.rb`, `spec/services/umi/shopify/help_center_sync_service_spec.rb`; **widget:** `app/javascript/widget/api/{article,endPoints}.js`, `app/javascript/widget/store/modules/articles.js` (+ spec) | A `featured` axis on Help Center articles, stored in `meta` (orthogonal to `category_id` — no duplication). Concern adds `featured` / `order_by_featured_position` scopes; a prepend extends the public articles endpoint with `?featured=true&sort=featured`; the sync projects `featured`→`featured` tag + `featured_position`→`custom.featured_position` metafield; the widget fetches the featured set (fallback to most-read). Drives the storefront Assistance drawer + Explore FAQ from one curated list. | Upstream ships native article tags / multi-category, or a first-class featured/pinned-article flag. |
 | 7 | Shopify customers → Chatwoot contacts sync | `umi/app/services/shopify/{client_factory,sync_lock,contact_sync_watermark,customer_contact_mapper,contact_sync_service}.rb`, `umi/app/jobs/shopify/{contact_backfill_job,contact_poll_job}.rb`, `umi/app/controllers/webhooks/shopify_compliance.rb`, `umi/app/controllers/shopify/persist_customer_link.rb`, `config/initializers/zz_umi_shopify_contacts.rb`, `lib/tasks/umi_shopify_contacts.rake`, specs in `spec/services/umi/shopify/`, `spec/jobs/umi/shopify/`, `spec/controllers/`; refactors patch #3's client construction into the shared `Umi::Shopify::ClientFactory`; docs: `UMI-SHOPIFY-CONTACT-SYNC-INVESTIGATION.md`, `UMI-SHOPIFY-CONTACT-SYNC-SPEC.md` | Proactively seed every Shopify customer as a Chatwoot contact (one-time throttled backfill + 30-min watermark poll on the existing integration token) so first-ever inbound calls/WhatsApp resolve to a real name (voice caller-ID injection is synchronous — only a pre-existing contact helps), agents can outbound-call any customer, and the base is segmentable. Adds the `customers/redact`/`customers/data_request` compliance handlers (core ignores them) and on-touch persistence of `shopify_customer_id` from the orders sidebar. Inert by default: backfill is a manual rake task; the poll cron registers only with `UMI_SHOPIFY_CONTACT_SYNC_ENABLED`. | Upstream ships a native Shopify customer sync, or UMI stops proactive contact seeding. |
+| 8 | FB/IG inbound message tracing | `config/initializers/zz_umi_fbig_trace.rb`, `umi/app/services/fbig_trace.rb`, `spec/umi/fbig_trace_spec.rb`; docs: `docs/UMI-FBIG-MESSAGE-LOSS-SPEC.md` | Meta delivers each webhook once (no history API) and the stock FB/IG inbound pipeline drops messages **silently** in many places (signature 400/401s, `standby` entries, unknown channels/pages, dedup, builder early-returns, reauth skips). Every decision point now logs one grep-able `[UMI-FBIG] stage=… key=value` line (`webhook_received` / `dispatch` / `rejected` / `dropped` / `persisted` with reasons + mids), so a production drop leaves a diagnosable trail. Never changes control flow; kill switch `UMI_FBIG_TRACE_DISABLED=true`. | Upstream ships equivalent per-message observability for the Meta webhook pipeline. |
+| 9 | IG mixed-batch event dispatch fix | `config/initializers/zz_umi_ig_event_dispatch_fix.rb`, `umi/app/jobs/webhooks_instagram_event_dispatch.rb`, `spec/umi/webhooks/instagram_events_job_dispatch_spec.rb` | Upstream `Webhooks::InstagramEventsJob#event_name` memoizes the first messaging item's event type across the batch loop, so a webhook batching `read` + `message` items dispatches later items to the wrong handler — the message crashes ReadStatusService and is **permanently lost**. Prepend resolves the event per item. | Upstream drops the `@event_name ||=` memoization (good first-PR candidate to chatwoot/chatwoot). |
+| 10 | IG fallback contact (persist DMs when profile fetch fails) | `config/initializers/zz_umi_ig_fallback_contact.rb`, `umi/app/services/instagram_fallback_contact.rb`, `spec/umi/services/instagram/messenger/message_text_fallback_spec.rb` | On the FB-page-linked IG path, a first-time contact's DM is silently dropped whenever the Graph profile fetch fails — missing **Advanced Access** to `instagram_manage_messages` (chatwoot#11578), error 230 (user consent), 9010, expired token. Prepend creates the contact from the IG-scoped id with a placeholder name (`Instagram user <last4>`) so the DM always persists; placeholder sticks until an agent renames it. | Upstream persists the message (or creates a fallback contact) on profile-fetch failure, and UMI's `instagram_manage_messages` Advanced Access is approved + verified. |
+| 11 | Keep FB/IG message when attachment download fails | `config/initializers/zz_umi_fbig_attachment_resilience.rb`, `umi/app/builders/messenger_attachment_resilience.rb`, `spec/umi/builders/messages/facebook/message_builder_attachment_spec.rb` | Both Messenger-family builders download attachments **inside** the message-creation transaction; an expired Meta CDN URL (`Down::Error`) rolled back the message row and lost the whole message, text included. Prepend rescues per attachment (logs `stage=attachment_failed` + tracker) so the message survives with whatever attachments could be stored. | Upstream moves attachment downloads out of the message transaction or rescues per attachment. |
 
 ## Patch details
 
@@ -258,6 +262,48 @@ DSN configured, so every "reported to the tracker" path (dead chains, compliance
 alerts, data_request pages) currently degrades to container-log lines only** —
 wire up error tracking or a log alert on `[umi-contact-sync]`/`[umi-shopify-compliance]`
 errors to make those alerts real.
+
+### 8–11. FB/IG inbound message loss (tracing + three fixes)
+
+One investigation, four patches — full drop-point map (F1–F8 / I1–I8), design,
+alternatives and runbook in `docs/UMI-FBIG-MESSAGE-LOSS-SPEC.md`. Background:
+Meta delivers webhooks once; upstream drops inbound FB/IG messages silently in
+several places (chatwoot#11578, #12055, #10465, #8333). All patched files were
+verified byte-identical to upstream v4.16.0 before patching.
+
+- **#8 tracing** (`zz_umi_fbig_trace.rb` + `Umi::FbigTrace`): one
+  `[UMI-FBIG] stage=… key=value` line per decision point — gem rack server
+  (`webhook_received`, signature `rejected`, `standby` drops, batch `error`),
+  IG controller signature rejects, IG job unknown-channel drops, FB creator
+  unknown-page drops, job-level `stage=error` lines with mids/sender ids
+  (dead-set jobs become grep-able), and per-message `persisted` /
+  `dropped reason=…` from the builders. Log-only (no control-flow change);
+  every trace-field computation runs inside the helper's own rescue so a trace
+  bug can lose a log line, never a webhook (pinned by a signed-webhook 200
+  spec); `UMI_FBIG_TRACE_DISABLED=true` silences. Ids/mids only — never
+  message text.
+- **#9 dispatch fix**: red→green regression specs proved a `[read, message]`
+  batch (mixed messaging array AND read-entry-before-message-entry) loses the
+  message via the memoized `@event_name`.
+- **#10 fallback contact**: red→green spec proved a first-time contact's DM is
+  dropped when the profile fetch raises (Advanced Access / 230 / auth errors);
+  now persists with contact name `Instagram user <last4>`. **Product-visible
+  behaviour change**: placeholder contacts appear in the CRM (name is permanent
+  until renamed — enrichment only runs on first contact), including for echo
+  threads (agent DMs a new user from the native app). Kill switch:
+  `UMI_IG_FALLBACK_CONTACT=off` restores stock drop behaviour.
+- **#11 attachment resilience**: red→green spec proved a `Down::TimeoutError`
+  during attachment download rolled back the whole FB message; the prepend on
+  `Messages::Messenger::MessageBuilder#attach_file` (covers the FB and IG
+  builders; deliberately NOT the whole `process_attachment`, so a rescued
+  DB-level error can't poison the open transaction) keeps the row's
+  `external_url`, reports to the tracker, and lets the message survive.
+
+Prod verification: DM the IG account + FB page, then
+`docker compose logs rails | grep '\[UMI-FBIG\]'` should show
+`webhook_received → persisted`; any real drop now leaves a
+`rejected/dropped/error reason=…` line. Env-level causes still apply (Advanced
+Access approval, token freshness, subscription fields) — see the spec's runbook.
 
 <!-- Add new patches here as commits, newest last. -->
 
