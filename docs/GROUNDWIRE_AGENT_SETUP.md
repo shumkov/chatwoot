@@ -88,3 +88,42 @@ Back on the Accounts screen, your account should show **Registered / Online** (u
 - Keep Groundwire **installed and signed in** — you don't have to keep it open (push wakes it), but don't delete it.
 - If you get a new phone, set it up again with the same details (your admin can reset your password if needed).
 - **This is a pilot setup** — report anything flaky (no ring, dropped audio, wrong caller name) to your admin so we can tune it.
+
+---
+
+## Appendix — Telegram onboarding message (admin: copy, fill in, send)
+
+Fill in `<USERNAME>` (the agent's `agent-<user_id>`) and `<PASSWORD>`, then send privately:
+
+> Hi! 👋 We're setting up work calls on your phone. Customers who call our shop number will ring on your phone like a normal call — even when it's locked. Takes about 5 minutes to set up:
+>
+> **1. Install the app**
+> Open the App Store (or Google Play) and install **Groundwire** by Acrobits. It's a paid app (~$10, one-time) — company will reimburse it.
+>
+> **2. Add the account**
+> Open Groundwire → **Settings** → **Accounts** → tap **＋** → choose **Generic SIP account**, and enter exactly:
+>
+> • Title: `UMI`
+> • Username: `<USERNAME>`
+> • Password: `<PASSWORD>`
+> • Domain: `umi-spike-2c9dbf.sip.singapore.twilio.com`
+>
+> (Type carefully — the password is case-sensitive. Easiest to copy-paste from this message.)
+>
+> **3. Three important settings** (in the same account screen)
+> • Tap **Incoming Calls** → choose **Push Notifications** ← this is what makes your phone ring when locked, don't skip it!
+> • Tap **Incoming Caller ID** → drag **Remote-Party-ID** to the top of the list (use the ☰ handle) ← this shows the customer's name when they call
+> • Find **Transport Protocol** (may be under Advanced) → choose **tcp**
+>
+> **4. Allow permissions**
+> When the app asks, allow **Microphone** and **Notifications** (both are required — no mic = no sound, no notifications = no ring).
+>
+> **5. Check it works**
+> Go back to the Accounts screen — it should say **Registered** with a green dot. ✅ Send me a screenshot when you see it!
+>
+> **How it works day to day:**
+> 📞 When a customer calls, your phone rings — just answer normally. Whoever answers first takes the call (it rings the whole team). Open Chatwoot to see who's calling and their history.
+> 🔇 No audio? Check microphone permission. Not ringing? Check step 3 (Push Notifications).
+> Keep the app installed and signed in — you don't need to keep it open.
+>
+> Any problem — message me a screenshot and I'll help! 🙌
