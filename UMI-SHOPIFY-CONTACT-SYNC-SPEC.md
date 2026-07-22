@@ -239,10 +239,16 @@ uses `Contact.import` which deliberately doesn't):
   deadline shouldn't depend on someone reading info logs)* + error log with shop and
   customer id; runbook: manual export. Never silently drop.
 - All other topics → `super` (existing `shop/redact` behavior untouched).
-- **Deployment gate (not code):** verify in the Partner Dashboard that compliance webhook
-  URLs point at `POST /webhooks/shopify` and test a real delivery. If UMI's app turns out
-  to be an admin-created custom app (never receives these), the handler stays as dead-code
-  insurance and the runbook is manual — recorded in UMI-PATCHES.
+- **Deployment gate (not code):** verify that the app's compliance-webhook URLs point at
+  `POST /webhooks/shopify`. If UMI's app turns out to be an admin-created custom app
+  (never receives these), the handler stays as dead-code insurance and the runbook is
+  manual — recorded in UMI-PATCHES.
+  **CLOSED 2026-07-22:** the app is a Dev-Dashboard app (org UMI, handle `umi-chatwoot`
+  — compliance webhooks are versioned app config there, not a Partner-Dashboard form);
+  version `umi-chatwoot-4` subscribes `customers/redact`, `customers/data_request` and
+  `shop/redact` to `https://chat.umi.store/webhooks/shopify`. App config is
+  version-controlled in `umi-vps-infra/shopify/umi-chatwoot/shopify.app.toml`
+  (`shopify app deploy --allow-updates` to change).
 
 ### 3g. On-touch persistence (prepend on the orders controller)
 

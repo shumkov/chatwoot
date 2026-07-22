@@ -240,13 +240,24 @@ Full design + three-lens review record in `UMI-SHOPIFY-CONTACT-SYNC-SPEC.md`
 - **Compliance**: `customers/redact` → destroy (no conversations) / anonymize (has
   conversations) / strip-only on a phone-only match; `customers/data_request` →
   tracker + error log (manual export). Always answers 200 (Shopify never
-  redelivers — failures go to the tracker). **Deploy gate: verify the app's
-  compliance-webhook URLs in the Partner Dashboard actually point at
-  `POST /webhooks/shopify` and test one delivery**; an admin-created custom app
-  never receives these (manual runbook then).
+  redelivers — failures go to the tracker). **Deploy gate closed 2026-07-22**: the
+  app is a Dev-Dashboard app (org UMI, handle `umi-chatwoot` — not Partner/admin-
+  created); app version `umi-chatwoot-4` subscribes all three privacy-compliance
+  topics to `https://chat.umi.store/webhooks/shopify`, and the app config is
+  version-controlled at `umi-vps-infra/shopify/umi-chatwoot/shopify.app.toml`
+  (redeploy with `shopify app deploy --allow-updates`).
 - Patch #3's help-center sync now builds its client through the shared
   `Umi::Shopify::ClientFactory` (single `Context.setup` mutex for all UMI Shopify
   services — two mutexes would reintroduce the Zeitwerk race).
+
+Rollout status (2026-07-22): backfill run on production (787 contacts linked, 175
+E.164 phones, watermark set); poll enabled via `UMI_SHOPIFY_CONTACT_SYNC_ENABLED`
++ `UMI_SHOPIFY_SHOP_DOMAIN` in `umi-vps-infra` (chatwoot env template) and
+verified advancing the watermark each tick. **Known gap: production has no Sentry
+DSN configured, so every "reported to the tracker" path (dead chains, compliance
+alerts, data_request pages) currently degrades to container-log lines only** —
+wire up error tracking or a log alert on `[umi-contact-sync]`/`[umi-shopify-compliance]`
+errors to make those alerts real.
 
 <!-- Add new patches here as commits, newest last. -->
 
