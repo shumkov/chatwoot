@@ -21,6 +21,18 @@ class Umi::Fbig::MessageHealService
   # stand-down belongs to the detection scan, and the detection line for this
   # mid is already on record.
   def heal(mid)
+    run_id = SecureRandom.uuid
+    acquired = Umi::Fbig::HistoryImportLock.acquire(@channel.id, run_id)
+    return :history_import_running unless acquired
+
+    heal_locked(mid)
+  ensure
+    Umi::Fbig::HistoryImportLock.release(@channel.id, run_id) if acquired
+  end
+
+  private
+
+  def heal_locked(mid)
     detail = fetch_detail(mid)
     return :content_unavailable if detail.nil?
     # A late webhook (or a previous heal) may have won the race since the
@@ -36,11 +48,9 @@ class Umi::Fbig::MessageHealService
     log_healed(mid, message)
     :healed
   rescue StandardError => e
-    Rails.logger.warn("[UMI-FBIG] stage=heal_error mid=#{mid} error=#{e.class}: #{e.message}")
+    Rails.logger.warn("[UMI-FBIG] stage=heal_error mid=#{mid} error=#{e.class}")
     :error
   end
-
-  private
 
   def fetch_detail(mid)
     api.get_object(mid, { fields: 'id,created_time,from,message,attachments' })
