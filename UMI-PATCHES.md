@@ -17,6 +17,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 10 | IG fallback contact (persist DMs when profile fetch fails) | `config/initializers/zz_umi_ig_fallback_contact.rb`, `umi/app/services/instagram_fallback_contact.rb`, `spec/umi/services/instagram/messenger/message_text_fallback_spec.rb` | On the FB-page-linked IG path, a first-time contact's DM is silently dropped whenever the Graph profile fetch fails — missing **Advanced Access** to `instagram_manage_messages` (chatwoot#11578), error 230 (user consent), 9010, expired token. Prepend creates the contact from the IG-scoped id with a placeholder name (`Instagram user <last4>`) so the DM always persists; placeholder sticks until an agent renames it. | Upstream persists the message (or creates a fallback contact) on profile-fetch failure, and UMI's `instagram_manage_messages` Advanced Access is approved + verified. |
 | 11 | Keep FB/IG message when attachment download fails | `config/initializers/zz_umi_fbig_attachment_resilience.rb`, `umi/app/builders/messenger_attachment_resilience.rb`, `spec/umi/builders/messages/facebook/message_builder_attachment_spec.rb` | Both Messenger-family builders download attachments **inside** the message-creation transaction; an expired Meta CDN URL (`Down::Error`) rolled back the message row and lost the whole message, text included. Prepend rescues per attachment (logs `stage=attachment_failed` + tracker) so the message survives with whatever attachments could be stored. | Upstream moves attachment downloads out of the message transaction or rescues per attachment. |
 | 12 | FB/IG reconciliation vs Meta Conversations API (+opt-in auto-heal) | `umi/app/services/fbig/{conversation_recon_service,message_heal_service}.rb`, `umi/app/jobs/fbig/conversation_recon_job.rb`, `config/initializers/zz_umi_fbig_recon.rb`, specs in `spec/services/umi/fbig/`, `spec/jobs/umi/fbig/`; docs: `docs/UMI-FBIG-RECON-SPEC.md` | Webhook-side code can't see messages **Meta never delivered** (subscription outages/misconfig — e.g. the `message_echoes` gap found 2026-07-22 — or drops predating the pipeline patches). Daily cron (03:30 Bangkok, `low` queue) lists all in-window (48 h) message ids from the Graph Conversations API for both platforms and anti-joins against `messages.source_id`: misses log `reconcile_missing` lines (direction+sender, `suspect=multipart` labeling for the N-parts-one-row outbound class) + an always-emitted per-platform `reconcile_summary` (from `ensure`; auth errors stand down without retries). With `UMI_FBIG_RECON_HEAL=true` (default **off**), inbound hard misses are replayed through the regular webhook builders and stamped `umi_recovered`. Kill switch `UMI_FBIG_RECON_DISABLED=true`. Spike-validated against prod (mid formats match; found a real missing FB message from 2026-06-29 — the Business-Suite echo class). | Upstream ships webhook-delivery reconciliation for Meta channels, or Meta provides delivery guarantees/replay. |
+| 13 | FB contact names via Conversations participants (John Doe fix) | `umi/app/services/fbig/participant_name_service.rb`, `umi/app/builders/facebook_contact_name_fallback.rb`, `config/initializers/zz_umi_fb_contact_name_fallback.rb`, `spec/umi/builders/messages/facebook/message_builder_name_fallback_spec.rb`; **core-spec edit:** one stub line in `spec/builders/messages/facebook/message_builder_spec.rb` | Meta denies the `/PSID` profile API without the **Business Asset User Profile Access** feature (never requested pre-2026-07-23; App Review pending) and for pre-app-connection threads (error 100/33) — upstream then permanently names contacts "John Doe". Fallback resolves the name via the page-inbox Conversations API `participants` field (`?user_id=<psid>`; the source Business Suite shows; needs only already-held permissions); any lookup failure keeps stock behaviour. Prod-verified: resolved all 12 profile-locked senders. | Business Asset User Profile Access granted + profile API resolving all new senders in practice (`stage=participant_name_used` lines go quiet), or upstream ships an equivalent fallback. |
 
 ## Patch details
 
@@ -321,6 +322,24 @@ contact creation, dedup and attachment degradation behave exactly as live —
 and stamps rows `content_attributes.umi_recovered`. Enable heal only after a
 few days of clean detection summaries. Recovered rows carry heal-time
 `created_at` (accepted; original timestamp stays in the log line).
+
+### 13. FB contact names via Conversations participants (John Doe fix)
+
+Meta's `/PSID` User Profile API answers only for apps with the **Business
+Asset User Profile Access** feature (App Review submitted 2026-07-23, was
+never requested before) and denies pre-app-connection threads outright with
+error 100/33 — upstream then names the contact "John Doe" forever. The same
+names ride the page-inbox Conversations API (`?user_id=<psid>&fields=participants`,
+the source Business Suite itself displays), which needs only permissions the
+app already holds. `Umi::FacebookContactNameFallback` prepends
+`process_contact_params_result` to use it before accepting a placeholder;
+`Umi::Fbig::ParticipantNameService` does the lookup (nil on any failure →
+stock behaviour, pinned by spec). Red→green: profile-denied sender named from
+participants; lookup-also-fails path keeps John Doe. **Core-spec edit:** one
+`get_connections` stub line added to
+`spec/builders/messages/facebook/message_builder_spec.rb` (the new call the
+fallback makes). One-off backfill run 2026-07-23: 12 existing John Does
+renamed via the same data (console, not code).
 
 <!-- Add new patches here as commits, newest last. -->
 
