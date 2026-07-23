@@ -42,6 +42,10 @@ describe Messages::Facebook::MessageBuilder do
 
     it 'raises exception for non profile account' do
       allow(Koala::Facebook::API).to receive(:new).and_return(fb_object)
+      # The UMI participants-name fallback (zz_umi_fb_contact_name_fallback)
+      # queries the conversations edge when the profile is unavailable; an
+      # empty result keeps this example on the stock placeholder path.
+      allow(fb_object).to receive(:get_connections).and_return([])
       allow(fb_object).to receive(:get_object).and_raise(Koala::Facebook::ClientError.new(400, '',
                                                                                           {
                                                                                             'type' => 'OAuthException',
