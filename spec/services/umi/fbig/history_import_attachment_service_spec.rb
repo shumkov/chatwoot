@@ -62,9 +62,11 @@ describe Umi::Fbig::HistoryImportAttachmentService do
   it 'purges already uploaded blobs when a later attachment fails transiently' do
     image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
     image_file.rewind
+    limits = []
     calls = 0
-    allow(SafeFetch).to receive(:fetch) do |_url, **, &block|
+    allow(SafeFetch).to receive(:fetch) do |_url, max_bytes:, **, &block|
       calls += 1
+      limits << max_bytes
       calls == 1 ? block.call(image_result) : raise(SafeFetch::FetchError)
     end
     detail = {
@@ -75,10 +77,261 @@ describe Umi::Fbig::HistoryImportAttachmentService do
         ]
       }
     }
+    remaining_budget = image_file.size + 3
 
-    expect { service.stage(detail) }
-      .to raise_error(described_class::TransientError)
+    error = nil
+    expect do
+      service.stage(detail, remaining_budget_bytes: remaining_budget)
+    rescue described_class::TransientError => e
+      error = e
+      raise
+    end.to raise_error(described_class::TransientError)
       .and not_change(ActiveStorage::Blob, :count)
+    expect(error).to have_attributes(bytes_used: remaining_budget, budget_exhausted: true)
+    expect(limits).to eq([remaining_budget, 3])
+  end
+
+  it 'charges the per-file cap when a transport failure may have partially streamed a file' do
+    allow(service).to receive(:default_max_bytes).and_return(10)
+    allow(SafeFetch).to receive(:fetch).and_raise(SafeFetch::FetchError)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/image.png' } }] } }
+    error = nil
+
+    expect do
+      service.stage(detail)
+    rescue described_class::TransientError => e
+      error = e
+      raise
+    end.to raise_error(described_class::TransientError)
+    expect(error).to have_attributes(bytes_used: 10, budget_exhausted: false)
+  end
+
+  it 'does not charge an HTTP retry response that never reached the stream callback' do
+    allow(service).to receive(:default_max_bytes).and_return(10)
+    allow(SafeFetch).to receive(:fetch).and_raise(SafeFetch::HttpError, '503 Service Unavailable')
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/image.png' } }] } }
+    error = nil
+
+    expect do
+      service.stage(detail)
+    rescue described_class::TransientError => e
+      error = e
+      raise
+    end.to raise_error(described_class::TransientError)
+    expect(error).to have_attributes(bytes_used: 0, budget_exhausted: false)
+  end
+
+  it 'charges a downloaded attachment when its blob upload fails' do
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    allow(ActiveStorage::Blob).to receive(:build_after_unfurling).and_wrap_original do |original, **attributes|
+      blob = original.call(**attributes)
+      allow(blob).to receive(:upload_without_unfurling).and_raise(StandardError, 'storage failed')
+      blob
+    end
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/image.png' } }] } }
+    error = nil
+
+    expect do
+      service.stage(detail)
+    rescue described_class::TransientError => e
+      error = e
+      raise
+    end.to raise_error(described_class::TransientError)
+      .and not_change(ActiveStorage::Blob, :count)
+    expect(error.bytes_used).to eq(image_file.size)
+  end
+
+  it 'allows a staged attachment to exactly consume the remaining shared download budget' do
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/image.png' } }] } }
+
+    result = service.stage(detail, remaining_budget_bytes: image_file.size)
+
+    expect(result.attachments.size).to eq(1)
+    expect(result.bytes_used).to eq(image_file.size)
+  ensure
+    service.cleanup_unattached!(result) if result
+  end
+
+  it 'purges a staged attachment that crosses the remaining shared download budget by one byte' do
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/image.png' } }] } }
+    error = nil
+
+    expect do
+      service.stage(detail, remaining_budget_bytes: image_file.size - 1)
+    rescue described_class::BudgetExceeded => e
+      error = e
+      raise
+    end.to raise_error(described_class::BudgetExceeded)
+      .and not_change(ActiveStorage::Blob, :count)
+    expect(error.bytes_used).to eq(image_file.size)
+  end
+
+  it 'fails before fetching when the shared download budget is already exhausted' do
+    allow(SafeFetch).to receive(:fetch)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/image.png' } }] } }
+
+    expect do
+      service.stage(detail, remaining_budget_bytes: 0)
+    end.to raise_error(described_class::BudgetExceeded) { |error| expect(error.bytes_used).to eq(0) }
+    expect(SafeFetch).not_to have_received(:fetch)
+  end
+
+  it 'accounts for the first staged attachment when the second attachment crosses the remaining budget' do
+    first_file = Tempfile.new(['history-import-first', '.png'], binmode: true)
+    first_file.write('first')
+    first_file.rewind
+    first_result = SafeFetch::Result.new(tempfile: first_file, filename: 'first.png', content_type: 'image/png')
+    limits = []
+    calls = 0
+    allow(SafeFetch).to receive(:fetch) do |_url, max_bytes:, **, &block|
+      calls += 1
+      limits << max_bytes
+      calls == 1 ? block.call(first_result) : raise(SafeFetch::FileTooLargeError)
+    end
+    detail = {
+      'attachments' => {
+        'data' => [
+          { 'image_data' => { 'url' => 'https://cdn.example/first.png' } },
+          { 'image_data' => { 'url' => 'https://cdn.example/second.png' } }
+        ]
+      }
+    }
+    error = nil
+    remaining_budget = first_file.size + 3
+
+    expect do
+      service.stage(detail, remaining_budget_bytes: remaining_budget)
+    rescue described_class::BudgetExceeded => e
+      error = e
+      raise
+    end.to raise_error(described_class::BudgetExceeded)
+      .and not_change(ActiveStorage::Blob, :count)
+    expect(error.bytes_used).to eq(remaining_budget)
+    expect(limits).to eq([remaining_budget, 3])
+  ensure
+    first_file&.close!
+  end
+
+  it 'preserves budget exhaustion and consumed bytes when staged-blob cleanup fails' do
+    first_file = Tempfile.new(['history-import-first', '.png'], binmode: true)
+    first_file.write('first')
+    first_file.rewind
+    first_result = SafeFetch::Result.new(tempfile: first_file, filename: 'first.png', content_type: 'image/png')
+    calls = 0
+    allow(SafeFetch).to receive(:fetch) do |_url, **, &block|
+      calls += 1
+      calls == 1 ? block.call(first_result) : raise(SafeFetch::FileTooLargeError)
+    end
+    allow(ActiveStorage::Blob).to receive(:find_by).and_wrap_original do |original, **attributes|
+      blob = original.call(**attributes)
+      allow(blob).to receive(:purge).and_raise(StandardError, 'storage unavailable')
+      blob
+    end
+    detail = {
+      'attachments' => {
+        'data' => [
+          { 'image_data' => { 'url' => 'https://cdn.example/first.png' } },
+          { 'image_data' => { 'url' => 'https://cdn.example/second.png' } }
+        ]
+      }
+    }
+    error = nil
+    remaining_budget = first_file.size + 3
+
+    expect do
+      service.stage(detail, remaining_budget_bytes: remaining_budget)
+    rescue described_class::CleanupError => e
+      error = e
+      raise
+    end.to raise_error(described_class::CleanupError)
+    expect(error).to have_attributes(bytes_used: remaining_budget, budget_exhausted: true)
+  ensure
+    first_file&.close!
+  end
+
+  it 'charges the per-file cap for an oversized file and reduces the next attachment limit' do
+    accepted_file = Tempfile.new(['history-import-accepted', '.png'], binmode: true)
+    accepted_file.write('okay')
+    accepted_file.rewind
+    accepted_result = SafeFetch::Result.new(tempfile: accepted_file, filename: 'accepted.png', content_type: 'image/png')
+    limits = []
+    calls = 0
+    allow(service).to receive(:default_max_bytes).and_return(10)
+    allow(SafeFetch).to receive(:fetch) do |_url, max_bytes:, **, &block|
+      calls += 1
+      limits << max_bytes
+      calls == 1 ? raise(SafeFetch::FileTooLargeError) : block.call(accepted_result)
+    end
+    detail = {
+      'attachments' => {
+        'data' => [
+          { 'file_url' => 'https://cdn.example/oversized.pdf' },
+          { 'image_data' => { 'url' => 'https://cdn.example/accepted.png' } }
+        ]
+      }
+    }
+
+    result = service.stage(detail, remaining_budget_bytes: 15)
+
+    expect(result.omissions).to eq(file_too_large: 1)
+    expect(result.bytes_used).to eq(14)
+    expect(limits).to eq([10, 5])
+  ensure
+    service.cleanup_unattached!(result) if result
+    accepted_file&.close!
+  end
+
+  it 'charges a rejected generic download against this result and the next attachment limit' do
+    rejected_file = Tempfile.new(['history-import-rejected', '.exe'], binmode: true)
+    accepted_file = Tempfile.new(['history-import-accepted', '.png'], binmode: true)
+    rejected_file.write('bad')
+    rejected_file.rewind
+    accepted_file.write('ok')
+    accepted_file.rewind
+    results = {
+      'https://cdn.example/rejected.exe' => SafeFetch::Result.new(
+        tempfile: rejected_file,
+        filename: 'rejected.exe',
+        content_type: 'application/octet-stream'
+      ),
+      'https://cdn.example/accepted.png' => SafeFetch::Result.new(
+        tempfile: accepted_file,
+        filename: 'accepted.png',
+        content_type: 'image/png'
+      )
+    }
+    limits = []
+    allow(SafeFetch).to receive(:fetch) do |url, max_bytes:, **, &block|
+      limits << max_bytes
+      block.call(results.fetch(url))
+    end
+    detail = {
+      'attachments' => {
+        'data' => [
+          { 'file_url' => 'https://cdn.example/rejected.exe' },
+          { 'image_data' => { 'url' => 'https://cdn.example/accepted.png' } }
+        ]
+      }
+    }
+
+    result = service.stage(detail, remaining_budget_bytes: rejected_file.size + accepted_file.size)
+
+    expect(result.attachments.size).to eq(1)
+    expect(result.omissions).to eq(unsupported_content_type: 1)
+    expect(result.bytes_used).to eq(rejected_file.size + accepted_file.size)
+    expect(limits).to eq([rejected_file.size + accepted_file.size, accepted_file.size])
+  ensure
+    service.cleanup_unattached!(result) if result
+    rejected_file&.close!
+    accepted_file&.close!
   end
 
   it 'keeps associated blobs and purges only unattached staged blobs' do

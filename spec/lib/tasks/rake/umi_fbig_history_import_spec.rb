@@ -8,9 +8,42 @@ RSpec.describe 'umi:fbig:history_import' do
 
   let(:account) { create(:account) }
   let(:channel) do
-    build(:channel_facebook_page, account: account, inbox: nil, page_id: 'page-1', instagram_id: 'instagram-1')
+    build(:channel_facebook_page, account: account, inbox: nil, page_id: '123456789', instagram_id: '987654321')
   end
   let(:inbox) { create(:inbox, account: account, channel: channel) }
+  let(:approval) do
+    values = {
+      'schema_version' => '1',
+      'repository_commit' => 'a' * 40,
+      'image_digest' => "ghcr.io/shumkov/chatwoot@sha256:#{'b' * 64}",
+      'clone_backup_id' => '20260724T190000Z-0123456789abcdef',
+      'clone_database_name' => 'chatwoot_fbig_clone',
+      'database_dump_sha256' => 'c' * 64,
+      'source_storage_manifest_sha256' => 'd' * 64,
+      'restored_storage_manifest_sha256' => 'e' * 64,
+      'account_id' => account.id.to_s,
+      'inbox_id' => inbox.id.to_s,
+      'facebook_page_id' => channel.page_id,
+      'instagram_business_id' => channel.instagram_id,
+      'since' => 'all',
+      'before' => '2025-02-01T00:00:00Z',
+      'outbound_policy' => 'pre_presence',
+      'profile_mode' => 'defer',
+      'messenger_count' => '1',
+      'messenger_fingerprint' => 'f' * 64,
+      'instagram_count' => '0',
+      'instagram_fingerprint' => '1' * 64,
+      'placeholder_targets_sha256' => '2' * 64,
+      'source_dry_log_sha256' => '3' * 64,
+      'source_dry_summary_sha256' => '4' * 64,
+      'approved_by' => 'operator@example.com',
+      'approved_at' => '2025-02-01T01:00:00Z'
+    }
+    bytes = Umi::Fbig::HistoryApprovalManifest::FIELD_NAMES.map do |name|
+      "#{name}\t#{values.fetch(name)}\n"
+    end.join
+    Umi::Fbig::HistoryApprovalManifest.parse(bytes)
+  end
   let(:environment) do
     {
       DRY_RUN: nil,
@@ -19,6 +52,16 @@ RSpec.describe 'umi:fbig:history_import' do
       OUTBOUND_POLICY: nil,
       PLATFORMS: nil,
       ACK_SINGLE_CONVERSATION_REOPEN: nil,
+      ACK_EXPAND_EXISTING: nil,
+      PROFILE_MODE: nil,
+      UMI_FBIG_HISTORY_APPROVAL_MODE: nil,
+      UMI_FBIG_APPROVAL_MANIFEST_PATH: nil,
+      UMI_FBIG_APPROVAL_CHECKSUM_PATH: nil,
+      UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS: nil,
+      UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: nil,
+      UMI_FBIG_RUNTIME_IMAGE_DIGEST: nil,
+      UMI_FBIG_HISTORY_EXPECTED_DATABASE: ActiveRecord::Base.connection_db_config.database,
+      UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES: nil,
       UMI_FBIG_HISTORY_GRAPH_DELAY_MS: nil,
       UMI_FBIG_HISTORY_MAX_CONVERSATION_PAGES: nil,
       UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES: nil
@@ -36,7 +79,61 @@ RSpec.describe 'umi:fbig:history_import' do
     end
   end
 
-  it 'requires the reviewed cutoff and outbound policy before applying' do
+  it 'rejects a missing approval mode before loading the inbox' do
+    allow(Inbox).to receive(:find)
+
+    with_modified_env(**environment) do
+      expect { task.invoke(inbox.id) }
+        .to raise_error(SystemExit)
+        .and output(/UMI_FBIG_HISTORY_APPROVAL_MODE/).to_stderr
+    end
+
+    expect(Inbox).not_to have_received(:find)
+  end
+
+  it 'aborts before loading the inbox when the connected database does not match the expected database' do
+    allow(Inbox).to receive(:find)
+    env = environment.merge(
+      DRY_RUN: 'true',
+      SINCE: 'all',
+      OUTBOUND_POLICY: 'pre_presence',
+      PLATFORMS: 'messenger,instagram',
+      PROFILE_MODE: 'defer',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe',
+      UMI_FBIG_HISTORY_EXPECTED_DATABASE: 'not_the_connected_database'
+    )
+
+    with_modified_env(**env) do
+      expect { task.invoke(inbox.id) }
+        .to raise_error(SystemExit)
+        .and output(/database_identity_mismatch/).to_stderr
+    end
+
+    expect(Inbox).not_to have_received(:find)
+  end
+
+  it 'requires the expected database before loading the inbox' do
+    allow(Inbox).to receive(:find)
+    env = environment.merge(
+      DRY_RUN: 'true',
+      SINCE: 'all',
+      OUTBOUND_POLICY: 'pre_presence',
+      PLATFORMS: 'messenger,instagram',
+      PROFILE_MODE: 'defer',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe',
+      UMI_FBIG_HISTORY_EXPECTED_DATABASE: nil
+    )
+
+    with_modified_env(**env) do
+      expect { task.invoke(inbox.id) }
+        .to raise_error(SystemExit)
+        .and output(/UMI_FBIG_HISTORY_EXPECTED_DATABASE is required/).to_stderr
+    end
+
+    expect(Inbox).not_to have_received(:find)
+  end
+
+  it 'requires the reviewed cutoff, outbound policy, and shared download budget before applying' do
     env = environment.merge(DRY_RUN: 'false', SINCE: 'all')
 
     with_modified_env(**env) do
@@ -55,7 +152,14 @@ RSpec.describe 'umi:fbig:history_import' do
     )
     allow(Umi::Fbig::HistoryImportService).to receive(:new).and_return(service)
     allow(service).to receive(:perform).and_return(result)
-    env = environment.merge(SINCE: 'all')
+    env = environment.merge(
+      DRY_RUN: 'true',
+      SINCE: 'all',
+      OUTBOUND_POLICY: 'pre_presence',
+      PLATFORMS: 'messenger,instagram',
+      PROFILE_MODE: 'defer',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe'
+    )
 
     with_modified_env(**env) do
       expect { task.invoke(inbox.id) }
@@ -68,7 +172,63 @@ RSpec.describe 'umi:fbig:history_import' do
       before: kind_of(Time),
       dry_run: true,
       platforms: %w[messenger instagram],
-      outbound_policy: nil,
+      outbound_policy: 'pre_presence',
+      accepted_contentless: {
+        'messenger' => Umi::Fbig::ContentlessFingerprint.build(platform: 'messenger', mids: []),
+        'instagram' => Umi::Fbig::ContentlessFingerprint.build(platform: 'instagram', mids: [])
+      },
+      profile_mode: 'defer',
+      ack_expand_existing: false,
+      max_download_bytes: nil,
+      graph_options: {
+        delay_ms: 250,
+        max_conversation_pages: 10_000,
+        max_message_pages: 10_000
+      }
+    )
+  end
+
+  it 'passes explicit expansion acknowledgement to the importer' do
+    service = instance_double(Umi::Fbig::HistoryImportService)
+    result = Umi::Fbig::HistoryImportService::Result.new(
+      stats: { exit_failures: 0 },
+      scan_complete: true,
+      write_complete: true,
+      degraded: false,
+      dry_run: false
+    )
+    allow(Umi::Fbig::HistoryImportService).to receive(:new).and_return(service)
+    allow(service).to receive(:perform).and_return(result)
+    allow(Umi::Fbig::HistoryApprovalManifest).to receive(:load).and_return(approval)
+    env = environment.merge(
+      DRY_RUN: 'false',
+      PLATFORMS: 'messenger',
+      ACK_EXPAND_EXISTING: 'true',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'approved',
+      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v1.tsv',
+      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v1.tsv.sha256',
+      UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: approval.repository_commit,
+      UMI_FBIG_RUNTIME_IMAGE_DIGEST: approval.image_digest,
+      UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES: '104857600'
+    )
+
+    with_modified_env(**env) do
+      task.invoke(inbox.id)
+    end
+
+    expect(Umi::Fbig::HistoryImportService).to have_received(:new).with(
+      inbox,
+      since: nil,
+      before: Time.zone.parse('2025-02-01 00:00:00 UTC'),
+      dry_run: false,
+      platforms: ['messenger'],
+      outbound_policy: 'pre_presence',
+      accepted_contentless: {
+        'messenger' => Umi::Fbig::ContentlessFingerprint::Result.new(count: 1, fingerprint: 'f' * 64)
+      },
+      profile_mode: 'defer',
+      ack_expand_existing: true,
+      max_download_bytes: 104_857_600,
       graph_options: {
         delay_ms: 250,
         max_conversation_pages: 10_000,
@@ -89,7 +249,14 @@ RSpec.describe 'umi:fbig:history_import' do
     )
     allow(Umi::Fbig::HistoryImportService).to receive(:new).and_return(service)
     allow(service).to receive(:perform).and_return(result)
-    env = environment.merge(SINCE: 'all')
+    env = environment.merge(
+      DRY_RUN: 'true',
+      SINCE: 'all',
+      OUTBOUND_POLICY: 'pre_presence',
+      PLATFORMS: 'messenger,instagram',
+      PROFILE_MODE: 'defer',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe'
+    )
 
     with_modified_env(**env) do
       expect { task.invoke(inbox.id) }
@@ -108,7 +275,14 @@ RSpec.describe 'umi:fbig:history_import' do
     )
     allow(Umi::Fbig::HistoryImportService).to receive(:new).and_return(service)
     allow(service).to receive(:perform).and_return(result)
-    env = environment.merge(SINCE: 'all')
+    env = environment.merge(
+      DRY_RUN: 'true',
+      SINCE: 'all',
+      OUTBOUND_POLICY: 'pre_presence',
+      PLATFORMS: 'messenger,instagram',
+      PROFILE_MODE: 'defer',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe'
+    )
 
     with_modified_env(**env) do
       expect { task.invoke(inbox.id) }.to raise_error(SystemExit)
@@ -116,7 +290,34 @@ RSpec.describe 'umi:fbig:history_import' do
   end
 
   it 'rejects unsafe or unbounded task controls' do
-    env = environment.merge(SINCE: 'all', UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES: '0')
+    env = environment.merge(
+      DRY_RUN: 'true',
+      SINCE: 'all',
+      OUTBOUND_POLICY: 'pre_presence',
+      PLATFORMS: 'messenger,instagram',
+      PROFILE_MODE: 'defer',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe',
+      UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES: '0'
+    )
+
+    with_modified_env(**env) do
+      expect { task.invoke(inbox.id) }.to raise_error(SystemExit)
+    end
+  end
+
+  it 'rejects a non-positive shared download budget' do
+    allow(Umi::Fbig::HistoryApprovalManifest).to receive(:load).and_return(approval)
+    env = environment.merge(
+      DRY_RUN: 'false',
+      PLATFORMS: 'messenger',
+      ACK_EXPAND_EXISTING: 'true',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'approved',
+      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v1.tsv',
+      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v1.tsv.sha256',
+      UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: approval.repository_commit,
+      UMI_FBIG_RUNTIME_IMAGE_DIGEST: approval.image_digest,
+      UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES: '0'
+    )
 
     with_modified_env(**env) do
       expect { task.invoke(inbox.id) }.to raise_error(SystemExit)

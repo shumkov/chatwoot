@@ -43,6 +43,8 @@ RSpec.describe Umi::Call do
   it 'is reachable via message.call (association repointed to Umi::Call)' do
     message = create(:message, account: account, conversation: conversation, content_type: 'voice_call')
     call.update!(message: message)
-    expect(message.reload.call).to eq(call)
+    associated_call = message.reload.call
+    expect(associated_call.class.name).to eq('Umi::Call')
+    expect(associated_call.id).to eq(call.id)
   end
 end
