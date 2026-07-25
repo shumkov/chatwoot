@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_07_13_184351) do
+ActiveRecord::Schema[7.1].define(version: 2026_07_24_000000) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -94,6 +94,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_07_13_184351) do
     t.datetime "created_at", precision: nil, null: false
     t.index ["blob_id"], name: "index_active_storage_attachments_on_blob_id"
     t.index ["record_type", "record_id", "name", "blob_id"], name: "index_active_storage_attachments_uniqueness", unique: true
+    t.index ["record_type", "record_id", "name"], name: "index_active_storage_contact_avatar_uniqueness", unique: true, where: "(((record_type)::text = 'Contact'::text) AND ((name)::text = 'avatar'::text))"
   end
 
   create_table "active_storage_blobs", force: :cascade do |t|

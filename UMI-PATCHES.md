@@ -18,7 +18,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 11 | Keep FB/IG message when attachment download fails | `config/initializers/zz_umi_fbig_attachment_resilience.rb`, `umi/app/builders/messenger_attachment_resilience.rb`, `spec/umi/builders/messages/facebook/message_builder_attachment_spec.rb` | Both Messenger-family builders download attachments **inside** the message-creation transaction; an expired Meta CDN URL (`Down::Error`) rolled back the message row and lost the whole message, text included. Prepend rescues per attachment (logs `stage=attachment_failed` + tracker) so the message survives with whatever attachments could be stored. | Upstream moves attachment downloads out of the message transaction or rescues per attachment. |
 | 12 | FB/IG reconciliation vs Meta Conversations API (+opt-in auto-heal) | `umi/app/services/fbig/{conversation_recon_service,message_heal_service}.rb`, `umi/app/jobs/fbig/conversation_recon_job.rb`, `config/initializers/zz_umi_fbig_recon.rb`, specs in `spec/services/umi/fbig/`, `spec/jobs/umi/fbig/`; docs: `docs/UMI-FBIG-RECON-SPEC.md` | Webhook-side code can't see messages **Meta never delivered** (subscription outages/misconfig — e.g. the `message_echoes` gap found 2026-07-22 — or drops predating the pipeline patches). Daily cron (03:30 Bangkok, `low` queue) lists all in-window (48 h) message ids from the Graph Conversations API for both platforms and anti-joins against `messages.source_id`: misses log `reconcile_missing` lines (direction+sender, `suspect=multipart` labeling for the N-parts-one-row outbound class) + an always-emitted per-platform `reconcile_summary` (from `ensure`; auth errors stand down without retries). With `UMI_FBIG_RECON_HEAL=true` (default **off**), inbound hard misses are replayed through the regular webhook builders and stamped `umi_recovered`. Kill switch `UMI_FBIG_RECON_DISABLED=true`. Spike-validated against prod (mid formats match; found a real missing FB message from 2026-06-29 — the Business-Suite echo class). | Upstream ships webhook-delivery reconciliation for Meta channels, or Meta provides delivery guarantees/replay. |
 | 13 | FB contact names via Conversations participants (John Doe fix) | `umi/app/services/fbig/participant_name_service.rb`, `umi/app/builders/facebook_contact_name_fallback.rb`, `config/initializers/zz_umi_fb_contact_name_fallback.rb`, `spec/umi/builders/messages/facebook/message_builder_name_fallback_spec.rb`; **core-spec edit:** one stub line in `spec/builders/messages/facebook/message_builder_spec.rb` | Meta denies the `/PSID` profile API without the **Business Asset User Profile Access** feature (never requested pre-2026-07-23; App Review pending) and for pre-app-connection threads (error 100/33) — upstream then permanently names contacts "John Doe". Fallback resolves the name via the page-inbox Conversations API `participants` field (`?user_id=<psid>`; the source Business Suite shows; needs only already-held permissions); any lookup failure keeps stock behaviour. Prod-verified: resolved all 12 profile-locked senders. | Business Asset User Profile Access granted + profile API resolving all new senders in practice (`stage=participant_name_used` lines go quiet), or upstream ships an equivalent fallback. |
-| 14 | Historical FB/IG archive import | `umi/app/services/fbig/history_import_{service,graph_client,attachment_service,lock}.rb`, `umi/app/services/fbig/message_heal_service.rb`, `lib/tasks/umi_fbig_history_import.rake`, specs in `spec/services/umi/fbig/` and `spec/lib/tasks/rake/`; docs: `docs/UMI-FBIG-HISTORY-IMPORT-SPEC.md` | Manual dry-run-first import of the older Messenger/Instagram history Meta still exposes. Exhausts bounded cursors, validates participant/direction/detail identity, stages media through SafeFetch, and directly inserts historically timestamped messages into one deterministic resolved archive per Meta thread—without firing Chatwoot message/conversation callbacks, customer notifications, automations, bots, webhooks, or reply delivery. Explicit scope/cutoff/outbound-overlap policy, per-channel renewable lock, omission markers, and scoped mid checks make reruns operationally safe. | Upstream provides a callback-safe Meta history importer with original timestamps, archive state, outbound multipart handling, and explicit media degradation; or UMI completes the one-time import and no longer needs reruns. |
+| 14 | Historical FB/IG archive import | `umi/app/services/fbig/history_import_*.rb`, `umi/app/services/fbig/{history_approval_manifest,history_profile_backfill_service,profile_*,avatar_*,contentless_fingerprint,sanitized_koala_api,typed_value_digest}.rb`, `umi/app/services/fbig/message_heal_service.rb`, `lib/tasks/umi_fbig_history_import.rake`, `db/migrate/*_add_unique_contact_avatar_attachment_index.rb`, `db/schema.rb`, focused specs in `spec/services/umi/fbig/`, `spec/models/active_storage/`, and `spec/lib/tasks/rake/`; docs: `docs/UMI-FBIG-{HISTORY-IMPORT-SPEC,FULL-HISTORY-EXPANSION-SPEC,FULL-HISTORY-RUNBOOK}.md` | One-time, digest-bound import of every Messenger/Instagram thread and message Meta still exposes. History and profile enrichment are separate: approved history runs are always profile-deferred, append only missing messages, create no empty archives, and accept unavailable bodies only by exact per-platform fingerprints. A later rate-aware profile task scans stable participants without rereading messages, repairs only exact importer placeholders, fills only blank/absent profile fields, preserves avatars, and seals PII-free pre/post/avatar-staging evidence. Strict immutable approvals, same-process DB identity, a renewable writer lock, callback-free inert archives, coordinated DB/storage backups, and a partial unique Contact/avatar index make apply and recovery fail closed. | Upstream provides a callback-safe Meta history/profile importer with immutable acceptance evidence and equivalent recovery controls; or UMI completes and audits the one-time migration, then removes the manual importer while retaining any still-shared lock/index behavior. |
 
 ## Patch details
 
@@ -351,55 +351,38 @@ renamed via the same data (console, not code).
 
 ### 14. Historical FB/IG archive import
 
-Full design, repository research, Meta limitations, multi-agent review
-findings, and completion matrix:
-`docs/UMI-FBIG-HISTORY-IMPORT-SPEC.md`.
+The reviewed design and exact operator sequence are
+`docs/UMI-FBIG-FULL-HISTORY-EXPANSION-SPEC.md` and
+`docs/UMI-FBIG-FULL-HISTORY-RUNBOOK.md`. This remains a manual synchronous
+repair: no initializer, route, scheduled job, or automatic retry is installed.
 
-This is a manual synchronous repair only—no initializer, cron, migration, or
-route:
+`umi:fbig:history_import` has two explicit modes. `unaccepted_probe` is a
+two-platform, all-history, `pre_presence`, profile-deferred dry scan that exits
+nonzero on the exact unavailable-body set. `approved` loads a root-owned,
+checksummed, release/clone/scope-bound manifest; the cutoff, policy, omission
+sets, and profile-deferred mode cannot be overridden. Apply additionally
+requires an explicit expansion acknowledgement and positive per-invocation
+historical-media budget. It creates no empty conversation and never invents
+content for a body Meta no longer returns.
 
-```bash
-DRY_RUN=true SINCE=all bundle exec rake "umi:fbig:history_import[INBOX_ID]"
-DRY_RUN=false SINCE=all BEFORE=<dry-run-cutoff> OUTBOUND_POLICY=pre_presence \
-  PLATFORMS=messenger bundle exec rake "umi:fbig:history_import[INBOX_ID]"
-```
+`umi:fbig:history_profiles` is a separate, rate-aware pass over the union of
+importer-owned archive identities, current Conversations participants, and the
+six strict Instagram seed targets. It never lists messages or creates product
+rows. Fill-only contact/profile changes and missing safe avatars are bounded
+by an immutable profile approval. Production runs seal PII-free pre/post state,
+crash-safe avatar intents/staging, aggregate counters, logs, and attempt
+evidence while Rails and Sidekiq are quiesced around a fresh coordinated
+database/storage backup. `umi:fbig:history_profile_state` captures the no-Meta
+source state used by clone acceptance.
 
-Dry run is the default and downloads no binaries. It freezes and prints a
-`BEFORE` cutoff at least 15 minutes old, reports all three outbound policies
-when none is selected, reports attachment downloadability as unknown, and
-writes nothing. For a single-conversation inbox it also prints the projected
-archive count and reopen warning. Apply requires that exact reviewed cutoff
-plus one explicit policy: `no_native_presence`, `pre_presence` (recommended),
-or `all`. `SINCE` is always explicit (`all` recommended, or an ISO-8601 UTC
-timestamp). A single-conversation inbox also requires
-`ACK_SINGLE_CONVERSATION_REOPEN=true` because a future live inbound may
-legitimately reopen its only archive under stock inbox behavior.
-
-The importer exhausts every Meta conversation/message cursor without assuming
-ordering, retries only bounded transport/rate/server failures, and revalidates
-message id, time, sender, recipient, participant, and platform before writing.
-Each thread commits atomically under a renewable Redis channel lock. New
-Contacts and all Conversations/Messages/Attachments use callback-free direct
-inserts; the ContactInbox keeps its normal token callback. Archives are
-resolved, unassigned, read through their latest historical timestamp, and
-identified deterministically by inbox/platform/Meta thread. Existing live
-conversations are never modified.
-
-Observed image/video/file URLs are fetched one at a time through SafeFetch and
-Active Storage before the thread transaction. Permanent unsupported,
-expired, invalid, or oversized media becomes a visible
-`[Historical attachment unavailable: N]` marker; transient fetch/storage
-failure leaves the thread absent for a safe rerun. Search reindex and an
-Active Storage Mirror job are the only allowed post-import jobs.
-
-Operational bounds default to
-`UMI_FBIG_HISTORY_GRAPH_DELAY_MS=250`,
-`UMI_FBIG_HISTORY_MAX_CONVERSATION_PAGES=10000`, and
-`UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES=10000`; non-positive values fail
-preflight. Every run prints normalized scope plus
-`scan_complete`/`write_complete`/`degraded` and structured counters.
-Identifier-bearing detail logs are capped and counted when suppressed.
-Incomplete cursor/API/identity/write/cleanup/lock outcomes exit nonzero.
+History still exhausts every cursor without assuming ordering, validates
+platform/participant/message identity before callback-free inert persistence,
+and commits each thread atomically under the shared renewable channel lock.
+Attachments are fetched through SafeFetch and Active Storage; classified
+permanent media failure becomes a visible unavailable marker, while transient,
+storage, cleanup, lock, structural, or unapproved omission failure exits
+nonzero. Search reindex and counted Active Storage mirror jobs are the only
+allowed asynchronous side effects.
 
 Patch #14 owns `HistoryImportLock` and changes patch #12's healer to use it.
 Remove #14 only after removing that healer call; if #12 is removed first,

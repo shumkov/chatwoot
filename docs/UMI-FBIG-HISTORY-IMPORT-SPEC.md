@@ -113,11 +113,14 @@ The implementation must keep the following limitations explicit:
 
 Expose one synchronous task:
 
-`bundle exec rake "umi:fbig:history_import[INBOX_ID]"`
+`UMI_FBIG_HISTORY_EXPECTED_DATABASE='<EXPECTED_DATABASE_NAME>' bundle exec rake "umi:fbig:history_import[<INBOX_ID>]"`
 
-The inbox must exist and use `Channel::FacebookPage`; otherwise the task exits
-nonzero before calling Meta. There is no initializer, cron, job chain, or
-feature flag. A long-running import remains attached to the operator's
+`UMI_FBIG_HISTORY_EXPECTED_DATABASE` is mandatory on dry and applying runs.
+The rake process reads `current_database()` and requires an exact name match
+before loading the inbox, acquiring the writer lock, calling Meta, or writing.
+The inbox must then exist and use `Channel::FacebookPage`; otherwise the task
+exits nonzero before calling Meta. There is no initializer, cron, job chain,
+or feature flag. A long-running import remains attached to the operator's
 terminal and prints progress continuously.
 
 Configuration is explicit:
@@ -139,6 +142,17 @@ Configuration is explicit:
 - `ACK_SINGLE_CONVERSATION_REOPEN=true` is required in apply mode when the
   inbox has `lock_to_single_conversation` enabled. Dry run prints the warning
   without requiring acknowledgement.
+- `ACK_EXPAND_EXISTING=true` is required when selected archives use the
+  earlier contained import window. Apply accepts only the exact target
+  configuration, one unique contained predecessor, or a crash-resume mixture
+  of those two configurations.
+- `UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES` is a required positive
+  single-invocation byte budget in apply mode. Historical attachments across
+  every platform selected in that invocation spend it first; profile avatars
+  may use only the remainder after those selected platforms complete history
+  persistence. Separate platform and recovery commands each start a new
+  allowance; the importer does not carry a remainder between invocations. Dry
+  run downloads neither.
 
 The frozen `BEFORE` cutoff excludes the most recent 15 minutes. Live webhooks
 own that interval, and the grace period bounds the race created by the
@@ -161,13 +175,14 @@ running. It closes the 15-minute-to-48-hour overlap while leaving patch 12's
 detection scan free to report.
 
 The normalized `SINCE`, `BEFORE`, and `OUTBOUND_POLICY` form an import
-configuration. Apply mode stores it in every archive and checks all existing
-history archives for the target inbox/platform before scanning. Any mismatch
-is rejected: the import is append-only, so a later narrower policy or date
-cannot undo rows from an earlier run. A broader run must first be designed and
-approved as a separate migration; it is not a silent "rerun." Summaries count
-previously imported rows separately so the anti-join does not hide what an
-earlier apply did.
+configuration. Apply preflights the union of marker-owned and deterministic
+prefix archives before calling Meta. It rejects malformed identity, multiple
+predecessors, policy changes, narrower intervals, and non-import-only archive
+state. An acknowledged contained expansion appends missing rows, then
+atomically normalizes every selected-platform archive marker only after that
+platform's history scan and persistence are structurally complete. Profile or
+avatar enrichment failure remains nonzero but does not leave structurally
+complete history on the predecessor marker.
 
 Technical safety controls are printed in the normalized startup line:
 `UMI_FBIG_HISTORY_GRAPH_DELAY_MS` (default 250),
@@ -224,7 +239,7 @@ participant and platform-specific business identity; and the detail remains
 consistent with the listing's direction and thread. A mismatch fails the
 thread rather than importing cross-thread or cross-platform data.
 
-### 3. Participant and direction mapping
+### 3. Participant, profile, and direction mapping
 
 A normal imported thread must have exactly one external participant:
 
@@ -234,8 +249,17 @@ A normal imported thread must have exactly one external participant:
 - Remove the selected business identity from `participants.data`.
 - Require exactly one remaining participant with an id.
 - Use that id as the `ContactInbox.source_id`.
-- Use the participant name only when creating a new Contact. Never merge
-  contacts by name and never overwrite an existing contact's name.
+- Reuse an existing `ContactInbox` only by the exact platform participant id.
+- Request the Page-linked Graph profile once per
+  `[platform, participant_id]` in a run. The response id must exactly match the
+  requested participant.
+- Prefer profile name, then thread participant name. Prefer Instagram profile
+  username, then the observed incoming sender username. Never derive a display
+  name from a username.
+- Existing attributes are fill-only. Replace a name only when it is exactly
+  the importer fallback `Instagram user <source-id-last4>`; preserve custom,
+  near-match, and different-suffix names. Existing avatars are never fetched
+  or overwritten.
 
 For each message, `from.id` equal to the external participant means incoming;
 `from.id` equal to the selected platform's business identity means outbound.
@@ -249,15 +273,17 @@ hardcodes `platform=messenger`. The importer consumes the already-fetched
 thread participants for both platforms and does not issue redundant name
 requests.
 
-If the contact inbox exists, reuse it exactly. If it does not, create the
-Contact with a direct insert so contact events, IP lookup, avatar fetch, and
-Enterprise contact callbacks cannot run. Then create the ContactInbox with its
-normal token-generation callback; repository inspection found no external or
-customer-visible callback on that model. If its unique
+If the contact inbox exists, reuse it exactly and apply the fill-only scalar
+profile merge with direct columns, even when all thread messages are already
+present. If it does not, do not request its profile until at least one absent
+message detail is prepared. Create the Contact with the planned scalar data
+inside the successful thread transaction so contact events, IP lookup, avatar
+jobs, and Enterprise contact callbacks cannot run. Then create the
+ContactInbox with its normal token-generation callback. If its unique
 `(inbox_id, source_id)` insert loses to a live writer, roll back the entire
-thread transaction and retry the thread from fresh database state. Do not
-rescue inside an aborted PostgreSQL transaction, and do not leave the
-speculatively inserted Contact orphaned.
+thread transaction, reuse the winner, safely reapply the same evidence, and
+queue an avatar only after commit. Do not leave the speculative Contact
+orphaned.
 
 Create no Contact, ContactInbox, or Conversation when the thread has no
 eligible messages after source-id and outbound-policy checks. New contacts use
@@ -277,7 +303,11 @@ an omission counter; never truncate ids used for identity or idempotency—fail
 the thread if one cannot fit its target field. Build complete JSON defaults
 and enum values explicitly rather than relying on callbacks.
 
-### 4. Outbound overlap policies — decision intentionally open
+### 4. Outbound overlap policy
+
+The production full-history expansion uses `pre_presence`. It recovers history
+clearly older than native Chatwoot presence while retaining the multipart
+guard. The other policies remain explicit diagnostic/controlled alternatives.
 
 Meta thread ids are not persisted on live Chatwoot conversations. Presence
 must therefore be conservatively derived from non-imported messages for the
@@ -425,6 +455,14 @@ explicit allowlist based on `Attachment::ACCEPTABLE_FILE_TYPES` for files.
 Generic file content types are accepted only with an allowed extension. Do not
 log signed CDN URLs or retain every attachment in a thread on local disk.
 
+The applying service validates public-only fetching before its lock, first
+Meta request, or write. Every attachment is also bounded by the remaining
+`UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES`. If one thread crosses the remainder,
+purge all of that thread's staged blobs, insert no rows from it, consume the
+run budget, mark history incomplete, and skip the global avatar phase. Exact
+equality succeeds. Count every successfully streamed file against the budget,
+including a generic file omitted after its extension is rejected.
+
 A successful fetch is uploaded through the Active Storage Blob API outside
 the thread database transaction so checksum, byte size, service name, and
 storage metadata are populated normally. Track the persisted blob id/key
@@ -465,6 +503,16 @@ invent a content row: log and count `content_unavailable`, leave the mid absent
 for a future rerun, and mark the import outcome degraded/incomplete as defined
 below.
 
+After every selected platform has normalized history, process queued missing
+avatars sequentially with the remaining shared budget and a 15 MB per-avatar
+cap. Use `SafeFetch` and direct Active Storage association, not
+`AvatarFromUrlJob` or an ordinary Contact save. A partial unique index for
+`Contact/avatar` serializes importer and live writers; a uniqueness loser
+purges its blob and preserves the live winner. Permanent profile/avatar denial
+is degradation. Retry/storage/association/budget/cleanup failure is nonzero,
+but the current history marker remains normalized so an exact rerun can retry
+enrichment.
+
 ### 8. Transactions, progress, and completion
 
 The execution unit is one Meta thread:
@@ -477,12 +525,16 @@ The execution unit is one Meta thread:
 6. Atomically renew and verify lock ownership.
 7. Open a database transaction.
 8. Recheck mids in the target account/inbox.
-9. find/create the participant records;
+9. find/create the participant records with the prepared fill-only profile
+   plan;
 10. find/create the deterministic resolved archive;
 11. insert messages and successful attachment associations oldest first; and
 12. directly recompute archive and incoming-only contact activity timestamps.
-13. Commit, then best-effort enqueue search reindex, purge any unattached
-    staged blobs, and remove temporary files.
+13. Commit, queue any missing avatar, then best-effort enqueue search reindex,
+    purge any unattached staged blobs, and remove temporary files.
+
+Only after all selected platforms finish and normalize history does the global
+avatar phase spend the remaining budget.
 
 If any write in the transaction fails, the thread writes nothing. Already
 completed threads remain committed; rerunning safely resumes through the
@@ -501,11 +553,16 @@ at least:
 - per-policy outbound import/skip counts;
 - details fetched and `content_unavailable`;
 - attachment URLs found, downloaded, unsupported, and unavailable;
+- profile requests/successes/unavailability/errors and projected/applied
+  changes;
+- avatar offered/preserved/attached/raced/unavailable/failure outcomes;
+- attachment, avatar, and total downloaded bytes plus budget exhaustion;
 - imported contacts, archives, incoming messages, outgoing messages, and
   attachments;
 - ambiguous participants/senders and foreign-account source-id anomalies;
 - failed threads, retry exhaustion, rate limits, and lock loss; and
-- normalized scope/policy/cutoff, previously imported rows, reindex/Mirror jobs,
+- normalized scope/policy/cutoff/budget, marker normalizations, complete
+  platforms, previously imported rows, reindex/Mirror jobs,
   `dry_run=true|false`, `scan_complete=true|false`,
   `write_complete=true|false`, and `degraded=true|false`.
 
@@ -525,7 +582,10 @@ flag:
 | Intentional date/outbound-policy skip or already-present target mid | Counted; no degradation | zero if nothing else failed |
 | Permanent unsupported/404/410/oversized attachment represented by a marker | `degraded=true`, scan/write remain complete | zero with explicit degradation count |
 | Permanent per-mid content unavailable | `scan_complete=true`, `write_complete=false`, `degraded=true` | nonzero |
-| Ambiguous participant/sender | `scan_complete=true`, `write_complete=false`, `degraded=true` | nonzero |
+| Ambiguous participant for a new thread with no archive | Counted omission, creates nothing, `degraded=true` | zero if nothing else failed |
+| Ambiguous participant for a pre-existing archive, or ambiguous sender | `scan_complete=true`, `write_complete=false`, `degraded=true` | nonzero |
+| Expected profile/avatar unavailability with complete history | `degraded=true`; history marker remains current | zero if nothing else failed |
+| Profile request/contract or importer-controlled avatar failure with complete history | History marker remains current; enrichment incomplete | nonzero; exact rerun retries |
 | Foreign-only mid anomaly with target row inserted | `scan_complete=true`, `write_complete=true`, `degraded=true` | nonzero |
 | Repeated cursor, safety ceiling, auth/platform failure, or retry exhaustion | `scan_complete=false`; write reflects committed eligible threads | nonzero |
 | Thread transaction, blob cleanup, or lock failure | `write_complete=false`, `degraded=true` | nonzero |
@@ -537,7 +597,11 @@ item committed or was already present under the pinned import configuration.
 A dry run has no write result; it reports `write_complete=not_applicable` and
 may be scan-complete while binary downloadability remains unknown.
 
-## Scope choice — decision intentionally open
+## Scope choice
+
+The approved migration uses `SINCE=all` and the reviewed fixed `BEFORE`.
+“All” means every cursor and message Meta still exposes, not deleted, hidden,
+expired, restricted, or otherwise unavailable data.
 
 | Scope | Behaviour | Trade-off |
 | --- | --- | --- |
@@ -549,8 +613,8 @@ limitations, then apply `all` if the volume is operationally acceptable. Use
 `since` only when there is a known business retention boundary or the all-time
 dry run demonstrates an unacceptable volume.
 
-This is a recommendation, not a decision. The task requires the scope on every
-run, pins it after the first apply, and echoes it in every summary.
+The task requires the scope on every run, pins it in archive markers, and
+echoes it in every summary.
 
 ## Alternatives rejected
 
@@ -593,12 +657,14 @@ Rejected for historical imports. The serializer exposes `external_url` when
 no blob exists, so an expired signed URL becomes a broken attachment. A
 visible omission marker and structured count are more honest.
 
-### Add a unique database index or persistent import-run tables
+### Add broad import-run schema or global Active Storage uniqueness
 
-Rejected for this one-off UMI patch. Both changes increase rebase and migration
-cost. The lock, old-history grace, deterministic archive, and repeated scoped
-mid checks provide practical sequential idempotency while preserving loud
-residual-race documentation.
+Rejected. Persistent run tables and a broad attachment constraint add
+unnecessary rebase/migration cost. A narrow partial unique index only for
+`record_type='Contact' AND name='avatar'` is required because Rails'
+`has_one_attached` is not database-unique and a Contact row lock cannot
+serialize ordinary Active Storage writers. Deployment is gated on a
+zero-duplicate clone/production preflight.
 
 ### Schedule the import or split it into Sidekiq jobs
 
@@ -761,7 +827,9 @@ They must prove:
   bodies, request/cursor URLs, usage headers, content, names, tokens, or signed
   URLs.
 
-The task spec exercises environment/argument parsing and process exit status.
+The task spec exercises environment/argument parsing, same-process database
+identity mismatch/missing-variable exits before inbox lookup, and process exit
+status.
 The regression suite should include or mirror the Intercom importer's
 side-effect test so future refactoring cannot accidentally replace direct
 inserts with model creation.
@@ -770,7 +838,7 @@ Manual verification is two-stage:
 
 1. Run:
 
-   `DRY_RUN=true SINCE=all bundle exec rake "umi:fbig:history_import[INBOX_ID]"`
+   `UMI_FBIG_HISTORY_EXPECTED_DATABASE='<EXPECTED_DATABASE_NAME>' DRY_RUN=true SINCE=all BEFORE='<FIXED_UTC_CUTOFF>' bundle exec rake "umi:fbig:history_import[<INBOX_ID>]"`
 
    Save the normalized configuration and fixed `BEFORE`, compare the three
    outbound-policy counts, and spot-check Meta mids/details without downloading
@@ -778,7 +846,7 @@ Manual verification is two-stage:
 2. After the scope, outbound policy, retention, and any single-conversation
    caveat are explicitly approved, run one platform first:
 
-   `DRY_RUN=false SINCE=all BEFORE=<dry-run-cutoff> OUTBOUND_POLICY=pre_presence PLATFORMS=messenger bundle exec rake "umi:fbig:history_import[INBOX_ID]"`
+   `UMI_FBIG_HISTORY_EXPECTED_DATABASE='<EXPECTED_DATABASE_NAME>' DRY_RUN=false SINCE=all BEFORE='<DRY_RUN_UTC_CUTOFF>' OUTBOUND_POLICY=pre_presence PLATFORMS=messenger ACK_EXPAND_EXISTING=true UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES='<REVIEWED_BYTES>' bundle exec rake "umi:fbig:history_import[<INBOX_ID>]"`
 
    Add `ACK_SINGLE_CONVERSATION_REOPEN=true` only when the reviewed preflight
    requires it. Verify archive timestamps/state and the absence of outbound
@@ -797,6 +865,8 @@ Planned implementation footprint:
   throttled/retrying Graph reads and cursor safety
 - `umi/app/services/fbig/history_import_attachment_service.rb` → SafeFetch,
   Blob staging, direct association data, and cleanup
+- `umi/app/services/fbig/history_import_profile_service.rb` → exact/fill-only
+  profile planning and direct avatar association
 - `umi/app/services/fbig/history_import_lock.rb` → atomic renewable
   per-channel lease
 - `umi/app/services/fbig/message_heal_service.rb` → acquire the shared writer
@@ -805,11 +875,15 @@ Planned implementation footprint:
 - specs under `spec/services/umi/fbig/` for the service, Graph client,
   attachment service, lock, and healer lock coordination
 - `spec/lib/tasks/rake/umi_fbig_history_import_spec.rb`
+- `db/migrate/*_add_unique_contact_avatar_attachment_index.rb` → concurrent
+  partial uniqueness for Contact avatars
+- `docs/UMI-FBIG-FULL-HISTORY-RUNBOOK.md`
 - `docs/UMI-FBIG-HISTORY-IMPORT-SPEC.md`
 - `UMI-PATCHES.md` row and detail 14
 
-No OSS `app/` edit, Enterprise override, route, initializer, scheduled job,
-database migration, or frontend change is planned. The service and task live
+No OSS `app/` edit, Enterprise override, route, initializer, scheduled job, or
+frontend change is planned. The narrow Active Storage migration plus the
+service and task live
 in UMI-owned paths, so the patch should rebase cleanly. The shared writer lock
 is one explicit coupling to patch 12; removing either write path must retain or
 remove its lock coordination deliberately. Patch 14 removal must remove the

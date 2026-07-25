@@ -1,16 +1,37 @@
 # frozen_string_literal: true
 
-# rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 # rubocop:disable Rails/SkipsModelValidations
 class Umi::Fbig::HistoryImportAttachmentService
   Descriptor = Data.define(:file_type, :url)
   Plan = Data.define(:descriptors, :omissions)
   StagedAttachment = Data.define(:blob, :file_type, :extension)
-  StageResult = Data.define(:attachments, :omissions)
+  StageResult = Data.define(:attachments, :omissions, :bytes_used) do
+    def initialize(attachments:, omissions:, bytes_used: nil)
+      bytes_used ||= attachments.sum { |attachment| attachment.blob.byte_size }
+      super(attachments: attachments, omissions: omissions, bytes_used: bytes_used)
+    end
+  end
 
-  class TransientError < StandardError; end
-  class CleanupError < StandardError; end
+  class StageError < StandardError
+    attr_reader :bytes_used, :budget_exhausted
+
+    def initialize(message = nil, bytes_used: 0, budget_exhausted: false)
+      @bytes_used = bytes_used
+      @budget_exhausted = budget_exhausted
+      super(message)
+    end
+  end
+
+  class TransientError < StageError; end
+  class CleanupError < StageError; end
   class UnsafeConfigurationError < StandardError; end
+
+  class BudgetExceeded < StageError
+    def initialize(bytes_used)
+      super('shared download budget exhausted', bytes_used: bytes_used, budget_exhausted: true)
+    end
+  end
 
   MAX_ATTACHMENTS = 15
   FETCH_OPTIONS = {
@@ -40,21 +61,31 @@ class Umi::Fbig::HistoryImportAttachmentService
     Plan.new(descriptors: descriptors.first(MAX_ATTACHMENTS), omissions: omissions)
   end
 
-  def stage(detail_or_plan)
+  def stage(detail_or_plan, remaining_budget_bytes: nil)
     raise UnsafeConfigurationError if SafeFetch.allow_private_network?
 
     attachment_plan = detail_or_plan.is_a?(Plan) ? detail_or_plan : plan(detail_or_plan)
     omissions = attachment_plan.omissions.dup
     staged = []
-    attachment_plan.descriptors.each { |descriptor| stage_one(descriptor, staged, omissions) }
-    StageResult.new(attachments: staged, omissions: omissions)
-  rescue UnsafeConfigurationError, CleanupError
-    raise
-  rescue StandardError => e
-    cleanup_unattached!(StageResult.new(attachments: staged || [], omissions: omissions || {}))
-    raise e if e.is_a?(TransientError)
+    bytes_used = 0
+    attachment_plan.descriptors.each do |descriptor|
+      budget_limit = attachment_budget_limit(remaining_budget_bytes, bytes_used)
+      raise BudgetExceeded, bytes_used if budget_limit&.zero?
 
-    raise TransientError, e.class.name
+      bytes_used += stage_one(descriptor, staged, omissions, budget_limit, bytes_used)
+      raise BudgetExceeded, bytes_used if remaining_budget_bytes && bytes_used > remaining_budget_bytes
+    end
+    StageResult.new(attachments: staged, omissions: omissions, bytes_used: bytes_used)
+  rescue UnsafeConfigurationError
+    raise
+  rescue StageError => e
+    cleanup_after_stage_error!(staged, omissions, e)
+  rescue StandardError => e
+    cleanup_after_stage_error!(
+      staged,
+      omissions,
+      TransientError.new(e.class.name, bytes_used: bytes_used.to_i)
+    )
   end
 
   def persist!(stage_result, message_id:, account_id:, created_at:)
@@ -120,6 +151,23 @@ class Umi::Fbig::HistoryImportAttachmentService
 
   private
 
+  def cleanup_after_stage_error!(staged, omissions, error)
+    cleanup_unattached!(
+      StageResult.new(
+        attachments: staged || [],
+        omissions: omissions || {},
+        bytes_used: error.bytes_used
+      )
+    )
+    raise error
+  rescue CleanupError => e
+    raise CleanupError.new(
+      e.message,
+      bytes_used: error.bytes_used,
+      budget_exhausted: error.budget_exhausted
+    )
+  end
+
   def descriptor_for(attachment)
     if attachment.dig('image_data', 'url').present?
       Descriptor.new(file_type: :image, url: attachment.dig('image_data', 'url'))
@@ -130,8 +178,13 @@ class Umi::Fbig::HistoryImportAttachmentService
     end
   end
 
-  def stage_one(descriptor, staged, omissions)
-    SafeFetch.fetch(descriptor.url, **FETCH_OPTIONS.fetch(descriptor.file_type)) do |result|
+  def stage_one(descriptor, staged, omissions, budget_limit, bytes_used)
+    options = FETCH_OPTIONS.fetch(descriptor.file_type)
+    max_bytes = [budget_limit, default_max_bytes].compact.min
+    options = options.merge(max_bytes: max_bytes) if max_bytes
+    downloaded_bytes = 0
+    SafeFetch.fetch(descriptor.url, **options) do |result|
+      downloaded_bytes = result.tempfile.size
       filename = sanitized_filename(result.filename)
       unless acceptable_generic_file?(descriptor, result.content_type, filename)
         omissions[:unsupported_content_type] += 1
@@ -153,26 +206,54 @@ class Umi::Fbig::HistoryImportAttachmentService
       result.tempfile.rewind
       blob.upload_without_unfurling(result.tempfile)
     end
+    downloaded_bytes
   rescue SafeFetch::InvalidUrlError
     omissions[:invalid_url] += 1
+    0
   rescue SafeFetch::UnsafeUrlError
     omissions[:unsafe_url] += 1
+    0
   rescue SafeFetch::FileTooLargeError
+    raise BudgetExceeded, bytes_used + budget_limit if budget_limit && budget_limit <= default_max_bytes
+
     omissions[:file_too_large] += 1
+    max_bytes.to_i
   rescue SafeFetch::UnsupportedContentTypeError
     omissions[:unsupported_content_type] += 1
+    0
   rescue SafeFetch::HttpError => e
     status = e.message.to_i
-    raise TransientError, e.class.name if status == 429 || status >= 500
+    raise TransientError.new(e.class.name, bytes_used: bytes_used) if status == 429 || status >= 500
 
     omissions[status.in?([404, 410]) ? :unavailable_url : :http_error] += 1
+    0
   rescue SafeFetch::FetchError => e
-    raise TransientError, e.class.name
+    raise TransientError.new(
+      e.class.name,
+      bytes_used: bytes_used + max_bytes.to_i,
+      budget_exhausted: !budget_limit.nil? && max_bytes == budget_limit
+    )
+  rescue StageError
+    raise
+  rescue StandardError => e
+    raise TransientError.new(e.class.name, bytes_used: bytes_used + downloaded_bytes)
   end
 
   def sanitized_filename(filename)
     sanitized = ActiveStorage::Filename.new(filename.presence || 'history-attachment').sanitized
     sanitized.truncate(255, omission: '')
+  end
+
+  def attachment_budget_limit(remaining_budget_bytes, bytes_used)
+    return unless remaining_budget_bytes
+
+    [remaining_budget_bytes.to_i - bytes_used, 0].max
+  end
+
+  def default_max_bytes
+    limit_mb = GlobalConfigService.load('MAXIMUM_FILE_UPLOAD_SIZE', SafeFetch::DEFAULT_MAX_BYTES_FALLBACK_MB).to_i
+    limit_mb = SafeFetch::DEFAULT_MAX_BYTES_FALLBACK_MB if limit_mb <= 0
+    limit_mb.megabytes
   end
 
   def acceptable_generic_file?(descriptor, content_type, filename)
@@ -181,5 +262,5 @@ class Umi::Fbig::HistoryImportAttachmentService
     Attachment::ACCEPTABLE_FILE_EXTENSIONS.include?(ActiveStorage::Filename.new(filename).extension.downcase)
   end
 end
-# rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 # rubocop:enable Rails/SkipsModelValidations
