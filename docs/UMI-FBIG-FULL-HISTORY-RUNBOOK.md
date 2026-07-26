@@ -25,6 +25,8 @@ Stop immediately if any of these is true:
   `0400`, single-link files;
 - either approved dry run differs from the acceptance probe;
 - a history run reports a new contentless count/fingerprint;
+- the exact unrecoverable-envelope count/fingerprint differs before or after
+  any Instagram-inclusive history stage;
 - a history apply does not use `PROFILE_MODE=defer` from the approval;
 - any profile run reports an authentication, identity, contract, pagination,
   lock, wait-budget, storage, association, or unclassified failure;
@@ -58,6 +60,7 @@ HISTORY_DIR="$AUDIT_DIR/history-approval"
 PROFILE_DIR="$AUDIT_DIR/profile-approval"
 TARGET_DIR="$AUDIT_DIR/profile-targets"
 CLONE_ROOT="$(dirname "$CLONE_STORAGE")"
+EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS='1'
 
 test "$(id -u)" -eq 0
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]]
@@ -68,6 +71,7 @@ test "$CLONE_DATABASE" != "$PRODUCTION_DATABASE"
 test -n "$APPROVED_BY"
 [[ "$APPROVED_BY" != *$'\t'* && "$APPROVED_BY" != *$'\n'* && "$APPROVED_BY" != *$'\r'* ]]
 test "$(printf '%s' "$APPROVED_BY" | wc -c)" -le 255
+test "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS" = 1
 test ! -e "$AUDIT_DIR"
 test ! -L "$AUDIT_DIR"
 mkdir -p "$AUDIT_DIR"
@@ -94,16 +98,16 @@ stage_value() {
   awk -v expected_stage="$stage" -v expected_key="$key" '
     $1 == "[UMI-FBIG]" {
       selected = 0
-      for (index = 2; index <= NF; index += 1) {
-        if ($index == "stage=" expected_stage) selected = 1
+      for (field = 2; field <= NF; field += 1) {
+        if ($field == "stage=" expected_stage) selected = 1
       }
       if (selected) {
         rows += 1
-        for (index = 2; index <= NF; index += 1) {
-          split($index, pair, "=")
+        for (field = 2; field <= NF; field += 1) {
+          split($field, pair, "=")
           if (pair[1] == expected_key) {
             values += 1
-            value = substr($index, length(expected_key) + 2)
+            value = substr($field, length(expected_key) + 2)
           }
         }
       }
@@ -122,6 +126,9 @@ The immutable input artifacts are:
   `contact_inbox_id<TAB>contact_id<TAB>source_id` rows;
 - `fbig-approval-v1.tsv` plus `.sha256`: the exact 25-field
   `HistoryApprovalManifest::FIELD_NAMES` order;
+- `fbig-unrecoverable-envelope-v1.tsv` plus `.sha256`: the strict
+  release/scope/cutoff-bound pseudonymous exception evidence chained through
+  the accepted probe log;
 - `fbig-profile-state-v1.tsv` plus `.sha256`: captured by the no-Meta state
   task after clone history reaches zero writes; and
 - `fbig-profile-approval-v1.tsv` plus `.sha256`: the exact 31-field
@@ -138,6 +145,8 @@ must bind:
 - `since=all`, the frozen cutoff, `outbound_policy=pre_presence`, and
   `profile_mode=defer`;
 - both exact contentless count/fingerprints;
+- the strict unrecoverable-envelope sidecar checksum through the source probe
+  log hash;
 - the six-row target SHA; and
 - the acceptance probe log and summary hashes.
 
@@ -731,6 +740,207 @@ HISTORY_PROBE_SUMMARY="$AUDIT_DIR/history-probe-summary.tsv"
 CUTOFF_EPOCH="$(date -u -d "$CUTOFF" +%s)"
 test "$(date -u -d "@$CUTOFF_EPOCH" +%Y-%m-%dT%H:%M:%SZ)" = "$CUTOFF"
 test "$CUTOFF_EPOCH" -le "$(( $(date -u +%s) - 900 ))"
+UNRECOVERABLE_INSPECTOR="$AUDIT_DIR/fbig-unrecoverable-envelope-inspector.rb"
+UNRECOVERABLE_SIDECAR="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv"
+UNRECOVERABLE_SIDECAR_CHECKSUM="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv.sha256"
+test ! -e "$UNRECOVERABLE_INSPECTOR"
+(
+  set -o noclobber
+  cat >"$UNRECOVERABLE_INSPECTOR" <<'RUBY'
+require 'set'
+
+inbox = Inbox.find(Integer(ENV.fetch('UMI_FBIG_INSPECT_INBOX_ID'), 10))
+expected_database = ENV.fetch('UMI_FBIG_INSPECT_EXPECTED_DATABASE')
+actual_database = ActiveRecord::Base.connection.select_value('SELECT current_database()')
+abort('inspection database mismatch') unless actual_database == expected_database
+before = Time.iso8601(ENV.fetch('UMI_FBIG_INSPECT_BEFORE')).utc
+abort('inspection cutoff is not canonical UTC') unless
+  before.strftime('%Y-%m-%dT%H:%M:%SZ') == ENV.fetch('UMI_FBIG_INSPECT_BEFORE')
+
+channel = inbox.channel
+business_id = channel.instagram_id.to_s
+abort('missing Instagram business id') if business_id.blank?
+client = Umi::Fbig::HistoryImportGraphClient.new(
+  channel,
+  delay_ms: 250,
+  max_conversation_pages: 10_000,
+  max_message_pages: 10_000
+)
+attachment_service = Umi::Fbig::HistoryImportAttachmentService.new
+thread_ids = Set.new
+global_mids = Set.new
+message_pages = 0
+ambiguous_threads = []
+
+required_string = lambda do |value, label|
+  abort("invalid #{label}") unless
+    value.is_a?(String) && value.valid_encoding? &&
+    value.encoding.in?([Encoding::UTF_8, Encoding::US_ASCII]) && value.present?
+  value.encode(Encoding::UTF_8)
+end
+connection = lambda do |owner, key|
+  abort("invalid #{key} owner") unless owner.is_a?(Hash)
+  next ['missing', []] unless owner.key?(key)
+  next ['null', []] if owner[key].nil?
+  abort("invalid #{key} connection") unless owner[key].is_a?(Hash)
+  next ['data_missing', []] unless owner[key].key?('data')
+  next ['data_null', []] if owner[key]['data'].nil?
+  abort("invalid #{key} data") unless owner[key]['data'].is_a?(Array)
+  ['array', owner[key]['data']]
+end
+parse_time = lambda do |value, label|
+  text = required_string.call(value, label)
+  Time.iso8601(text)
+rescue ArgumentError
+  abort("invalid #{label}")
+end
+
+conversation_pages = client.each_thread('instagram') do |thread|
+  abort('invalid thread') unless thread.is_a?(Hash)
+  thread_id = required_string.call(thread['id'], 'thread id')
+  abort('duplicate thread id') unless thread_ids.add?(thread_id)
+  participants_state, participant_data = connection.call(thread, 'participants')
+  participants = participant_data.map do |participant|
+    abort('invalid participant') unless participant.is_a?(Hash)
+    participant_id = required_string.call(participant['id'], 'participant id')
+    {
+      'id' => participant_id,
+      'business' => participant_id == business_id
+    }
+  end.sort_by { |participant| [participant.fetch('id'), participant.fetch('business') ? 1 : 0] }
+  external = participants.reject { |participant| participant.fetch('business') }
+  next if external.size == 1
+
+  result = client.messages(thread_id)
+  message_pages += result.pages
+  mids = Set.new
+  messages = result.items.filter_map do |listing|
+    abort('invalid message listing') unless listing.is_a?(Hash)
+    mid = required_string.call(listing['id'], 'message id')
+    abort('duplicate message id') unless mids.add?(mid)
+    abort('message id repeated across threads') unless global_mids.add?(mid)
+    listing_time = parse_time.call(listing['created_time'], 'listing time')
+    next unless listing_time < before
+
+    listing_sender = required_string.call(listing.dig('from', 'id'), 'listing sender')
+    detail = client.detail(mid)
+    abort('missing message detail') unless detail.is_a?(Hash)
+    abort('detail id mismatch') unless required_string.call(detail['id'], 'detail id') == mid
+    detail_time = parse_time.call(detail['created_time'], 'detail time')
+    abort('detail time mismatch') unless detail_time.to_i == listing_time.to_i
+    abort('detail outside cutoff') unless detail_time < before
+    detail_sender = required_string.call(detail.dig('from', 'id'), 'detail sender')
+
+    recipients_state, recipient_data = connection.call(detail, 'to')
+    recipient_ids = Set.new
+    recipients = recipient_data.map do |recipient|
+      abort('invalid recipient') unless recipient.is_a?(Hash)
+      recipient_id = required_string.call(recipient['id'], 'recipient id')
+      abort('duplicate recipient id') unless recipient_ids.add?(recipient_id)
+      recipient_id
+    end.sort
+
+    message_shape =
+      if !detail.key?('message')
+        'missing'
+      elsif detail['message'].nil?
+        'null'
+      elsif detail['message'].is_a?(String) && detail['message'].valid_encoding? &&
+            detail['message'].encoding.in?([Encoding::UTF_8, Encoding::US_ASCII])
+        'string'
+      else
+        abort('invalid message shape')
+      end
+    attachments_state, = connection.call(detail, 'attachments')
+    attachment_plan = attachment_service.plan(detail)
+    omissions = attachment_plan.omissions.to_h.transform_keys(&:to_s).sort.to_h
+    {
+      'mid' => mid,
+      'listing_time' => listing_time.utc.iso8601(6),
+      'listing_sender' => listing_sender,
+      'detail_sender' => detail_sender,
+      'recipients_state' => recipients_state,
+      'recipients' => recipients,
+      'message_shape' => message_shape,
+      'message_blank' => detail['message'].blank?,
+      'attachments_state' => attachments_state,
+      'attachment_descriptors' => attachment_plan.descriptors.size,
+      'attachment_omissions' => omissions
+    }
+  end.sort_by { |message| message.fetch('mid') }
+  abort('unrecoverable envelope participant shape changed') unless
+    participants_state == 'array' &&
+    participants == [{ 'id' => business_id, 'business' => true }]
+  abort('unrecoverable envelope message shape changed') unless
+    messages.size == 1 &&
+    messages.all? do |message|
+      message.fetch('listing_sender') == business_id &&
+        message.fetch('detail_sender') == business_id &&
+        message.fetch('recipients').empty? &&
+        message.fetch('message_blank') &&
+        message.fetch('attachment_descriptors').zero? &&
+        message.fetch('attachment_omissions').empty?
+    end
+  ambiguous_threads << {
+    'id' => thread_id,
+    'participants_state' => participants_state,
+    'participants' => participants,
+    'messages' => messages
+  }
+end
+
+record = {
+  'domain' => 'umi-fbig-unrecoverable-envelope-v1',
+  'platform' => 'instagram',
+  'business_id' => business_id,
+  'before' => before.iso8601(6),
+  'threads' => ambiguous_threads.sort_by { |thread| thread.fetch('id') }
+}
+fingerprint = Umi::Fbig::TypedValueDigest.hexdigest(record)
+puts [
+  '[UMI-FBIG]',
+  'stage=unrecoverable_envelope_inspection',
+  'platform=instagram',
+  "count=#{ambiguous_threads.size}",
+  "fingerprint=#{fingerprint}",
+  "conversation_pages=#{conversation_pages}",
+  "message_pages=#{message_pages}"
+].join(' ')
+RUBY
+)
+chmod 0400 "$UNRECOVERABLE_INSPECTOR"
+test "$(stat -c '%u:%a:%h' "$UNRECOVERABLE_INSPECTOR")" = "0:400:1"
+
+run_clone_unrecoverable_inspection() {
+  clone_compose run --rm --no-deps -T \
+    -e UMI_FBIG_INSPECT_INBOX_ID="$INBOX_ID" \
+    -e UMI_FBIG_INSPECT_EXPECTED_DATABASE="$CLONE_DATABASE" \
+    -e UMI_FBIG_INSPECT_BEFORE="$CUTOFF" \
+    rails bundle exec rails runner - <"$UNRECOVERABLE_INSPECTOR" |
+    grep '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection '
+}
+
+inspect_unrecoverable_envelopes() {
+  local label="$1"
+  local output="$AUDIT_DIR/unrecoverable-$label.tsv"
+  local observed_count
+  local observed_fingerprint
+  [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+  test ! -e "$output"
+  run_clone_unrecoverable_inspection >"$output"
+  test "$(grep -c '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection ' "$output")" -eq 1
+  observed_count="$(stage_value "$output" unrecoverable_envelope_inspection count)"
+  observed_fingerprint="$(stage_value "$output" unrecoverable_envelope_inspection fingerprint)"
+  test "$observed_count" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
+  [[ "$observed_fingerprint" =~ ^[0-9a-f]{64}$ ]]
+  if [[ -e "$UNRECOVERABLE_SIDECAR" ]]; then
+    test "$observed_count" = "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+    test "$observed_fingerprint" = "$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)"
+  fi
+  chmod 0400 "$output"
+}
+
+inspect_unrecoverable_envelopes before-probe
 test ! -e "$HISTORY_PROBE_LOG"
 test ! -e "$HISTORY_PROBE_SUMMARY"
 set +e
@@ -753,32 +963,47 @@ test "${PROBE_STATUS[1]}" -eq 0
 test "$(grep -c '^\[UMI-FBIG\] stage=history_import_summary ' "$HISTORY_PROBE_LOG")" -eq 1
 grep '^\[UMI-FBIG\] stage=history_import_summary ' \
   "$HISTORY_PROBE_LOG" >"$HISTORY_PROBE_SUMMARY"
+inspect_unrecoverable_envelopes after-probe
+cmp -s \
+  "$AUDIT_DIR/unrecoverable-before-probe.tsv" \
+  "$AUDIT_DIR/unrecoverable-after-probe.tsv"
 
 CONTENTLESS_MISMATCHES="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary contentless_acceptance_mismatches
 )"
 EXIT_FAILURES="$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary exit_failures)"
+AMBIGUOUS_PARTICIPANTS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary ambiguous_participants
+)"
+FAILED_THREADS="$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary failed_threads)"
 [[ "$CONTENTLESS_MISMATCHES" =~ ^[1-9][0-9]*$ ]]
 test "$EXIT_FAILURES" = "$CONTENTLESS_MISMATCHES"
+test "$AMBIGUOUS_PARTICIPANTS" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
+test "$FAILED_THREADS" = "$AMBIGUOUS_PARTICIPANTS"
 test "$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary scan_complete)" = true
 for counter in \
-  failed_threads platform_failures retry_exhaustion authentication_failures lock_loss \
+  ambiguous_senders platform_failures retry_exhaustion authentication_failures lock_loss \
   profile_requests profile_successes profile_unavailable profile_errors \
   profile_changes_projected profile_changes_applied avatars_offered avatars_preserved \
   avatars_attached avatars_raced avatars_unavailable avatar_failures \
   avatars_skipped_history_incomplete avatar_bytes; do
   test "$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary "$counter")" = 0
 done
-chmod 0400 "$HISTORY_PROBE_LOG" "$HISTORY_PROBE_SUMMARY"
-test "$(stat -c '%u:%a:%h' "$HISTORY_PROBE_LOG")" = "0:400:1"
+chmod 0400 "$HISTORY_PROBE_SUMMARY"
 test "$(stat -c '%u:%a:%h' "$HISTORY_PROBE_SUMMARY")" = "0:400:1"
 ```
 
-The only allowed failure above is exact contentless-set mismatch. Review the
-per-platform counts/fingerprints, then construct the approval in the parser's
-exact field order. Every provenance hash is recomputed from its immutable
-artifact, the full random-suffixed coordinated backup ID is copied byte for
-byte, and permissions are sealed before the in-image loader runs:
+The inspector emits no digest unless the ambiguous envelope still has exactly
+one business-only participant, one business-sent in-scope message listing and
+detail, no recipients, a blank body, and no supported or omitted attachment.
+The only allowed exit failure above is exact contentless-set mismatch. The
+single `failed_threads` count is independently bound to that exact
+unrecoverable envelope by the matching pre/post inspection. Review the
+per-platform counts/fingerprints, then construct the strict sidecar and
+approval in their exact field order. Every provenance hash is recomputed from
+its immutable artifact, the full random-suffixed coordinated backup ID is
+copied byte for byte, and permissions are sealed before the in-image loader
+runs:
 
 ```bash
 BACKUP_MANIFEST="$BACKUP_DIR/fbig-coordinated-backup-v1.tsv"
@@ -792,6 +1017,68 @@ DATABASE_DUMP_SHA256="$(sha256_file "$BACKUP_DIR/database.dump")"
 SOURCE_STORAGE_MANIFEST_SHA256="$(sha256_file "$BACKUP_DIR/storage.manifest")"
 RESTORED_STORAGE_MANIFEST_SHA256="$(sha256_file "$RESTORED_STORAGE_MANIFEST")"
 PLACEHOLDER_TARGETS_SHA256="$(sha256_file "$TARGET_DIR/fbig-profile-targets-v1.tsv")"
+INSPECTOR_SCRIPT_SHA256="$(sha256_file "$UNRECOVERABLE_INSPECTOR")"
+UNRECOVERABLE_COUNT="$(
+  stage_value "$AUDIT_DIR/unrecoverable-before-probe.tsv" \
+    unrecoverable_envelope_inspection count
+)"
+UNRECOVERABLE_FINGERPRINT="$(
+  stage_value "$AUDIT_DIR/unrecoverable-before-probe.tsv" \
+    unrecoverable_envelope_inspection fingerprint
+)"
+APPROVED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+test ! -e "$UNRECOVERABLE_SIDECAR"
+test ! -e "$UNRECOVERABLE_SIDECAR_CHECKSUM"
+(
+  set -o noclobber
+  {
+    printf 'schema_version\t1\n'
+    printf 'repository_commit\t%s\n' "$APP_COMMIT"
+    printf 'image_digest\t%s\n' "$APP_DIGEST"
+    printf 'account_id\t%s\n' "$(manifest_value "$BACKUP_MANIFEST" account_id)"
+    printf 'inbox_id\t%s\n' "$(manifest_value "$BACKUP_MANIFEST" inbox_id)"
+    printf 'instagram_business_id\t%s\n' \
+      "$(manifest_value "$BACKUP_MANIFEST" instagram_business_id)"
+    printf 'before\t%s\n' "$CUTOFF"
+    printf 'platform\tinstagram\n'
+    printf 'count\t%s\n' "$UNRECOVERABLE_COUNT"
+    printf 'fingerprint\t%s\n' "$UNRECOVERABLE_FINGERPRINT"
+    printf 'inspector_script_sha256\t%s\n' "$INSPECTOR_SCRIPT_SHA256"
+    printf 'approved_by\t%s\n' "$APPROVED_BY"
+    printf 'approved_at\t%s\n' "$APPROVED_AT"
+  } >"$UNRECOVERABLE_SIDECAR"
+)
+(
+  set -o noclobber
+  cd "$HISTORY_DIR"
+  sha256sum "$(basename "$UNRECOVERABLE_SIDECAR")" \
+    >"$(basename "$UNRECOVERABLE_SIDECAR_CHECKSUM")"
+)
+chmod 0400 "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM"
+(
+  cd "$HISTORY_DIR"
+  sha256sum --check "$(basename "$UNRECOVERABLE_SIDECAR_CHECKSUM")"
+)
+EXPECTED_UNRECOVERABLE_FIELDS=(
+  schema_version repository_commit image_digest account_id inbox_id
+  instagram_business_id before platform count fingerprint
+  inspector_script_sha256 approved_by approved_at
+)
+awk -F $'\t' 'NF != 2 { exit 1 } END { if (NR != 13) exit 1 }' \
+  "$UNRECOVERABLE_SIDECAR"
+mapfile -t OBSERVED_UNRECOVERABLE_FIELDS < <(cut -f1 "$UNRECOVERABLE_SIDECAR")
+test "${#OBSERVED_UNRECOVERABLE_FIELDS[@]}" -eq \
+  "${#EXPECTED_UNRECOVERABLE_FIELDS[@]}"
+for field_index in "${!EXPECTED_UNRECOVERABLE_FIELDS[@]}"; do
+  test "${OBSERVED_UNRECOVERABLE_FIELDS[$field_index]}" = \
+    "${EXPECTED_UNRECOVERABLE_FIELDS[$field_index]}"
+done
+UNRECOVERABLE_SIDECAR_SHA256="$(sha256_file "$UNRECOVERABLE_SIDECAR")"
+printf '[UMI-FBIG] stage=unrecoverable_envelope_approval sidecar_sha256=%s count=%s fingerprint=%s\n' \
+  "$UNRECOVERABLE_SIDECAR_SHA256" "$UNRECOVERABLE_COUNT" "$UNRECOVERABLE_FINGERPRINT" \
+  >>"$HISTORY_PROBE_LOG"
+chmod 0400 "$HISTORY_PROBE_LOG"
+test "$(stat -c '%u:%a:%h' "$HISTORY_PROBE_LOG")" = "0:400:1"
 SOURCE_DRY_LOG_SHA256="$(sha256_file "$HISTORY_PROBE_LOG")"
 SOURCE_DRY_SUMMARY_SHA256="$(sha256_file "$HISTORY_PROBE_SUMMARY")"
 MESSENGER_CONTENTLESS_COUNT="$(
@@ -815,12 +1102,14 @@ test "$SOURCE_STORAGE_MANIFEST_SHA256" = \
 [[ "$INSTAGRAM_CONTENTLESS_COUNT" =~ ^(0|[1-9][0-9]*)$ ]]
 [[ "$MESSENGER_CONTENTLESS_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 [[ "$INSTAGRAM_CONTENTLESS_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+test "$UNRECOVERABLE_COUNT" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
+[[ "$UNRECOVERABLE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+[[ "$INSPECTOR_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
 
 HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
 HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
 test ! -e "$HISTORY_APPROVAL"
 test ! -e "$HISTORY_APPROVAL_CHECKSUM"
-APPROVED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 (
   set -o noclobber
   {
@@ -966,9 +1255,9 @@ normalize_history_summary() {
   awk '
     {
       output = ""
-      for (index = 1; index <= NF; index += 1) {
-        if ($index ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
-        output = output (output == "" ? "" : " ") $index
+      for (field = 1; field <= NF; field += 1) {
+        if ($field ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
+        output = output (output == "" ? "" : " ") $field
       }
       print output
     }
@@ -980,6 +1269,7 @@ validate_history_apply_summary() {
   local require_zero_writes="$2"
   local platforms="$3"
   local expected_degraded=false
+  local expected_ambiguous=0
   local observed_degraded
   local attachments_unavailable
   local platform
@@ -995,9 +1285,19 @@ validate_history_apply_summary() {
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    expected_ambiguous="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  fi
+  test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
+    "$expected_ambiguous"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+    "$expected_ambiguous"
+  if [[ "$expected_ambiguous" != 0 ]]; then
+    expected_degraded=true
+  fi
   for counter in \
-    ambiguous_participants ambiguous_senders foreign_source_id_anomalies \
-    failed_threads platform_failures retry_exhaustion authentication_failures \
+    ambiguous_senders foreign_source_id_anomalies \
+    platform_failures retry_exhaustion authentication_failures \
     lock_loss reindex_failures download_budget_exhaustions; do
     test "$(stage_value "$summary" history_import_summary "$counter")" = 0
   done
@@ -1066,10 +1366,12 @@ accepted_history_dry_run() {
   test ! -e "$summary"
   test ! -e "$normalized"
 
+  inspect_unrecoverable_envelopes "before-$attempt"
   set +e
   history_run true messenger,instagram 2>&1 | tee "$log"
   statuses=("${PIPESTATUS[@]}")
   set -e
+  inspect_unrecoverable_envelopes "after-$attempt"
   test "${#statuses[@]}" -eq 2
   test "${statuses[0]}" -eq 0
   test "${statuses[1]}" -eq 0
@@ -1079,6 +1381,11 @@ accepted_history_dry_run() {
   test "$(stage_value "$summary" history_import_summary write_complete)" = not_applicable
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
+  test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
+    "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+    "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  test "$(stage_value "$summary" history_import_summary ambiguous_senders)" = 0
   normalize_history_summary "$summary" >"$normalized"
   chmod 0400 "$log" "$summary" "$normalized"
 }
@@ -1159,10 +1466,16 @@ history_apply_with_verification() {
   test ! -e "$log"
   test ! -e "$summary"
 
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    inspect_unrecoverable_envelopes "before-$label"
+  fi
   set +e
   history_run false "$platforms" "$budget" 2>&1 | tee "$log"
   statuses=("${PIPESTATUS[@]}")
   set -e
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    inspect_unrecoverable_envelopes "after-$label"
+  fi
   test "${#statuses[@]}" -eq 2
   test "${statuses[0]}" -eq 0
   test "${statuses[1]}" -eq 0
@@ -1769,19 +2082,31 @@ PROFILE_DIR="$AUDIT_DIR/profile-approval"
 TARGET_DIR="$AUDIT_DIR/profile-targets"
 CLONE_BASELINE="$AUDIT_DIR/clone-scoped-baseline.txt"
 SCOPED_SNAPSHOT_SCRIPT="$AUDIT_DIR/fbig-scoped-baseline.rb"
+UNRECOVERABLE_INSPECTOR="$AUDIT_DIR/fbig-unrecoverable-envelope-inspector.rb"
+UNRECOVERABLE_SIDECAR="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv"
+UNRECOVERABLE_SIDECAR_CHECKSUM="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv.sha256"
+HISTORY_PROBE_LOG="$AUDIT_DIR/history-probe.log"
+EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS='1'
 
 test "$(id -u)" -eq 0
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]]
 [[ "$PRODUCTION_DATABASE" =~ ^[a-z_][a-z0-9_]*$ ]]
 [[ "$APP_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ "$APP_DIGEST" =~ ^ghcr\.io/shumkov/chatwoot@sha256:[0-9a-f]{64}$ ]]
+test "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS" = 1
 for path in \
   "$CLONE_BASELINE" "$SCOPED_SNAPSHOT_SCRIPT" \
   "$AUDIT_DIR/history-dry-1-summary-normalized.tsv" \
+  "$HISTORY_PROBE_LOG" "$UNRECOVERABLE_INSPECTOR" \
+  "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM" \
   "$HISTORY_DIR/fbig-approval-v1.tsv" \
   "$HISTORY_DIR/fbig-approval-v1.tsv.sha256"; do
   test "$(stat -c '%u:%a:%h' "$path")" = "0:400:1"
 done
+
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
 
 manifest_value() {
   local path="$1"
@@ -1799,16 +2124,16 @@ stage_value() {
   awk -v expected_stage="$stage" -v expected_key="$key" '
     $1 == "[UMI-FBIG]" {
       selected = 0
-      for (index = 2; index <= NF; index += 1) {
-        if ($index == "stage=" expected_stage) selected = 1
+      for (field = 2; field <= NF; field += 1) {
+        if ($field == "stage=" expected_stage) selected = 1
       }
       if (selected) {
         rows += 1
-        for (index = 2; index <= NF; index += 1) {
-          split($index, pair, "=")
+        for (field = 2; field <= NF; field += 1) {
+          split($field, pair, "=")
           if (pair[1] == expected_key) {
             values += 1
-            value = substr($index, length(expected_key) + 2)
+            value = substr($field, length(expected_key) + 2)
           }
         }
       }
@@ -1819,6 +2144,52 @@ stage_value() {
     }
   ' "$path"
 }
+
+HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
+HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+(
+  cd "$HISTORY_DIR"
+  sha256sum --check "$(basename "$HISTORY_APPROVAL_CHECKSUM")"
+  sha256sum --check "$(basename "$UNRECOVERABLE_SIDECAR_CHECKSUM")"
+)
+EXPECTED_UNRECOVERABLE_FIELDS=(
+  schema_version repository_commit image_digest account_id inbox_id
+  instagram_business_id before platform count fingerprint
+  inspector_script_sha256 approved_by approved_at
+)
+awk -F $'\t' 'NF != 2 { exit 1 } END { if (NR != 13) exit 1 }' \
+  "$UNRECOVERABLE_SIDECAR"
+mapfile -t OBSERVED_UNRECOVERABLE_FIELDS < <(cut -f1 "$UNRECOVERABLE_SIDECAR")
+test "${#OBSERVED_UNRECOVERABLE_FIELDS[@]}" -eq \
+  "${#EXPECTED_UNRECOVERABLE_FIELDS[@]}"
+for field_index in "${!EXPECTED_UNRECOVERABLE_FIELDS[@]}"; do
+  test "${OBSERVED_UNRECOVERABLE_FIELDS[$field_index]}" = \
+    "${EXPECTED_UNRECOVERABLE_FIELDS[$field_index]}"
+done
+CUTOFF="$(manifest_value "$HISTORY_APPROVAL" before)"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" schema_version)" = 1
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" repository_commit)" = "$APP_COMMIT"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" image_digest)" = "$APP_DIGEST"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" account_id)" = \
+  "$(manifest_value "$HISTORY_APPROVAL" account_id)"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" inbox_id)" = "$INBOX_ID"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" instagram_business_id)" = \
+  "$(manifest_value "$HISTORY_APPROVAL" instagram_business_id)"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" before)" = "$CUTOFF"
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" platform)" = instagram
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)" = \
+  "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
+[[ "$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)" =~ ^[0-9a-f]{64}$ ]]
+test "$(manifest_value "$UNRECOVERABLE_SIDECAR" inspector_script_sha256)" = \
+  "$(sha256_file "$UNRECOVERABLE_INSPECTOR")"
+test "$(manifest_value "$HISTORY_APPROVAL" source_dry_log_sha256)" = \
+  "$(sha256_file "$HISTORY_PROBE_LOG")"
+UNRECOVERABLE_SIDECAR_SHA256="$(sha256_file "$UNRECOVERABLE_SIDECAR")"
+test "$(
+  grep -Fxc \
+    "[UMI-FBIG] stage=unrecoverable_envelope_approval sidecar_sha256=$UNRECOVERABLE_SIDECAR_SHA256 count=$(manifest_value "$UNRECOVERABLE_SIDECAR" count) fingerprint=$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)" \
+    "$HISTORY_PROBE_LOG"
+)" -eq 1
 
 baseline_ids() {
   local baseline_file="$1"
@@ -1848,13 +2219,36 @@ normalize_history_summary() {
   awk '
     {
       output = ""
-      for (index = 1; index <= NF; index += 1) {
-        if ($index ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
-        output = output (output == "" ? "" : " ") $index
+      for (field = 1; field <= NF; field += 1) {
+        if ($field ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
+        output = output (output == "" ? "" : " ") $field
       }
       print output
     }
   ' "$summary"
+}
+
+run_production_unrecoverable_inspection() {
+  docker compose exec -T \
+    -e UMI_FBIG_INSPECT_INBOX_ID="$INBOX_ID" \
+    -e UMI_FBIG_INSPECT_EXPECTED_DATABASE="$PRODUCTION_DATABASE" \
+    -e UMI_FBIG_INSPECT_BEFORE="$CUTOFF" \
+    rails bundle exec rails runner - <"$UNRECOVERABLE_INSPECTOR" |
+    grep '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection '
+}
+
+inspect_production_unrecoverable_envelopes() {
+  local label="$1"
+  local output="$AUDIT_DIR/production-unrecoverable-$label.tsv"
+  [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+  test ! -e "$output"
+  run_production_unrecoverable_inspection >"$output"
+  test "$(grep -c '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection ' "$output")" -eq 1
+  test "$(stage_value "$output" unrecoverable_envelope_inspection count)" = \
+    "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  test "$(stage_value "$output" unrecoverable_envelope_inspection fingerprint)" = \
+    "$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)"
+  chmod 0400 "$output"
 }
 
 validate_history_apply_summary() {
@@ -1862,6 +2256,7 @@ validate_history_apply_summary() {
   local require_zero_writes="$2"
   local platforms="$3"
   local expected_degraded=false
+  local expected_ambiguous=0
   local observed_degraded
   local attachments_unavailable
   local platform
@@ -1877,9 +2272,19 @@ validate_history_apply_summary() {
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    expected_ambiguous="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  fi
+  test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
+    "$expected_ambiguous"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+    "$expected_ambiguous"
+  if [[ "$expected_ambiguous" != 0 ]]; then
+    expected_degraded=true
+  fi
   for counter in \
-    ambiguous_participants ambiguous_senders foreign_source_id_anomalies \
-    failed_threads platform_failures retry_exhaustion authentication_failures \
+    ambiguous_senders foreign_source_id_anomalies \
+    platform_failures retry_exhaustion authentication_failures \
     lock_loss reindex_failures download_budget_exhaustions; do
     test "$(stage_value "$summary" history_import_summary "$counter")" = 0
   done
@@ -2035,10 +2440,16 @@ production_history_run_with_verification() {
     test -z "$budget"
   fi
 
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    inspect_production_unrecoverable_envelopes "before-$label"
+  fi
   set +e
   "$STACK_DIR/bin/fbig_history_run.sh" "${arguments[@]}" 2>&1 | tee "$log"
   statuses=("${PIPESTATUS[@]}")
   set -e
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    inspect_production_unrecoverable_envelopes "after-$label"
+  fi
   test "${#statuses[@]}" -eq 2
   test "${statuses[0]}" -eq 0
   test "${statuses[1]}" -eq 0
@@ -2052,6 +2463,11 @@ production_history_run_with_verification() {
     test "$(stage_value "$summary" history_import_summary write_complete)" = not_applicable
     test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
     test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
+    test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
+      "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+    test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+      "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+    test "$(stage_value "$summary" history_import_summary ambiguous_senders)" = 0
     normalize_history_summary "$summary" >"$normalized"
     cmp -s "$AUDIT_DIR/history-dry-1-summary-normalized.tsv" "$normalized"
     chmod 0400 "$normalized"
@@ -2155,6 +2571,8 @@ writers only on success.
   "$PROFILE_DIR/fbig-profile-approval-v1.tsv" \
   "$PROFILE_DIR/fbig-profile-approval-v1.tsv.sha256" \
   "$TARGET_DIR/fbig-profile-targets-v1.tsv"
+
+inspect_production_unrecoverable_envelopes final-production
 ```
 
 The third command is the zero-write idempotency proof. Audit webhook retry and
@@ -2195,6 +2613,9 @@ Record per platform:
 - threads and pages scanned;
 - messages scanned, already present, imported incoming, imported outgoing, and
   accepted contentless omissions;
+- the one exact pre/post/final-fingerprinted Instagram envelope with no
+  external identity or representable message, reported as unrecoverable and
+  excluded from conversation totals;
 - contacts and non-empty archives created;
 - attachments offered/downloaded/unavailable and bytes consumed;
 - stable profile targets, successes, permanent unavailability, and blocking

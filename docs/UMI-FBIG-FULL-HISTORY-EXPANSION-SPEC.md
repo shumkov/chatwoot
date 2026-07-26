@@ -121,6 +121,63 @@ correctly wrote nothing and exited nonzero under the predecessor completion
 contract. It also observed one independent profile request error and one
 safely omitted new thread with ambiguous participants.
 
+A fresh exhaustive clone probe on 2026-07-26 reproduced that one omitted
+Instagram thread. A read-only, PII-free inspection hashed its thread and
+participant ids and then checked the message detail: Meta exposed only the
+Instagram business account in `participants`, one outbound listing from that
+same business account, no external recipient in `to`, no message body, and no
+attachment. The envelope therefore contains neither a recoverable contact
+identity nor a representable message. Creating a synthetic contact or empty
+archive would misattribute the event and violate the no-empty-conversation
+contract. It is an unrecoverable Meta envelope, not a migratable chat.
+
+The one-time runbook seals both the expected Instagram ambiguity count and a
+domain-separated, pseudonymous fingerprint. Raw Meta ids remain in-process
+and are never emitted. The digest is
+`Umi::Fbig::TypedValueDigest.hexdigest(record)`, which supplies SHA-256 plus
+typed, nested, length-framed values and UTF-8 validation. `record` is a hash
+with domain `umi-fbig-unrecoverable-envelope-v1`, platform, and a sorted
+`threads` array. Each thread record contains its id; a sorted participant
+array preserving multiplicity; and messages sorted by unique mid. Each
+message binds the mid, canonical listing time, listing sender, detail sender,
+sorted unique detail recipients, `detail["message"].blank?`, attachment
+descriptor count, and the sorted omission counts returned by the same
+`HistoryImportAttachmentService#plan` used by the importer. Missing ids,
+duplicate thread/mid/recipient ids, invalid UTF-8, a missing detail, a detail
+mid/time mismatch, malformed shapes, or any incomplete conversation/message
+page aborts without emitting a digest.
+
+Before an ambiguous thread enters the digest, the inspector also requires the
+reviewed unrecoverable predicate itself: exactly one participant equal to the
+Instagram business identity, exactly one pre-cutoff message, listing and detail
+senders equal to that business identity, no recipients, a blank body, and zero
+supported or omitted attachments. A stable ambiguity count cannot therefore
+hide a group thread or newly recoverable identity/content when the first
+sidecar is created; any semantic change aborts before a digest is emitted.
+
+The sealed values live in strict
+`fbig-unrecoverable-envelope-v1.tsv`/`.sha256` sidecars. The sidecar binds its
+schema, repository commit, image digest, account, inbox, Instagram business
+id, frozen `before` cutoff, platform, expected count, fingerprint, and
+inspector-script SHA-256. The accepted probe log records the sidecar checksum
+before it is locked; `HistoryApprovalManifest#source_dry_log_sha256` therefore
+chains the sidecar into the existing checksummed 25-field approval without
+changing its runtime schema. Clone and production derive the expected value
+only from that validated sidecar and inspect only listings/details before the
+frozen cutoff.
+
+The same read-only inspection runs immediately before and after every
+Instagram-inclusive probe/dry/apply/recovery stage. Both observations must
+match the sealed fingerprint, which closes the gap between a separate
+pre-stage observation and the envelope the importer actually omits. Each
+stage also requires `ambiguous_participants == failed_threads == 1` and zero
+ambiguous senders; Messenger-only scans require zero ambiguity. The accepted
+unaccepted probe and two accepted dry runs must have byte-identical normalized
+summaries. Any identity/content/count drift or any other failed thread aborts
+and requires a new investigation. The final production check repeats the
+fingerprint after all history/profile work and reports this single envelope
+separately from recoverable conversations and messages.
+
 Meta's documented examples include legitimate empty-text messages whose
 content is carried by a structured attachment. Those are not this case: the
 attachment planner already retains supported media or emits a visible
