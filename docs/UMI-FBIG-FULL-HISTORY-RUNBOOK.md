@@ -679,7 +679,7 @@ verify_clone_history_state() {
       abort("clone database mismatch") unless actual_database == expected_database
       inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_AUDIT_INBOX_ID"), 10))
       archives = inbox.conversations.where(
-        "jsonb_exists(additional_attributes, :key)",
+        "jsonb_exists(conversations.additional_attributes, :key)",
         key: "umi_history_import"
       )
       duplicate_message_sources = Message
@@ -689,6 +689,7 @@ verify_clone_history_state() {
           key: "umi_history_import",
           value: "true"
         )
+        .reorder(nil)
         .group(:source_id).having("COUNT(*) > 1").count
       empty_archives = archives.left_joins(:messages)
                                .group("conversations.id")
@@ -1972,7 +1973,7 @@ verify_production_history_state() {
       abort("production database mismatch") unless actual_database == expected_database
       inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_AUDIT_INBOX_ID"), 10))
       archives = inbox.conversations.where(
-        "jsonb_exists(additional_attributes, :key)",
+        "jsonb_exists(conversations.additional_attributes, :key)",
         key: "umi_history_import"
       )
       duplicate_message_sources = Message
@@ -1982,6 +1983,7 @@ verify_production_history_state() {
           key: "umi_history_import",
           value: "true"
         )
+        .reorder(nil)
         .group(:source_id).having("COUNT(*) > 1").count
       empty_archives = archives.left_joins(:messages)
                                .group("conversations.id")
