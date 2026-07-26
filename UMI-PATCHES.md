@@ -365,6 +365,15 @@ requires an explicit expansion acknowledgement and positive per-invocation
 historical-media budget. It creates no empty conversation and never invents
 content for a body Meta no longer returns.
 
+The runbook separately binds the one Meta envelope that exposes only the
+Instagram business identity and no representable content. A strict,
+checksummed pseudonymous fingerprint is verified immediately before and after
+every Instagram history stage; drift aborts, and the envelope is reported as
+unrecoverable rather than becoming an empty or misattributed conversation.
+The inspector also aborts before first approval if that envelope gains an
+external identity, nonblank body, attachment, or any other shape outside the
+reviewed business-only empty event.
+
 `umi:fbig:history_profiles` is a separate, rate-aware pass over the union of
 importer-owned archive identities, current Conversations participants, and the
 six strict Instagram seed targets. It never lists messages or creates product
