@@ -358,19 +358,36 @@ RSpec.describe 'UMI FB/IG production program builder' do
     common = File.join(repository_root, 'script/umi_fbig/programs/common.sh')
     command = 'source "$1"; "$2" "$3"'
     Dir.mktmpdir do |tool_directory|
-      gstat, gstat_status = Open3.capture2('sh', '-c', 'command -v gstat')
-      if gstat_status.success?
-        File.symlink(gstat.strip, File.join(tool_directory, 'stat'))
-        environment = { 'PATH' => "#{tool_directory}:#{ENV.fetch('PATH')}" }
-      else
-        environment = {}
-      end
-
-      _stdout, writable_stderr, writable_status = Open3.capture3(
-        environment, 'bash', '-c', command, 'bash', common, 'require_trusted_directory', '/private/tmp'
+      File.binwrite(
+        File.join(tool_directory, 'stat'),
+        <<~'SH'
+          #!/usr/bin/env bash
+          case "$2" in
+            %u:%g) printf '0:0\n' ;;
+            %a)
+              if [[ "$3" = "$UMI_FBIG_UNSAFE_PATH" ]]; then
+                printf '777\n'
+              else
+                printf '700\n'
+              fi
+              ;;
+            *) exec /usr/bin/stat "$@" ;;
+          esac
+        SH
       )
-      expect(writable_status).not_to be_success
-      expect(writable_stderr).to include('must not be group/world writable')
+      File.chmod(0o700, File.join(tool_directory, 'stat'))
+      environment = { 'PATH' => "#{tool_directory}:#{ENV.fetch('PATH')}" }
+
+      Dir.mktmpdir do |writable_directory|
+        writable_directory = File.realpath(writable_directory)
+        File.chmod(0o777, writable_directory)
+        _stdout, writable_stderr, writable_status = Open3.capture3(
+          environment.merge('UMI_FBIG_UNSAFE_PATH' => writable_directory),
+          'bash', '-c', command, 'bash', common, 'require_trusted_directory', writable_directory
+        )
+        expect(writable_status).not_to be_success
+        expect(writable_stderr).to include('must not be group/world writable')
+      end
 
       Dir.mktmpdir do |directory|
         target = File.join(directory, 'target')
