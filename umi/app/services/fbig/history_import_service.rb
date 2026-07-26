@@ -99,7 +99,8 @@ class Umi::Fbig::HistoryImportService
     max_message_pages: 10_000
   }.freeze
   STAT_KEYS = %i[
-    conversation_pages threads_scanned message_pages mids_scanned already_present previously_imported
+    conversation_pages threads_scanned message_pages mids_scanned in_scope_mids_scanned out_of_scope_mids
+    already_present previously_imported
     candidate_incoming candidate_outbound outbound_no_native_presence_import outbound_no_native_presence_skip
     outbound_pre_presence_import outbound_pre_presence_skip outbound_all_import outbound_all_skip details_fetched
     content_unavailable attachment_urls_found attachments_downloaded attachments_unsupported attachments_unavailable
@@ -450,6 +451,8 @@ class Umi::Fbig::HistoryImportService
     @stats[:mids_scanned] += result.items.size
 
     listings = in_scope_listings(result.items)
+    @stats[:in_scope_mids_scanned] += listings.size
+    @stats[:out_of_scope_mids] += result.items.size - listings.size
     archive_exists = validate_existing_archive_for_scan!(platform, thread_id, participant['id'])
     existing_contact_inbox = @inbox.contact_inboxes.find_by(source_id: participant['id'])
     existing_profile_plan = profile_plan_for(platform, participant, listings, existing_contact_inbox.contact) if existing_contact_inbox

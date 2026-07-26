@@ -153,6 +153,9 @@ describe Umi::Fbig::HistoryImportService do
 
     expect([Contact.count, ContactInbox.count, Conversation.count, Message.count, ActiveStorage::Blob.count]).to eq(counts_before)
     expect(result.stats).to include(
+      mids_scanned: 2,
+      in_scope_mids_scanned: 2,
+      out_of_scope_mids: 0,
       candidate_incoming: 1,
       candidate_outbound: 1,
       details_fetched: 2,
@@ -161,6 +164,36 @@ describe Umi::Fbig::HistoryImportService do
     )
     expect(result.attachments_downloadable).to eq('unknown')
     expect(result.write_complete).to be_nil
+  end
+
+  it 'separates raw listings from the strict pre-cutoff conservation set' do
+    cutoff_and_later = [
+      { 'id' => 'mid-at-cutoff', 'created_time' => before_time.iso8601, 'from' => { 'id' => 'person-1' } },
+      { 'id' => 'mid-after-cutoff', 'created_time' => (before_time + 1.second).iso8601, 'from' => { 'id' => 'person-1' } }
+    ]
+    allow(graph_client).to receive(:messages).and_return(
+      Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: listings + cutoff_and_later, pages: 1)
+    )
+
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['messenger'],
+      outbound_policy: nil,
+      graph_client: graph_client
+    ).perform
+
+    expect(result.stats).to include(
+      mids_scanned: 4,
+      in_scope_mids_scanned: 2,
+      out_of_scope_mids: 2,
+      candidate_incoming: 1,
+      candidate_outbound: 1
+    )
+    expect(graph_client).not_to have_received(:detail).with('mid-at-cutoff')
+    expect(graph_client).not_to have_received(:detail).with('mid-after-cutoff')
   end
 
   it 'uses platform-scoped native presence for the pre-presence outbound policy' do
