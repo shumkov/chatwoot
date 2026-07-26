@@ -1,6 +1,6 @@
 # UMI FB/IG Full-History Expansion and Contact Enrichment
 
-Status: multi-agent reviewed; implemented and locally verified
+Status: implementation revision under multi-agent review
 Date: 2026-07-24
 Extends: `docs/UMI-FBIG-HISTORY-IMPORT-SPEC.md` (patch 14)
 
@@ -1882,6 +1882,225 @@ apply:
     clone-reviewed profile release/settings, and distinct clone/production
     databases, with both predecessor fields `none`. Production profile commands
     must use production mode and derive every bound setting from this artifact.
+14. After clone Redis is removed, create one checksummed terminal acceptance
+    manifest. The exact standalone acceptance program and finalizer must be
+    written into a root-owned `0700` directory as root-owned `0400`,
+    single-link regular files and checksummed **before** the systemd unit is
+    started. The exact unit fragment is protected and checksummed before
+    `daemon-reload`; drop-ins are forbidden. A checksummed pre-launch effective
+    unit descriptor records the fragment path/SHA, exact-one `ExecStart`,
+    explicit environment, empty environment-file/pass-environment sets, and
+    working directory. The same effective properties and fragment SHA are
+    re-read after exit and must match the pre-launch descriptor before the
+    invocation id and both program SHAs are bound into the terminal manifest.
+    The manifest also binds the merged commit/digest,
+    clone/production database names, inbox, history/profile approvals, target
+    manifest, clone baseline, final history/profile idempotency summaries, and
+    exact unrecoverable-envelope sidecar. A reusable unit's last exit status
+    is secondary evidence; a mutable-at-launch program, unbound environment,
+    missing/stale/partial directory, or historical post-launch permission
+    hardening never authorizes production work. The finalizer holds a
+    dedicated root-owned descriptor-verified lock through validate-or-publish
+    and uses atomic no-replace publication; concurrent finalizers can only
+    validate the same complete pair, never interleave publications. The
+    current R4 invocation is rehearsal evidence only and must be repeated from
+    this protected pre-launch state.
+15. Run the production database migration under the same deployment lock used
+    by deploy/history/profile operations. Before creating any fixed production
+    evidence, re-prove the Compose and live Rails/Sidekiq digest, both
+    `/app/.git_sha` values, migration `20260724000000`, the exact unique/valid/
+    ready three-column Contact-avatar partial index and predicate, and zero
+    duplicate Contact-avatar rows.
+16. Treat every production profile wrapper return as an attempt requiring
+    recursive sealed-evidence validation. The wrapper proves both the approved
+    digest and `/app/.git_sha` in running Rails/Sidekiq and again inside the
+    mutating Rails one-off before it stops at task authorization.
+    Exit zero alone is not idempotency:
+    the terminal pass must have identical PII-free pre/post snapshots and zero
+    scalar/name/username/optional/avatar mutation counters, avatar bytes, and
+    mirror jobs. If it writes anything, classify it as another apply and
+    continue to a later newly labeled pass.
+17. Between every profile maintenance window, seal an audit bound to that
+    attempt's manifest. It must prove page and Instagram subscription state,
+    completion of the maintenance-interval delivery/retry audit, and
+    `zero unrecovered deliveries` before another maintenance window starts. A window
+    with no offered deliveries may be recorded honestly as no retry observed;
+    it is not evidence that retry delivery itself was exercised.
+18. Execute production profile work as a resumable phase sequence: one sealed
+    attempt, one evidence-producing delivery audit after the reconciliation
+    grace period, then the next attempt. No process-local variable is
+    continuity evidence. A final live-database reconciliation must bind the
+    exact protected terminal acceptance, approvals, backup, per-platform apply summaries,
+    terminal history/profile zero-write evidence, release/schema proof, and
+    exact unrecoverable envelope before completion is reported.
+19. Generate each production history, profile, delivery-checkpoint,
+    delivery-audit, and final-audit phase as a complete standalone script.
+    Publish the profile maintenance wrapper and storage artifact helper through
+    the same no-replace builder; bind their exact SHAs into every consumer and
+    invoke the read-only Python helper explicitly rather than relying on an
+    executable, mutable host copy.
+    Protect and checksum its exact bytes before execution; do not ask an
+    operator to concatenate fences or prepend helpers manually. Syntax-check
+    and ShellCheck those exact scripts, and bind their SHAs into their result
+    manifests. Root execution rejects a symlinked program root and any
+    non-root-owned or group/world-writable ancestor. Acceptance publishes a
+    checksum-bound start intent before starting the systemd unit; terminal
+    adoption accepts only the newer invocation created by that intent, never a
+    retained historical success. The controller and acceptance unit validate
+    every binding-derived stack, backup, production-storage, audit, and clone
+    path as canonical and link-free beneath root-owned, non-writable
+    ancestors before root execution can create files, restore data, or invoke
+    Compose. Every delivery checkpoint additionally binds the running image,
+    commit, reconciliation-service source SHA, inbox, Page, and Instagram
+    identities. Even before deploy, the producer runs read-only from the exact
+    candidate image later accepted by gate 14. Final chain validation requires
+    every checkpoint to equal that accepted commit/digest/implementation and
+    those accepted identities; a candidate change discards and restarts the
+    chain.
+20. Every production history execution selects exactly one platform and seals
+    a result that binds its label,
+    canonical log and summary paths and SHAs, selected platforms, dry/apply
+    mode, byte budget, release/schema proof, approval SHA, and predecessor
+    result. Every Rails one-off resolves through a sealed per-attempt Compose
+    override that pins the accepted digest. An apply also binds two distinct,
+    successful, zero-write dry results for the same platform and requires
+    their terminal summaries to be byte-identical before the first production
+    write; every apply result carries the resulting dry-pair SHA. Before Meta
+    access or importer writes, it atomically publishes a
+    checksummed attempt identity, reconciles durable historical-attachment
+    staging intents, and captures a scoped per-platform importer prestate.
+    Every staged production blob carries a PII-free marker binding the run,
+    account, inbox, platform, and hashes of its thread/message identity before
+    upload. Association clears the marker inside the message transaction.
+    A resumable finalizer runs under the deployment lock after normal exit or
+    interruption, proves that the attempt process is no longer live,
+    reconciles and validates staging markers again, captures the scoped
+    poststate, and seals per-platform deltas for the complete
+    importer-owned graph: created/reused/linked Contacts and ContactInboxes,
+    archive identity/configuration/activity bounds, Messages and directions,
+    Attachments and Active Storage blob/association state, and marker
+    normalization. Shared Contact activity, profile/avatar fields, and ordinary
+    Chatwoot timestamps are excluded from the history-attempt continuity graph
+    because live webhook/Sidekiq traffic can legitimately mutate them; Contact
+    and ContactInbox scope retains stable identity/linkage only. A missing
+    terminal summary is classified as an adopted
+    interrupted attempt, not erased; the next attempt cannot start until that
+    result is sealed into the ordered chain. Thus per-thread commits made
+    before a host/process interruption remain attributable. The protected
+    program rejects combined-platform production attempts, so each result is
+    intrinsically Messenger-only or Instagram-only; combined scans remain
+    available only where the approved rake-task interface permits them.
+    Snapshot capture applies a conservative count preflight before allocating
+    the graph and enforces a 100,000-row / 128-MiB artifact ceiling; exceeding
+    either bound is a stop condition requiring a separately reviewed
+    streaming implementation, never an in-process best effort.
+
+    The terminal history proof comprises canonical production results for
+    separate Messenger and Instagram exhaustive zero-write executions after
+    the last writeful attempt for each platform, never operator-supplied
+    summary paths. Final reconciliation sums the per-platform live deltas from
+    every writeful normal or adopted result and compares those sums with the
+    accepted-baseline-to-live deltas. Importer summary write counters must
+    equal the same delta for normally completed attempts. Final reconciliation
+    also requires zero historical-attachment intent markers, preventing an
+    interrupted upload from leaving an untracked blob/object.
+21. A history-state validation never accepts an earlier snapshot as current
+    evidence. Under the same descriptor-identity-verified deployment lock it
+    captures a fresh temporary live snapshot, compares it with the immutable
+    baseline, then atomically seals that observation. Delivery and final audit
+    hold that same lock continuously from release/schema verification through
+    all evidence reads and terminal publication, so a deploy or another
+    maintenance phase cannot interleave.
+22. Read-only delivery reconciliation starts while clone acceptance is still
+    running and emits a checksummed ordered checkpoint chain. The reviewed
+    producer configures an effective lower bound of
+    `max(service rolling-window start, frozen history cutoff)`: accepted
+    history owns every `created_at < cutoff` item, while checkpoint
+    zero-missing applies to `created_at >= cutoff` with an inclusive lower
+    bound. Every checkpoint
+    records the service rolling-window start, effective lower bound, grace-end,
+    accepted release/implementation and inbox/Page/Instagram identities,
+    subscription evidence, platform summaries, and predecessor SHA; requires
+    zero post-cutoff missing/failed/capped/error results; and is taken before
+    the prior checkpoint's grace-end can fall outside the next 48-hour window.
+    The first effective window starts at the frozen cutoff, adjacent windows
+    overlap (`next.effective_start <= previous.grace_end`), and the final
+    window ends no earlier than the last maintenance attempt finish.
+    Pre-cutoff missing items are accounted for only by the accepted history
+    scan and conservation proof. Each
+    profile maintenance audit additionally requires its own attempt interval
+    to lie inside its checkpoint window. This continuous chain, rather than
+    one late 48-hour invocation, proves cutoff-to-completion coverage. A broken
+    or missing overlap fails closed and requires a separately reviewed
+    backfill/reacceptance decision; a recent zero result cannot conceal an
+    older unaudited gap.
+23. Profile delivery and final audits use validate-and-skip only for a fully
+    sealed, recursively valid result. A partial directory is resumed only
+    through explicit monotonic publication stages; it is not deleted or
+    silently reused. Every referenced artifact and checksum is individually
+    fsynced before the terminal manifest/checksum pair is published, and the
+    containing directory is fsynced after every rename/publication boundary.
+    These byte-exact checksum and strict TSV rules apply to acceptance,
+    history, profile, delivery-checkpoint, delivery-audit, and final-audit
+    artifacts: checksum verification compares generated bytes with `cmp`, and
+    parsing rejects every blank, comment, malformed, duplicate, reordered, or
+    extra row. The acceptance finalizer has explicit validate-and-skip for a
+    complete pair, manifest-only checksum publication after revalidation, and
+    rejection of checksum-only or mismatched pairs, all under its dedicated
+    lock.
+24. Final reconciliation seals concrete per-platform scan and outcome totals,
+    not hashes alone: pages, threads, message ids, already-present and imported
+    directions, policy skips, contentless and API-unavailable omissions,
+    attachment offer/download/unavailable/byte counters, non-empty archives,
+    currently linked contacts plus created-versus-reused Contact/ContactInbox
+    deltas, stable profile targets and terminal
+    success/unavailable/blocking outcomes. Aggregate-only profile mutation and
+    avatar counters are labeled aggregate. A live stable-target query counts
+    and fingerprints exact generated Instagram placeholders remaining. It
+    reports an overlap-aware union with `seed_only`, `importer_only`, and
+    `seed_and_importer` membership, so a seeded archive target is not
+    double-counted. It requires no unclassified target. A remaining placeholder after the
+    successful exhaustive final profile scan is explicitly classified as
+    `name unavailable during final scan`; genuine unavailable-name outcomes
+    may remain, but are reported rather than called repaired.
+    Every live count, linkage, placeholder set, and fingerprint comes from one
+    repeatable-read transaction (or equivalent consistent database snapshot);
+    its snapshot timestamp and transaction identity are bound into the audit.
+25. Coverage and mutation aggregation have separate sources. Each platform's
+    final exhaustive zero-write history result supplies its pages, threads,
+    ids, already-present, policy, omission, fingerprint, and completeness
+    totals. For that result, mechanically require:
+
+    - `in_scope_mids_scanned =
+      already_present + candidate_incoming + candidate_outbound`;
+    - `candidate_outbound = outbound_pre_presence_import +
+      outbound_pre_presence_skip`;
+    - `candidate_incoming + outbound_pre_presence_import =
+      imported_messages + late_already_present +
+      <platform>_contentless_details`;
+    - `imported_messages = imported_incoming + imported_outgoing`; and
+    - `content_unavailable = <platform>_contentless_details`, with zero non-accepted
+      detail/API, pagination, cap, authentication, retry, sender, identity,
+      storage, or thread failure except the one exact separately fingerprinted
+      unrecoverable Instagram envelope.
+
+    The importer adds `in_scope_mids_scanned` as an explicit counter incremented
+    only after the `since`/`before` filter; `mids_scanned` remains the raw
+    returned-listing count and their difference is reported as
+    `out_of_scope_mids`. These mutually exclusive equations classify every in-scope candidate as
+    already present (including previously imported), policy-skipped,
+    concurrently/late present, currently imported, or exact accepted
+    contentless. The unrecoverable envelope is reported outside candidate and
+    conversation totals. Actual history writes come only from the summed
+    per-platform pre/post DB deltas in the ordered attempt-result chain.
+    Actual profile repairs/fills/avatar outcomes come from summed writeful
+    profile results; stable-target coverage/outcomes and remaining placeholders
+    come only from the final exhaustive zero-write profile result plus live
+    reconciliation. Historical attachment offers/omissions come from the
+    accepted pre-write production dry summaries and are reconciled with live
+    imported-message attachment/omission metadata; persisted attachment counts
+    and bytes come from the live database. Repeated scans are never summed as
+    mutations.
 
 If a production profile attempt stops after committing rows, keep all
 application writers stopped. The root recovery wrapper recursively verifies
@@ -1903,7 +2122,10 @@ cannot restore a moving tag. Production history verification uses the
 importer-owned ID-bound baseline, not racy whole-database/storage fingerprints
 while live writers continue. Before apply, production runs two accepted
 `pre_presence` dry scans using deferred-profile projections from the
-clone-approved manifest;
+clone-approved manifest. The protected apply binding checksum-binds both
+same-platform dry results, and the program independently proves successful
+termination, zero writes, identical summaries, and the accepted release/scope
+before it can start;
 any omission-set
 drift returns the rollout to a fresh clone rather than changing approval on
 production. After history reaches the zero-write recovery pass, production
@@ -1924,6 +2146,31 @@ loss, or wait-budget exhaustion stops the profile phase without reopening or
 rolling back history. Each command and full summary is saved beside the
 existing import audit logs. Stop on any new structural failure or invariant
 change.
+
+Each production history/profile/checkpoint/audit stage is validate-and-skip when its
+complete root-owned artifact and exact checksum already exist. An interrupted
+stage resumes only from its last checksummed monotonic publication boundary;
+it is never silently rerun under the same label. The delivery-checkpoint
+producer re-queries the configured Meta app subscriptions and runs the
+cutoff-aware two-platform reconciliation on the required overlapping cadence.
+The delivery audit recursively verifies the complete predecessor-linked chain,
+requires its first effective bound to equal the frozen cutoff, every adjacent
+interval to overlap, and the attempt interval to be contained by the final
+checkpoint, with zero post-cutoff missing, failed, capped, or errored results.
+No single late 48-hour window is treated as cutoff-to-attempt coverage.
+
+The final live-database reconciliation reports per-platform scan, omission,
+archive, message direction, attachment, linked-contact, stable-profile-target,
+and remaining exact-placeholder totals and fingerprints. It separately
+records pre-existing importer rows from the accepted baseline and current
+production writes, and proves the current-write delta equals the sum of every
+writeful result in the ordered production history chain. Profile mutation and
+avatar counters remain explicitly aggregate because the profile task does not
+expose an auditable per-platform mutation split. The completion report says
+that all Meta-exposed history was exhaustively scanned and every eligible,
+recoverable message was already present or imported; it lists exact classified
+omissions and never claims that every historical event or every exposed
+profile datum was migrated.
 
 Profile approval is never edited in place. If an attempt exits before sealing
 prestate, its attempt artifact must have prestate, poststate, and staging

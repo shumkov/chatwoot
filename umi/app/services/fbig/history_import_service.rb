@@ -1467,7 +1467,15 @@ class Umi::Fbig::HistoryImportService
       renew_if_due!
       stage_result = @attachment_service.stage(
         item.attachment_plan,
-        remaining_budget_bytes: @remaining_download_bytes
+        remaining_budget_bytes: @remaining_download_bytes,
+        intent: Umi::Fbig::HistoryImportAttachmentService::Intent.new(
+          run_id: @run_id,
+          account_id: @account.id,
+          inbox_id: @inbox.id,
+          platform: platform,
+          thread_id: thread_id,
+          mid: item.mid
+        )
       )
       staged << item.with(stage_result: stage_result)
       renew_if_due!

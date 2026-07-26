@@ -18,6 +18,7 @@ class Umi::Fbig::HistoryProfileBackfillService
 
   STAT_KEYS = %i[
     conversation_pages participants_scanned participants_without_contact lookup_targets
+    messenger_lookup_targets instagram_lookup_targets
     stable_messenger_targets stable_instagram_targets stable_targets_complete seed_targets seed_targets_complete
     profile_requests profile_successes profile_unavailable profile_errors scalar_changes_projected
     scalar_changes_applied avatars_offered avatars_preserved avatars_attached avatars_unavailable avatar_failures
@@ -28,6 +29,11 @@ class Umi::Fbig::HistoryProfileBackfillService
     instagram_targets_success instagram_targets_unavailable instagram_targets_blocking
     seed_targets_success seed_targets_unavailable seed_targets_blocking
     seed_targets_repaired seed_targets_preserved seed_targets_blank_name seed_targets_blocked
+    instagram_placeholders_remaining instagram_placeholders_remaining_fingerprint
+    instagram_placeholders_classified_fingerprint instagram_placeholders_unavailable
+    instagram_placeholders_unavailable_fingerprint instagram_placeholders_blank_name
+    instagram_placeholders_blank_name_fingerprint instagram_placeholders_projected_repair
+    instagram_placeholders_unclassified
     ambiguous_participants
     profile_logical_lookups profile_http_attempts conversation_http_attempts rate_limit_retries
     rate_limit_wait_seconds maximum_usage_percent maximum_estimated_regain_minutes
@@ -86,6 +92,8 @@ class Umi::Fbig::HistoryProfileBackfillService
     @stable_keys = Set.new
     @seed_keys = Set.new
     @seed_success_outcomes = {}
+    @placeholder_success_outcomes = {}
+    @target_outcomes = {}
     @scan_complete = true
     @write_complete = dry_run ? nil : true
     @degraded = false
@@ -100,7 +108,11 @@ class Umi::Fbig::HistoryProfileBackfillService
     collect_local_targets!
     scan_current_participants!
     @stats[:lookup_targets] = @targets.size
+    @platforms.each do |platform|
+      @stats[:"#{platform}_lookup_targets"] = @targets.count { |key, _target| key.first == platform }
+    end
     process_targets! if @scan_complete
+    record_placeholder_evidence! if @scan_complete
     validate_target_completion!
     record_graph_stats!
     evidence = finalize_run_evidence!
@@ -326,6 +338,7 @@ class Umi::Fbig::HistoryProfileBackfillService
       participant_name: target.participant_name,
       contact: contact
     )
+    record_placeholder_success_outcome!(target, contact, plan)
     record_seed_success_outcome!(target, contact, plan)
     if @dry_run
       changed = contact.name != plan.contact_attributes[:name] ||
@@ -425,8 +438,11 @@ class Umi::Fbig::HistoryProfileBackfillService
 
   def record_target_outcome!(target, outcome)
     key = [target.platform, target.source_id]
-    @stats[:"#{target.platform}_targets_#{outcome}"] += 1
-    @stats[:stable_targets_complete] += 1 if @stable_keys.include?(key)
+    @target_outcomes[key] = outcome
+    if @stable_keys.include?(key)
+      @stats[:"#{target.platform}_targets_#{outcome}"] += 1
+      @stats[:stable_targets_complete] += 1
+    end
     return unless @seed_keys.include?(key)
 
     @stats[:seed_targets_complete] += 1
@@ -441,6 +457,21 @@ class Umi::Fbig::HistoryProfileBackfillService
                      :blocking
                    end
     @stats[:"seed_targets_#{seed_outcome}"] += 1 unless seed_outcome.in?(%i[unavailable blocking])
+  end
+
+  def record_placeholder_success_outcome!(target, contact, plan)
+    return unless target.platform == 'instagram'
+    return unless contact.name == "Instagram user #{target.source_id.last(4)}"
+
+    key = [target.platform, target.source_id]
+    @placeholder_success_outcomes[key] =
+      if plan.contact_attributes[:name] != contact.name
+        :projected_repair
+      elsif plan.name_candidate.blank?
+        :blank_name
+      else
+        :unclassified
+      end
   end
 
   def record_seed_success_outcome!(target, contact, plan)
@@ -466,6 +497,44 @@ class Umi::Fbig::HistoryProfileBackfillService
     complete = @stats[:stable_targets_complete] == @stable_keys.size &&
                @stats[:seed_targets_complete] == @seed_keys.size
     fail_run! unless complete || @stats[:exit_failures].positive?
+  end
+
+  def record_placeholder_evidence!
+    categories = Hash.new { |hash, key| hash[key] = [] }
+    @targets.each do |key, target|
+      next unless target.platform == 'instagram'
+
+      contact_inbox, contact = current_target!(target, lock: false)
+      next unless contact.name == "Instagram user #{target.source_id.last(4)}"
+
+      identity = Digest::SHA256.hexdigest(
+        [contact_inbox.id, contact.id, target.source_id].join(':')
+      )
+      categories[:remaining] << identity
+      category = if @target_outcomes[key] == :unavailable
+                   :unavailable
+                 elsif @target_outcomes[key] == :success
+                   @placeholder_success_outcomes.fetch(key, :unclassified)
+                 else
+                   :unclassified
+                 end
+      category = :unclassified if category == :projected_repair && !@dry_run
+      categories[category] << identity
+    end
+
+    %i[remaining unavailable blank_name].each do |category|
+      identities = categories[category].sort
+      @stats[:"instagram_placeholders_#{category}"] = identities.size
+      @stats[:"instagram_placeholders_#{category}_fingerprint"] =
+        Digest::SHA256.hexdigest(identities.join("\n"))
+    end
+    classified = (categories[:unavailable] + categories[:blank_name]).sort
+    @stats[:instagram_placeholders_classified_fingerprint] =
+      Digest::SHA256.hexdigest(classified.join("\n"))
+    @stats[:instagram_placeholders_projected_repair] =
+      categories[:projected_repair].size
+    @stats[:instagram_placeholders_unclassified] = categories[:unclassified].size
+    fail_run! if categories[:unclassified].any?
   end
 
   def graph_client

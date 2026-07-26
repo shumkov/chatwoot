@@ -13,6 +13,60 @@ The accepted release is an immutable
 `ghcr.io/shumkov/chatwoot@sha256:<64 lowercase hex>` digest. Candidate evidence,
 a moving tag, and evidence from another database are not production approval.
 
+### Authoritative production programs
+
+The long shell excerpts below document the evidence contract and the incident
+history that led to it. They are not operator copy/paste inputs. Build the
+complete reviewed programs from the merged candidate:
+
+```bash
+ruby script/umi_fbig/build_programs.rb /opt/umi/fbig-ops/<candidate-id>
+```
+
+The builder emits root-protectable, self-contained programs plus exact
+checksums and rejects any pre-existing output. It syntax-checks and ShellChecks
+the exact concatenated bytes before publishing:
+
+- `fbig-acceptance.sh`
+- `fbig-acceptance-control.sh`
+- `fbig-delivery-checkpoint.sh`
+- `fbig-history-attempt.sh`
+- `fbig-profile-attempt.sh`
+- `fbig-delivery-audit.sh`
+- `fbig-final-audit.sh`
+- `fbig-profile-wrapper.sh` (the exact reviewed maintenance/backup wrapper
+  invoked by `fbig-profile-attempt.sh`)
+- `fbig-storage-artifact.py` (the exact reviewed storage manifest, archive
+  verification, and durability helper used by acceptance and profile attempts)
+
+Every invocation consumes a strict, ordered, checksummed binding manifest.
+Protect the output directory as root-owned `0700` and every program, checksum,
+binding, and binding checksum as root-owned `0400`, single-link regular files.
+Never assemble a production program by concatenating runbook fences.
+
+The execution order is:
+
+1. start cutoff-to-completion read-only delivery checkpoints from the exact
+   candidate image;
+2. launch and finalize protected clone acceptance;
+3. deploy that exact accepted digest, run the migration, and take the
+   coordinated pre-history backup;
+4. run two Messenger dry attempts and two Instagram dry attempts, then bind
+   each byte-identical successful pair into that platform's apply bindings;
+5. run Messenger apply attempts until a separate Messenger attempt proves
+   zero writes, then do the same for Instagram;
+6. run profile dry/apply attempts, with a new overlapping checkpoint and
+   sealed delivery audit after every maintenance window, until a profile
+   attempt proves zero writes; and
+7. run `fbig-final-audit.sh`, which validates the complete result/checkpoint
+   chains and seals concrete per-platform totals from one repeatable-read live
+   database snapshot.
+
+An interrupted history or profile host process is finalized through its
+program's `finalize` action before a successor can start. The current R4 clone
+invocation predates this protected launch contract and is rehearsal evidence
+only; it cannot authorize production.
+
 ## 1. Stop conditions
 
 Stop immediately if any of these is true:
@@ -24,6 +78,8 @@ Stop immediately if any of these is true:
 - a root-owned artifact is not in a `0700` non-link directory with immutable
   `0400`, single-link files;
 - either approved dry run differs from the acceptance probe;
+- an apply binding does not carry two distinct, successful, byte-identical
+  dry-result artifacts for its selected platform;
 - a history run reports a new contentless count/fingerprint;
 - the exact unrecoverable-envelope count/fingerprint differs before or after
   any Instagram-inclusive history stage;
@@ -118,6 +174,7 @@ stage_value() {
     }
   ' "$path"
 }
+
 ```
 
 The immutable input artifacts are:
@@ -2027,6 +2084,319 @@ CLONE_REDIS_ACTIVE=false
 trap - EXIT
 ```
 
+Only after every clone history/profile check above passes and clone Redis is
+gone, seal one terminal acceptance record. New acceptance runs install the
+program before launch as a root-owned, single-link `0400` file inside a
+root-owned `0700` directory. The already-running R4 invocation is accepted only
+because its exact systemd `InvocationID` and `ExecStart` path are bound, the
+live `/tmp` program was independently hashed and changed to root-owned
+single-link `0400` before completion, and the same bytes were copied into the
+protected archive with an exact checksum. Any different invocation must use
+the protected pre-launch layout. Record the loaded unit, invocation, live path,
+protected archive, and both reviewed program/finalizer SHAs rather than
+trusting a reusable unit name or exit status alone:
+
+```bash
+set -Eeuo pipefail
+umask 077
+
+INBOX_ID='<same numeric inbox id>'
+PRODUCTION_DATABASE='chatwoot_production'
+CLONE_DATABASE='<same clone database>'
+APP_COMMIT='<same 40 lowercase hex merged commit>'
+APP_DIGEST='ghcr.io/shumkov/chatwoot@sha256:<same accepted 64-hex digest>'
+AUDIT_DIR='/opt/umi/fbig-audit/<same acceptance id>'
+HISTORY_DIR="$AUDIT_DIR/history-approval"
+PROFILE_DIR="$AUDIT_DIR/profile-approval"
+TARGET_DIR="$AUDIT_DIR/profile-targets"
+CLONE_BASELINE="$AUDIT_DIR/clone-scoped-baseline.txt"
+HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
+PROFILE_APPROVAL="$PROFILE_DIR/fbig-profile-approval-v1.tsv"
+UNRECOVERABLE_SIDECAR="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv"
+IDEMPOTENCY_ATTEMPT="$AUDIT_DIR/clone-profile/idempotency"
+STORAGE_HELPER='/opt/umi/chatwoot/bin/fbig_storage_artifact.py'
+R4_ACCEPTANCE_UNIT='<loaded acceptance unit>'
+R4_ACCEPTANCE_INVOCATION_ID='<32 lowercase hex invocation id>'
+R4_ACCEPTANCE_EXEC_SCRIPT='<exact unit ExecStart script path>'
+R4_ACCEPTANCE_SCRIPT_ARCHIVE='<protected root-only copy of that exact script>'
+EXPECTED_R4_ACCEPTANCE_SCRIPT_SHA256='<reviewed 64-hex acceptance-program SHA>'
+R4_ACCEPTANCE_MANIFEST="$AUDIT_DIR/fbig-r4-acceptance-complete-v1.tsv"
+R4_ACCEPTANCE_CHECKSUM="${R4_ACCEPTANCE_MANIFEST}.sha256"
+
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+require_root_artifact() {
+  local path="$1"
+  local expected_basename="$2"
+  local directory
+  test "$path" = "$(realpath -e -- "$path")"
+  test "$(basename "$path")" = "$expected_basename"
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%a:%h' "$path")" = '0:400:1'
+  directory="$(dirname "$path")"
+  test "$directory" = "$(realpath -e -- "$directory")"
+  test ! -L "$directory"
+  test "$(stat -c '%u:%a' "$directory")" = '0:700'
+}
+
+verify_checksum() {
+  local artifact="$1"
+  local checksum="$2"
+  local expected
+  expected="$(printf '%s  %s\n' "$(sha256_file "$artifact")" "$(basename "$artifact")")"
+  test "$(cat "$checksum")" = "$expected"
+}
+
+require_ordered_fields() {
+  local path="$1"
+  shift
+  local -a expected=("$@")
+  local -a observed
+  local field_index
+  mapfile -t observed < <(awk -F $'\t' 'NF == 2 { print $1 }' "$path")
+  test "${#observed[@]}" -eq "${#expected[@]}"
+  for field_index in "${!expected[@]}"; do
+    test "${observed[$field_index]}" = "${expected[$field_index]}"
+  done
+}
+
+FINALIZER_PROGRAM="${BASH_SOURCE[0]}"
+FINALIZER_CHECKSUM="${FINALIZER_PROGRAM}.sha256"
+require_root_artifact "$FINALIZER_PROGRAM" "$(basename "$FINALIZER_PROGRAM")"
+require_root_artifact "$FINALIZER_CHECKSUM" "$(basename "$FINALIZER_CHECKSUM")"
+verify_checksum "$FINALIZER_PROGRAM" "$FINALIZER_CHECKSUM"
+R4_ACCEPTANCE_FINALIZER_SHA256="$(sha256_file "$FINALIZER_PROGRAM")"
+
+[[ "$R4_ACCEPTANCE_INVOCATION_ID" =~ ^[0-9a-f]{32}$ ]]
+[[ "$EXPECTED_R4_ACCEPTANCE_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=LoadState --value)" = loaded
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=ActiveState --value)" = inactive
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=SubState --value)" = dead
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=Result --value)" = success
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=ExecMainStatus --value)" = 0
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=InvocationID --value)" = \
+  "$R4_ACCEPTANCE_INVOCATION_ID"
+systemctl show "$R4_ACCEPTANCE_UNIT" --property=ExecStart --value |
+  grep -Fq "argv[]=/bin/bash $R4_ACCEPTANCE_EXEC_SCRIPT ;"
+
+test "$R4_ACCEPTANCE_EXEC_SCRIPT" = \
+  "$(realpath -e -- "$R4_ACCEPTANCE_EXEC_SCRIPT")"
+test -f "$R4_ACCEPTANCE_EXEC_SCRIPT"
+test ! -L "$R4_ACCEPTANCE_EXEC_SCRIPT"
+test "$(stat -c '%u:%a:%h' "$R4_ACCEPTANCE_EXEC_SCRIPT")" = '0:400:1'
+R4_ACCEPTANCE_SCRIPT_SHA256="$(sha256_file "$R4_ACCEPTANCE_EXEC_SCRIPT")"
+test "$R4_ACCEPTANCE_SCRIPT_SHA256" = "$EXPECTED_R4_ACCEPTANCE_SCRIPT_SHA256"
+require_root_artifact \
+  "$R4_ACCEPTANCE_SCRIPT_ARCHIVE" "$(basename "$R4_ACCEPTANCE_SCRIPT_ARCHIVE")"
+require_root_artifact \
+  "${R4_ACCEPTANCE_SCRIPT_ARCHIVE}.sha256" \
+  "$(basename "${R4_ACCEPTANCE_SCRIPT_ARCHIVE}.sha256")"
+verify_checksum \
+  "$R4_ACCEPTANCE_SCRIPT_ARCHIVE" "${R4_ACCEPTANCE_SCRIPT_ARCHIVE}.sha256"
+test "$(sha256_file "$R4_ACCEPTANCE_SCRIPT_ARCHIVE")" = \
+  "$R4_ACCEPTANCE_SCRIPT_SHA256"
+
+for artifact in \
+  "$CLONE_BASELINE" \
+  "$HISTORY_APPROVAL" "${HISTORY_APPROVAL}.sha256" \
+  "$PROFILE_APPROVAL" "${PROFILE_APPROVAL}.sha256" \
+  "$TARGET_DIR/fbig-profile-targets-v1.tsv" \
+  "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv.sha256" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-prestate-v1.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-prestate-v1.tsv.sha256" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-poststate-v1.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-poststate-v1.tsv.sha256" \
+  "$UNRECOVERABLE_SIDECAR" "${UNRECOVERABLE_SIDECAR}.sha256"; do
+  require_root_artifact "$artifact" "$(basename "$artifact")"
+done
+verify_checksum "$HISTORY_APPROVAL" "${HISTORY_APPROVAL}.sha256"
+verify_checksum "$PROFILE_APPROVAL" "${PROFILE_APPROVAL}.sha256"
+verify_checksum "$UNRECOVERABLE_SIDECAR" "${UNRECOVERABLE_SIDECAR}.sha256"
+verify_checksum \
+  "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv.sha256"
+verify_checksum \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-prestate-v1.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-prestate-v1.tsv.sha256"
+verify_checksum \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-poststate-v1.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-poststate-v1.tsv.sha256"
+test "$(manifest_value "$HISTORY_APPROVAL" repository_commit)" = "$APP_COMMIT"
+test "$(manifest_value "$HISTORY_APPROVAL" image_digest)" = "$APP_DIGEST"
+test "$(manifest_value "$HISTORY_APPROVAL" clone_database_name)" = "$CLONE_DATABASE"
+test "$(manifest_value "$HISTORY_APPROVAL" inbox_id)" = "$INBOX_ID"
+test "$(manifest_value "$PROFILE_APPROVAL" repository_commit)" = "$APP_COMMIT"
+test "$(manifest_value "$PROFILE_APPROVAL" image_digest)" = "$APP_DIGEST"
+test "$(manifest_value "$PROFILE_APPROVAL" clone_database_name)" = "$CLONE_DATABASE"
+test "$(manifest_value "$PROFILE_APPROVAL" production_database_name)" = \
+  "$PRODUCTION_DATABASE"
+test "$(manifest_value "$PROFILE_APPROVAL" inbox_id)" = "$INBOX_ID"
+test "$(manifest_value "$PROFILE_APPROVAL" history_manifest_sha256)" = \
+  "$(sha256_file "$HISTORY_APPROVAL")"
+test "$(manifest_value "$PROFILE_APPROVAL" placeholder_targets_sha256)" = \
+  "$(sha256_file "$TARGET_DIR/fbig-profile-targets-v1.tsv")"
+test "$(manifest_value "$PROFILE_APPROVAL" clone_profile_idempotency_summary_sha256)" = \
+  "$(sha256_file "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv")"
+for counter in \
+  imported_contacts imported_archives imported_incoming imported_outgoing \
+  imported_messages imported_attachments marker_normalizations \
+  history_evidence_changes_applied messenger_history_evidence_changes_applied \
+  instagram_history_evidence_changes_applied profile_changes_applied \
+  avatars_attached avatars_raced contentless_acceptance_mismatches \
+  ambiguous_senders foreign_source_id_anomalies platform_failures \
+  retry_exhaustion authentication_failures lock_loss reindex_failures \
+  download_budget_exhaustions exit_failures; do
+  test "$(
+    stage_value "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+      history_import_summary "$counter"
+  )" = 0
+done
+for counter in \
+  scalar_changes_applied name_changes_applied username_changes_applied \
+  optional_changes_applied avatars_attached avatar_bytes mirror_jobs \
+  exit_failures lock_loss profile_errors avatar_failures \
+  messenger_targets_blocking instagram_targets_blocking seed_targets_blocking; do
+  test "$(
+    stage_value "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv" \
+      history_profiles_summary "$counter"
+  )" = 0
+done
+cmp -s \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-prestate-v1.tsv" \
+  "$IDEMPOTENCY_ATTEMPT/fbig-profile-clone-poststate-v1.tsv"
+test -z "$(
+  docker ps --all --quiet --filter label=com.docker.compose.service=clone-redis
+)"
+
+verify_terminal_manifest() {
+  local manifest="$1"
+  require_ordered_fields "$manifest" \
+    schema_version acceptance_id acceptance_unit acceptance_invocation_id \
+    acceptance_script_path acceptance_script_archive_path \
+    acceptance_script_sha256 acceptance_finalizer_path \
+    acceptance_finalizer_sha256 repository_commit image_digest \
+    clone_database_name production_database_name inbox_id \
+    history_approval_sha256 profile_approval_sha256 profile_targets_sha256 \
+    clone_baseline_sha256 history_idempotency_summary_sha256 \
+    profile_idempotency_summary_sha256 unrecoverable_sidecar_sha256 completed_at
+  test "$(manifest_value "$manifest" schema_version)" = 1
+  test "$(manifest_value "$manifest" acceptance_id)" = "$(basename "$AUDIT_DIR")"
+  test "$(manifest_value "$manifest" acceptance_unit)" = "$R4_ACCEPTANCE_UNIT"
+  test "$(manifest_value "$manifest" acceptance_invocation_id)" = \
+    "$R4_ACCEPTANCE_INVOCATION_ID"
+  test "$(manifest_value "$manifest" acceptance_script_path)" = \
+    "$R4_ACCEPTANCE_EXEC_SCRIPT"
+  test "$(manifest_value "$manifest" acceptance_script_archive_path)" = \
+    "$R4_ACCEPTANCE_SCRIPT_ARCHIVE"
+  test "$(manifest_value "$manifest" acceptance_script_sha256)" = \
+    "$R4_ACCEPTANCE_SCRIPT_SHA256"
+  test "$(manifest_value "$manifest" acceptance_finalizer_path)" = \
+    "$FINALIZER_PROGRAM"
+  test "$(manifest_value "$manifest" acceptance_finalizer_sha256)" = \
+    "$R4_ACCEPTANCE_FINALIZER_SHA256"
+  test "$(manifest_value "$manifest" repository_commit)" = "$APP_COMMIT"
+  test "$(manifest_value "$manifest" image_digest)" = "$APP_DIGEST"
+  test "$(manifest_value "$manifest" clone_database_name)" = "$CLONE_DATABASE"
+  test "$(manifest_value "$manifest" production_database_name)" = \
+    "$PRODUCTION_DATABASE"
+  test "$(manifest_value "$manifest" inbox_id)" = "$INBOX_ID"
+  test "$(manifest_value "$manifest" history_approval_sha256)" = \
+    "$(sha256_file "$HISTORY_APPROVAL")"
+  test "$(manifest_value "$manifest" profile_approval_sha256)" = \
+    "$(sha256_file "$PROFILE_APPROVAL")"
+  test "$(manifest_value "$manifest" profile_targets_sha256)" = \
+    "$(sha256_file "$TARGET_DIR/fbig-profile-targets-v1.tsv")"
+  test "$(manifest_value "$manifest" clone_baseline_sha256)" = \
+    "$(sha256_file "$CLONE_BASELINE")"
+  test "$(manifest_value "$manifest" history_idempotency_summary_sha256)" = \
+    "$(sha256_file "$AUDIT_DIR/history-all-idempotency-summary.tsv")"
+  test "$(manifest_value "$manifest" profile_idempotency_summary_sha256)" = \
+    "$(sha256_file "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv")"
+  test "$(manifest_value "$manifest" unrecoverable_sidecar_sha256)" = \
+    "$(sha256_file "$UNRECOVERABLE_SIDECAR")"
+  [[ "$(manifest_value "$manifest" completed_at)" =~ \
+    ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+}
+
+if [[ -e "$R4_ACCEPTANCE_MANIFEST" ]]; then
+  test ! -e "$R4_ACCEPTANCE_CHECKSUM"
+  require_root_artifact \
+    "$R4_ACCEPTANCE_MANIFEST" "$(basename "$R4_ACCEPTANCE_MANIFEST")"
+  verify_terminal_manifest "$R4_ACCEPTANCE_MANIFEST"
+  R4_ACCEPTANCE_CHECKSUM_RESUME="${R4_ACCEPTANCE_CHECKSUM}.$$.resume"
+  printf '%s  %s\n' \
+    "$(sha256_file "$R4_ACCEPTANCE_MANIFEST")" \
+    "$(basename "$R4_ACCEPTANCE_MANIFEST")" \
+    >"$R4_ACCEPTANCE_CHECKSUM_RESUME"
+  chmod 0400 "$R4_ACCEPTANCE_CHECKSUM_RESUME"
+  "$STORAGE_HELPER" fsync "$R4_ACCEPTANCE_CHECKSUM_RESUME"
+  mv "$R4_ACCEPTANCE_CHECKSUM_RESUME" "$R4_ACCEPTANCE_CHECKSUM"
+  "$STORAGE_HELPER" fsync "$AUDIT_DIR"
+  require_root_artifact \
+    "$R4_ACCEPTANCE_CHECKSUM" "$(basename "$R4_ACCEPTANCE_CHECKSUM")"
+  verify_checksum "$R4_ACCEPTANCE_MANIFEST" "$R4_ACCEPTANCE_CHECKSUM"
+  exit 0
+fi
+test ! -e "$R4_ACCEPTANCE_CHECKSUM"
+
+R4_ACCEPTANCE_TEMPORARY="${R4_ACCEPTANCE_MANIFEST}.$$.tmp"
+R4_ACCEPTANCE_CHECKSUM_TEMPORARY="${R4_ACCEPTANCE_CHECKSUM}.$$.tmp"
+(
+  set -o noclobber
+  {
+    printf 'schema_version\t1\n'
+    printf 'acceptance_id\t%s\n' "$(basename "$AUDIT_DIR")"
+    printf 'acceptance_unit\t%s\n' "$R4_ACCEPTANCE_UNIT"
+    printf 'acceptance_invocation_id\t%s\n' "$R4_ACCEPTANCE_INVOCATION_ID"
+    printf 'acceptance_script_path\t%s\n' "$R4_ACCEPTANCE_EXEC_SCRIPT"
+    printf 'acceptance_script_archive_path\t%s\n' \
+      "$R4_ACCEPTANCE_SCRIPT_ARCHIVE"
+    printf 'acceptance_script_sha256\t%s\n' "$R4_ACCEPTANCE_SCRIPT_SHA256"
+    printf 'acceptance_finalizer_path\t%s\n' "$FINALIZER_PROGRAM"
+    printf 'acceptance_finalizer_sha256\t%s\n' "$R4_ACCEPTANCE_FINALIZER_SHA256"
+    printf 'repository_commit\t%s\n' "$APP_COMMIT"
+    printf 'image_digest\t%s\n' "$APP_DIGEST"
+    printf 'clone_database_name\t%s\n' "$CLONE_DATABASE"
+    printf 'production_database_name\t%s\n' "$PRODUCTION_DATABASE"
+    printf 'inbox_id\t%s\n' "$INBOX_ID"
+    printf 'history_approval_sha256\t%s\n' "$(sha256_file "$HISTORY_APPROVAL")"
+    printf 'profile_approval_sha256\t%s\n' "$(sha256_file "$PROFILE_APPROVAL")"
+    printf 'profile_targets_sha256\t%s\n' \
+      "$(sha256_file "$TARGET_DIR/fbig-profile-targets-v1.tsv")"
+    printf 'clone_baseline_sha256\t%s\n' "$(sha256_file "$CLONE_BASELINE")"
+    printf 'history_idempotency_summary_sha256\t%s\n' \
+      "$(sha256_file "$AUDIT_DIR/history-all-idempotency-summary.tsv")"
+    printf 'profile_idempotency_summary_sha256\t%s\n' \
+      "$(sha256_file "$IDEMPOTENCY_ATTEMPT/clone-profile-summary.tsv")"
+    printf 'unrecoverable_sidecar_sha256\t%s\n' \
+      "$(sha256_file "$UNRECOVERABLE_SIDECAR")"
+    printf 'completed_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$R4_ACCEPTANCE_TEMPORARY"
+)
+chmod 0400 "$R4_ACCEPTANCE_TEMPORARY"
+"$STORAGE_HELPER" fsync "$R4_ACCEPTANCE_TEMPORARY"
+printf '%s  %s\n' \
+  "$(sha256_file "$R4_ACCEPTANCE_TEMPORARY")" \
+  "$(basename "$R4_ACCEPTANCE_MANIFEST")" \
+  >"$R4_ACCEPTANCE_CHECKSUM_TEMPORARY"
+chmod 0400 "$R4_ACCEPTANCE_CHECKSUM_TEMPORARY"
+"$STORAGE_HELPER" fsync "$R4_ACCEPTANCE_CHECKSUM_TEMPORARY"
+mv "$R4_ACCEPTANCE_TEMPORARY" "$R4_ACCEPTANCE_MANIFEST"
+mv "$R4_ACCEPTANCE_CHECKSUM_TEMPORARY" "$R4_ACCEPTANCE_CHECKSUM"
+"$STORAGE_HELPER" fsync "$AUDIT_DIR"
+require_root_artifact \
+  "$R4_ACCEPTANCE_MANIFEST" "$(basename "$R4_ACCEPTANCE_MANIFEST")"
+require_root_artifact \
+  "$R4_ACCEPTANCE_CHECKSUM" "$(basename "$R4_ACCEPTANCE_CHECKSUM")"
+verify_checksum "$R4_ACCEPTANCE_MANIFEST" "$R4_ACCEPTANCE_CHECKSUM"
+verify_terminal_manifest "$R4_ACCEPTANCE_MANIFEST"
+```
+
 ## 8. Pin and deploy the accepted merged digest
 
 In `umi-vps-infra`, set:
@@ -2047,10 +2417,129 @@ cd ansible
 ansible-playbook site.yml --tags chatwoot
 ```
 
-On the VPS, require Rails, Sidekiq, and the compose image to resolve to
-`$APP_DIGEST`. Verify `schema_migrations` contains the Contact/avatar unique
-index migration and rerun the duplicate-avatar/index check from section 4
-against `$PRODUCTION_DATABASE`.
+The Rails entrypoint does not run migrations. On the VPS, use a root shell,
+validate the shared lock path as described in section 4, acquire it, and run
+the migration explicitly before creating any fixed production evidence:
+
+```bash
+set -Eeuo pipefail
+APP_COMMIT='<same accepted 40-hex commit>'
+APP_DIGEST='ghcr.io/shumkov/chatwoot@sha256:<same accepted 64-hex digest>'
+PRODUCTION_DATABASE='chatwoot_production'
+PRODUCTION_MIGRATION='20260724000000'
+PRODUCTION_LOCK='/run/lock/umi-fbig/production.lock'
+cd /opt/umi/chatwoot
+
+LOCK_PARENT='/run/lock'
+LOCK_DIRECTORY="$(dirname "$PRODUCTION_LOCK")"
+test "$LOCK_PARENT" = "$(realpath -e -- "$LOCK_PARENT")"
+test ! -L "$LOCK_PARENT"
+test "$(stat -c '%u:%g' "$LOCK_PARENT")" = '0:0'
+test "$LOCK_DIRECTORY" = "$(realpath -e -- "$LOCK_DIRECTORY")"
+test ! -L "$LOCK_DIRECTORY"
+test "$(stat -c '%u:%g:%a' "$LOCK_DIRECTORY")" = '0:0:700'
+test "$PRODUCTION_LOCK" = "$(realpath -e -- "$PRODUCTION_LOCK")"
+test -f "$PRODUCTION_LOCK"
+test ! -L "$PRODUCTION_LOCK"
+test "$(stat -c '%u:%g:%h' "$PRODUCTION_LOCK")" = '0:0:1'
+exec 9<>"$PRODUCTION_LOCK"
+LOCK_PATH_IDENTITY="$(stat -Lc '%d:%i' "$PRODUCTION_LOCK")"
+LOCK_DESCRIPTOR_IDENTITY="$(stat -Lc '%d:%i' /proc/self/fd/9)"
+test "$LOCK_PATH_IDENTITY" = "$LOCK_DESCRIPTOR_IDENTITY"
+flock --exclusive --nonblock 9
+test "$(stat -Lc '%d:%i' "$PRODUCTION_LOCK")" = "$LOCK_DESCRIPTOR_IDENTITY"
+
+CONFIGURED_IMAGE="$(
+  docker compose config --images |
+    awk '/ghcr\.io\/shumkov\/chatwoot/ { print; exit }'
+)"
+[[ "$CONFIGURED_IMAGE" =~ ^ghcr\.io/shumkov/chatwoot:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]
+test "ghcr.io/shumkov/chatwoot@${CONFIGURED_IMAGE##*@}" = "$APP_DIGEST"
+docker image inspect \
+  --format '{{range .RepoDigests}}{{println .}}{{end}}' "$CONFIGURED_IMAGE" |
+  grep -Fxq "$APP_DIGEST"
+for SERVICE in rails sidekiq; do
+  CONTAINER="$(docker compose ps -q "$SERVICE")"
+  test -n "$CONTAINER"
+  IMAGE_ID="$(docker inspect --format '{{.Image}}' "$CONTAINER")"
+  docker image inspect \
+    --format '{{range .RepoDigests}}{{println .}}{{end}}' "$IMAGE_ID" |
+    grep -Fxq "$APP_DIGEST"
+  test "$(
+    docker compose exec -T "$SERVICE" sh -c 'tr -d "\r\n" </app/.git_sha'
+  )" = "$APP_COMMIT"
+done
+test "$(
+  docker compose run --rm --no-deps -T rails \
+    sh -c 'tr -d "\r\n" </app/.git_sha'
+)" = "$APP_COMMIT"
+
+docker compose run --rm --no-deps rails bundle exec rails db:migrate
+docker compose run --rm --no-deps -T \
+  -e UMI_FBIG_EXPECTED_DATABASE="$PRODUCTION_DATABASE" \
+  -e UMI_FBIG_EXPECTED_MIGRATION="$PRODUCTION_MIGRATION" \
+  rails bundle exec rails runner - <<'RUBY'
+connection = ActiveRecord::Base.connection
+abort("production database mismatch") unless
+  connection.select_value("SELECT current_database()") ==
+    ENV.fetch("UMI_FBIG_EXPECTED_DATABASE")
+migration = connection.quote(ENV.fetch("UMI_FBIG_EXPECTED_MIGRATION"))
+abort("Contact avatar migration is not applied") unless
+  connection.select_value(
+    "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = #{migration})"
+  )
+
+indexes = connection.select_all(<<~SQL).to_a
+  SELECT
+    i.indisunique,
+    i.indisvalid,
+    i.indisready,
+    i.indnatts = 3 AND i.indnkeyatts = 3 AS exact_attribute_count,
+    i.indexprs IS NULL AS no_expressions,
+    ARRAY(
+      SELECT attribute.attname::text
+      FROM unnest(i.indkey::smallint[]) WITH ORDINALITY AS key(attnum, position)
+      JOIN pg_attribute AS attribute
+        ON attribute.attrelid = i.indrelid
+       AND attribute.attnum = key.attnum
+      ORDER BY key.position
+    ) = ARRAY['record_type', 'record_id', 'name'] AS columns_match,
+    pg_get_expr(i.indpred, i.indrelid) AS predicate
+  FROM pg_index AS i
+  JOIN pg_class AS index_class ON index_class.oid = i.indexrelid
+  JOIN pg_class AS table_class ON table_class.oid = i.indrelid
+  JOIN pg_namespace AS namespace ON namespace.oid = table_class.relnamespace
+  WHERE namespace.nspname = 'public'
+    AND index_class.relname = 'index_active_storage_contact_avatar_uniqueness'
+    AND table_class.relname = 'active_storage_attachments'
+SQL
+abort("exactly one Contact avatar index is required") unless indexes.one?
+index = indexes.first
+valid_fields = %w[
+  indisunique indisvalid indisready exact_attribute_count no_expressions columns_match
+]
+abort("Contact avatar index shape is invalid") unless
+  index.values_at(*valid_fields).all? { |value| value == true }
+expected_predicate = "record_type = 'Contact' AND name = 'avatar'"
+predicate = index.fetch("predicate").gsub("::text", "").delete("() \n\t")
+abort("Contact avatar index predicate changed") unless
+  predicate == expected_predicate.delete("() \n\t")
+duplicates = ActiveStorage::Attachment
+  .where(record_type: "Contact", name: "avatar")
+  .group(:record_id).having("COUNT(*) > 1").count
+abort("duplicate Contact avatar rows remain") if duplicates.any?
+RUBY
+
+flock --unlock 9
+exec 9>&-
+```
+
+Do not start section 9 until its preflight proves that Rails, Sidekiq, and
+Compose resolve to `$APP_DIGEST`, both live containers report `$APP_COMMIT`
+from `/app/.git_sha`, migration `20260724000000` exists, and the exact partial
+unique Contact/avatar index is unique, valid, ready, uses only
+`record_type,record_id,name`, has only the two expected predicates, and has
+zero duplicate Contact/avatar rows.
 
 ## 9. Production history
 
@@ -2067,12 +2556,19 @@ importer-owned markers/invariants without comparing the complete current
 non-importer ID sets. Legitimate concurrent webhook rows are therefore not
 misclassified as importer writes:
 
+Do not execute an operator-owned file from `/tmp` as root. Assemble and review
+each concretized stage program, install it and its GNU `sha256sum` checksum as
+single-link `root:root 0400` files below a dedicated `root:root 0700`
+`/opt/umi/fbig-ops/<acceptance-id>/` directory, and invoke it explicitly with
+`/bin/bash`. The program verifies that sibling checksum before doing any work.
+
 ```bash
 set -Eeuo pipefail
 umask 077
 
 INBOX_ID='<same numeric inbox id>'
 PRODUCTION_DATABASE='chatwoot_production'
+CLONE_DATABASE='<same accepted clone database>'
 APP_COMMIT='<same 40 lowercase hex merged commit>'
 APP_DIGEST='ghcr.io/shumkov/chatwoot@sha256:<same accepted 64-hex digest>'
 STACK_DIR='/opt/umi/chatwoot'
@@ -2087,26 +2583,104 @@ UNRECOVERABLE_SIDECAR="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv"
 UNRECOVERABLE_SIDECAR_CHECKSUM="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv.sha256"
 HISTORY_PROBE_LOG="$AUDIT_DIR/history-probe.log"
 EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS='1'
+R4_ACCEPTANCE_UNIT='<same loaded acceptance unit>'
+R4_ACCEPTANCE_INVOCATION_ID='<same 32 lowercase hex invocation id>'
+R4_ACCEPTANCE_EXEC_SCRIPT='<exact unit ExecStart script path>'
+R4_ACCEPTANCE_SCRIPT_ARCHIVE='<protected root-only copy of that exact script>'
+R4_ACCEPTANCE_FINALIZER='<protected root-only terminal finalizer path>'
+R4_ACCEPTANCE_SCRIPT_SHA256='<same reviewed 64-hex acceptance-program SHA>'
+R4_ACCEPTANCE_FINALIZER_SHA256='<same reviewed 64-hex terminal-finalizer SHA>'
+R4_ACCEPTANCE_MANIFEST="$AUDIT_DIR/fbig-r4-acceptance-complete-v1.tsv"
+R4_ACCEPTANCE_CHECKSUM="${R4_ACCEPTANCE_MANIFEST}.sha256"
+PRODUCTION_MIGRATION='20260724000000'
+PRODUCTION_LOCK='/run/lock/umi-fbig/production.lock'
 
 test "$(id -u)" -eq 0
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]]
 [[ "$PRODUCTION_DATABASE" =~ ^[a-z_][a-z0-9_]*$ ]]
+[[ "$CLONE_DATABASE" =~ ^[a-z_][a-z0-9_]*$ ]]
 [[ "$APP_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ "$APP_DIGEST" =~ ^ghcr\.io/shumkov/chatwoot@sha256:[0-9a-f]{64}$ ]]
+[[ "$R4_ACCEPTANCE_INVOCATION_ID" =~ ^[0-9a-f]{32}$ ]]
+[[ "$R4_ACCEPTANCE_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+[[ "$R4_ACCEPTANCE_FINALIZER_SHA256" =~ ^[0-9a-f]{64}$ ]]
 test "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS" = 1
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=LoadState --value)" = loaded
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=ActiveState --value)" = inactive
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=SubState --value)" = dead
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=Result --value)" = success
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=ExecMainStatus --value)" = 0
+test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=InvocationID --value)" = \
+  "$R4_ACCEPTANCE_INVOCATION_ID"
+systemctl show "$R4_ACCEPTANCE_UNIT" --property=ExecStart --value |
+  grep -Fq "argv[]=/bin/bash $R4_ACCEPTANCE_EXEC_SCRIPT ;"
+
+require_root_artifact() {
+  local path="$1"
+  local expected_basename="$2"
+  local directory
+  test "$path" = "$(realpath -e -- "$path")"
+  test "$(basename "$path")" = "$expected_basename"
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%a:%h' "$path")" = "0:400:1"
+  directory="$(dirname "$path")"
+  test "$directory" = "$(realpath -e -- "$directory")"
+  test ! -L "$directory"
+  test "$(stat -c '%u:%a' "$directory")" = "0:700"
+}
+
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+verify_checksum() {
+  local artifact="$1"
+  local checksum="$2"
+  local expected
+  expected="$(printf '%s  %s\n' "$(sha256_file "$artifact")" "$(basename "$artifact")")"
+  test "$(cat "$checksum")" = "$expected"
+}
+
+require_ordered_fields() {
+  local path="$1"
+  shift
+  local -a expected=("$@")
+  local -a observed
+  local field_index
+  mapfile -t observed < <(awk -F $'\t' 'NF == 2 { print $1 }' "$path")
+  test "${#observed[@]}" -eq "${#expected[@]}"
+  for field_index in "${!expected[@]}"; do
+    test "${observed[$field_index]}" = "${expected[$field_index]}"
+  done
+}
+
+PRODUCTION_PROGRAM="${BASH_SOURCE[0]}"
+test -n "$PRODUCTION_PROGRAM"
+test "$PRODUCTION_PROGRAM" = "$(realpath -e -- "$PRODUCTION_PROGRAM")"
+PRODUCTION_PROGRAM_CHECKSUM="${PRODUCTION_PROGRAM}.sha256"
+require_root_artifact "$PRODUCTION_PROGRAM" "$(basename "$PRODUCTION_PROGRAM")"
+require_root_artifact \
+  "$PRODUCTION_PROGRAM_CHECKSUM" "$(basename "$PRODUCTION_PROGRAM_CHECKSUM")"
+verify_checksum "$PRODUCTION_PROGRAM" "$PRODUCTION_PROGRAM_CHECKSUM"
+
 for path in \
   "$CLONE_BASELINE" "$SCOPED_SNAPSHOT_SCRIPT" \
   "$AUDIT_DIR/history-dry-1-summary-normalized.tsv" \
   "$HISTORY_PROBE_LOG" "$UNRECOVERABLE_INSPECTOR" \
   "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM" \
   "$HISTORY_DIR/fbig-approval-v1.tsv" \
-  "$HISTORY_DIR/fbig-approval-v1.tsv.sha256"; do
-  test "$(stat -c '%u:%a:%h' "$path")" = "0:400:1"
+  "$HISTORY_DIR/fbig-approval-v1.tsv.sha256" \
+  "$PROFILE_DIR/fbig-profile-approval-v1.tsv" \
+  "$PROFILE_DIR/fbig-profile-approval-v1.tsv.sha256" \
+  "$TARGET_DIR/fbig-profile-targets-v1.tsv" \
+  "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+  "$AUDIT_DIR/clone-profile/idempotency/clone-profile-summary.tsv" \
+  "$R4_ACCEPTANCE_SCRIPT_ARCHIVE" "${R4_ACCEPTANCE_SCRIPT_ARCHIVE}.sha256" \
+  "$R4_ACCEPTANCE_FINALIZER" "${R4_ACCEPTANCE_FINALIZER}.sha256" \
+  "$R4_ACCEPTANCE_MANIFEST" "$R4_ACCEPTANCE_CHECKSUM"; do
+  require_root_artifact "$path" "$(basename "$path")"
 done
-
-sha256_file() {
-  sha256sum "$1" | awk '{print $1}'
-}
 
 manifest_value() {
   local path="$1"
@@ -2116,6 +2690,69 @@ manifest_value() {
     END { if (count != 1) exit 1; print value }
   ' "$path"
 }
+
+test "$R4_ACCEPTANCE_EXEC_SCRIPT" = \
+  "$(realpath -e -- "$R4_ACCEPTANCE_EXEC_SCRIPT")"
+test -f "$R4_ACCEPTANCE_EXEC_SCRIPT"
+test ! -L "$R4_ACCEPTANCE_EXEC_SCRIPT"
+test "$(stat -c '%u:%a:%h' "$R4_ACCEPTANCE_EXEC_SCRIPT")" = '0:400:1'
+test "$(sha256_file "$R4_ACCEPTANCE_EXEC_SCRIPT")" = \
+  "$R4_ACCEPTANCE_SCRIPT_SHA256"
+verify_checksum \
+  "$R4_ACCEPTANCE_SCRIPT_ARCHIVE" "${R4_ACCEPTANCE_SCRIPT_ARCHIVE}.sha256"
+verify_checksum "$R4_ACCEPTANCE_FINALIZER" "${R4_ACCEPTANCE_FINALIZER}.sha256"
+test "$(sha256_file "$R4_ACCEPTANCE_SCRIPT_ARCHIVE")" = \
+  "$R4_ACCEPTANCE_SCRIPT_SHA256"
+test "$(sha256_file "$R4_ACCEPTANCE_FINALIZER")" = \
+  "$R4_ACCEPTANCE_FINALIZER_SHA256"
+verify_checksum "$R4_ACCEPTANCE_MANIFEST" "$R4_ACCEPTANCE_CHECKSUM"
+require_ordered_fields "$R4_ACCEPTANCE_MANIFEST" \
+  schema_version acceptance_id acceptance_unit acceptance_invocation_id \
+  acceptance_script_path acceptance_script_archive_path \
+  acceptance_script_sha256 acceptance_finalizer_path \
+  acceptance_finalizer_sha256 repository_commit image_digest \
+  clone_database_name production_database_name inbox_id \
+  history_approval_sha256 profile_approval_sha256 profile_targets_sha256 \
+  clone_baseline_sha256 history_idempotency_summary_sha256 \
+  profile_idempotency_summary_sha256 unrecoverable_sidecar_sha256 completed_at
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" schema_version)" = 1
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_id)" = \
+  "$(basename "$AUDIT_DIR")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_unit)" = \
+  "$R4_ACCEPTANCE_UNIT"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_invocation_id)" = \
+  "$R4_ACCEPTANCE_INVOCATION_ID"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_script_path)" = \
+  "$R4_ACCEPTANCE_EXEC_SCRIPT"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_script_archive_path)" = \
+  "$R4_ACCEPTANCE_SCRIPT_ARCHIVE"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_script_sha256)" = \
+  "$R4_ACCEPTANCE_SCRIPT_SHA256"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_finalizer_path)" = \
+  "$R4_ACCEPTANCE_FINALIZER"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" acceptance_finalizer_sha256)" = \
+  "$R4_ACCEPTANCE_FINALIZER_SHA256"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" repository_commit)" = "$APP_COMMIT"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" image_digest)" = "$APP_DIGEST"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" clone_database_name)" = \
+  "$CLONE_DATABASE"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" production_database_name)" = \
+  "$PRODUCTION_DATABASE"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" inbox_id)" = "$INBOX_ID"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" history_approval_sha256)" = \
+  "$(sha256_file "$HISTORY_DIR/fbig-approval-v1.tsv")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" profile_approval_sha256)" = \
+  "$(sha256_file "$PROFILE_DIR/fbig-profile-approval-v1.tsv")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" profile_targets_sha256)" = \
+  "$(sha256_file "$TARGET_DIR/fbig-profile-targets-v1.tsv")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" clone_baseline_sha256)" = \
+  "$(sha256_file "$CLONE_BASELINE")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" history_idempotency_summary_sha256)" = \
+  "$(sha256_file "$AUDIT_DIR/history-all-idempotency-summary.tsv")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" profile_idempotency_summary_sha256)" = \
+  "$(sha256_file "$AUDIT_DIR/clone-profile/idempotency/clone-profile-summary.tsv")"
+test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" unrecoverable_sidecar_sha256)" = \
+  "$(sha256_file "$UNRECOVERABLE_SIDECAR")"
 
 stage_value() {
   local path="$1"
@@ -2147,11 +2784,8 @@ stage_value() {
 
 HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
 HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
-(
-  cd "$HISTORY_DIR"
-  sha256sum --check "$(basename "$HISTORY_APPROVAL_CHECKSUM")"
-  sha256sum --check "$(basename "$UNRECOVERABLE_SIDECAR_CHECKSUM")"
-)
+verify_checksum "$HISTORY_APPROVAL" "$HISTORY_APPROVAL_CHECKSUM"
+verify_checksum "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM"
 EXPECTED_UNRECOVERABLE_FIELDS=(
   schema_version repository_commit image_digest account_id inbox_id
   instagram_business_id before platform count fingerprint
@@ -2241,14 +2875,17 @@ inspect_production_unrecoverable_envelopes() {
   local label="$1"
   local output="$AUDIT_DIR/production-unrecoverable-$label.tsv"
   [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ ]]
-  test ! -e "$output"
-  run_production_unrecoverable_inspection >"$output"
+  if [[ -e "$output" ]]; then
+    require_root_artifact "$output" "$(basename "$output")"
+  else
+    run_production_unrecoverable_inspection >"$output"
+    chmod 0400 "$output"
+  fi
   test "$(grep -c '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection ' "$output")" -eq 1
   test "$(stage_value "$output" unrecoverable_envelope_inspection count)" = \
     "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
   test "$(stage_value "$output" unrecoverable_envelope_inspection fingerprint)" = \
     "$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)"
-  chmod 0400 "$output"
 }
 
 validate_history_apply_summary() {
@@ -2345,6 +2982,158 @@ validate_history_apply_summary() {
 cd "$STACK_DIR"
 test -x "$STACK_DIR/bin/fbig_history_run.sh"
 
+verify_production_running_release() {
+  local service
+  local container
+  local image_id
+  local configured_image
+  local repo_digests
+
+  configured_image="$(
+    docker compose config --images |
+      awk '/ghcr\.io\/shumkov\/chatwoot/ { print; exit }'
+  )"
+  [[ "$configured_image" =~ ^ghcr\.io/shumkov/chatwoot:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]
+  test "ghcr.io/shumkov/chatwoot@${configured_image##*@}" = "$APP_DIGEST"
+  repo_digests="$(
+    docker image inspect \
+      --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+      "$configured_image"
+  )"
+  grep -Fxq "$APP_DIGEST" <<<"$repo_digests"
+
+  for service in rails sidekiq; do
+    container="$(docker compose ps -q "$service")"
+    test -n "$container"
+    image_id="$(docker inspect --format '{{.Image}}' "$container")"
+    repo_digests="$(
+      docker image inspect \
+        --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+        "$image_id"
+    )"
+    grep -Fxq "$APP_DIGEST" <<<"$repo_digests"
+    test "$(
+      docker compose exec -T "$service" sh -c 'tr -d "\r\n" </app/.git_sha'
+    )" = "$APP_COMMIT"
+  done
+}
+
+verify_production_release_and_schema() {
+  local lock_directory
+  local lock_path_identity
+  local lock_descriptor_identity
+  lock_directory="$(dirname "$PRODUCTION_LOCK")"
+  test '/run/lock' = "$(realpath -e -- /run/lock)"
+  test ! -L /run/lock
+  test "$(stat -c '%u:%g' /run/lock)" = '0:0'
+  test "$lock_directory" = "$(realpath -e -- "$lock_directory")"
+  test ! -L "$lock_directory"
+  test "$(stat -c '%u:%g:%a' "$lock_directory")" = '0:0:700'
+  test "$PRODUCTION_LOCK" = "$(realpath -e -- "$PRODUCTION_LOCK")"
+  test -f "$PRODUCTION_LOCK"
+  test ! -L "$PRODUCTION_LOCK"
+  test "$(stat -c '%u:%g:%h' "$PRODUCTION_LOCK")" = "0:0:1"
+  exec 8<>"$PRODUCTION_LOCK"
+  lock_path_identity="$(stat -Lc '%d:%i' "$PRODUCTION_LOCK")"
+  lock_descriptor_identity="$(stat -Lc '%d:%i' /proc/self/fd/8)"
+  test "$lock_path_identity" = "$lock_descriptor_identity"
+  flock --exclusive --nonblock 8
+  test "$(stat -Lc '%d:%i' "$PRODUCTION_LOCK")" = \
+    "$lock_descriptor_identity"
+  verify_production_running_release
+
+  docker compose exec -T \
+    -e UMI_FBIG_EXPECTED_DATABASE="$PRODUCTION_DATABASE" \
+    -e UMI_FBIG_EXPECTED_MIGRATION="$PRODUCTION_MIGRATION" \
+    rails bundle exec rails runner - <<'RUBY'
+connection = ActiveRecord::Base.connection
+abort("production database mismatch") unless
+  connection.select_value("SELECT current_database()") ==
+    ENV.fetch("UMI_FBIG_EXPECTED_DATABASE")
+migration = connection.quote(ENV.fetch("UMI_FBIG_EXPECTED_MIGRATION"))
+applied = connection.select_value(
+  "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = #{migration})"
+)
+abort("Contact avatar migration is not applied") unless applied
+
+indexes = connection.select_all(<<~SQL).to_a
+  SELECT
+    i.indisunique,
+    i.indisvalid,
+    i.indisready,
+    i.indnatts = 3 AND i.indnkeyatts = 3 AS exact_attribute_count,
+    i.indexprs IS NULL AS no_expressions,
+    ARRAY(
+      SELECT attribute.attname::text
+      FROM unnest(i.indkey::smallint[]) WITH ORDINALITY AS key(attnum, position)
+      JOIN pg_attribute AS attribute
+        ON attribute.attrelid = i.indrelid
+       AND attribute.attnum = key.attnum
+      WHERE key.position <= i.indnkeyatts
+      ORDER BY key.position
+    ) = ARRAY['record_type', 'record_id', 'name'] AS columns_match,
+    pg_get_expr(i.indpred, i.indrelid) AS predicate
+  FROM pg_index AS i
+  JOIN pg_class AS index_class ON index_class.oid = i.indexrelid
+  JOIN pg_class AS table_class ON table_class.oid = i.indrelid
+  JOIN pg_namespace AS namespace ON namespace.oid = table_class.relnamespace
+  WHERE namespace.nspname = 'public'
+    AND index_class.relname = 'index_active_storage_contact_avatar_uniqueness'
+    AND table_class.relname = 'active_storage_attachments'
+SQL
+abort("exactly one Contact avatar index is required") unless indexes.one?
+index = indexes.first
+valid_fields = %w[
+  indisunique indisvalid indisready exact_attribute_count no_expressions columns_match
+]
+abort("Contact avatar index shape is invalid") unless
+  index.values_at(*valid_fields).all? { |value| value == true }
+expected_predicate = "record_type = 'Contact' AND name = 'avatar'"
+predicate = index.fetch("predicate").gsub("::text", "").delete("() \n\t")
+abort("Contact avatar index predicate changed") unless
+  predicate == expected_predicate.delete("() \n\t")
+
+duplicates = ActiveStorage::Attachment
+  .where(record_type: "Contact", name: "avatar")
+  .group(:record_id).having("COUNT(*) > 1").count
+abort("duplicate Contact avatar rows remain") if duplicates.any?
+puts "[UMI-FBIG] stage=production_release_schema_verified"
+RUBY
+
+  flock --unlock 8
+  exec 8>&-
+}
+
+acquire_production_verification_lock() {
+  local lock_directory
+  local lock_path_identity
+  local lock_descriptor_identity
+  lock_directory="$(dirname "$PRODUCTION_LOCK")"
+  test '/run/lock' = "$(realpath -e -- /run/lock)"
+  test ! -L /run/lock
+  test "$(stat -c '%u:%g' /run/lock)" = '0:0'
+  test "$lock_directory" = "$(realpath -e -- "$lock_directory")"
+  test ! -L "$lock_directory"
+  test "$(stat -c '%u:%g:%a' "$lock_directory")" = '0:0:700'
+  test "$PRODUCTION_LOCK" = "$(realpath -e -- "$PRODUCTION_LOCK")"
+  test -f "$PRODUCTION_LOCK"
+  test ! -L "$PRODUCTION_LOCK"
+  test "$(stat -c '%u:%g:%h' "$PRODUCTION_LOCK")" = "0:0:1"
+  exec 7<>"$PRODUCTION_LOCK"
+  lock_path_identity="$(stat -Lc '%d:%i' "$PRODUCTION_LOCK")"
+  lock_descriptor_identity="$(stat -Lc '%d:%i' /proc/self/fd/7)"
+  test "$lock_path_identity" = "$lock_descriptor_identity"
+  flock --exclusive --nonblock 7
+  test "$(stat -Lc '%d:%i' "$PRODUCTION_LOCK")" = \
+    "$lock_descriptor_identity"
+  verify_production_running_release
+}
+
+release_production_verification_lock() {
+  flock --unlock 7
+  exec 7>&-
+}
+
 production_scoped_snapshot() {
   docker compose exec -T \
     -e FBIG_BASELINE_MODE=production_verify \
@@ -2361,12 +3150,15 @@ production_scoped_snapshot() {
 
 verify_production_history_state() {
   local label="$1"
-  local observed="$AUDIT_DIR/production-scoped-$label.txt"
+  local snapshot_path="$AUDIT_DIR/production-scoped-$label.txt"
   [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ ]]
-  test ! -e "$observed"
-  production_scoped_snapshot >"$observed"
-  cmp -s "$CLONE_BASELINE" "$observed"
-  chmod 0400 "$observed"
+  if [[ -e "$snapshot_path" ]]; then
+    require_root_artifact "$snapshot_path" "$(basename "$snapshot_path")"
+  else
+    production_scoped_snapshot >"$snapshot_path"
+    chmod 0400 "$snapshot_path"
+  fi
+  cmp -s "$CLONE_BASELINE" "$snapshot_path"
 
   docker compose exec -T \
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$PRODUCTION_DATABASE" \
@@ -2428,10 +3220,9 @@ production_history_run_with_verification() {
     "$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
   )
   local statuses
+  local sealed=false
   [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ ]]
   test "$require_zero_writes" = true || test "$require_zero_writes" = false
-  test ! -e "$log"
-  test ! -e "$summary"
   if [[ "$dry_run" == false ]]; then
     [[ "$budget" =~ ^[1-9][0-9]*$ ]]
     arguments+=("$budget")
@@ -2440,21 +3231,47 @@ production_history_run_with_verification() {
     test -z "$budget"
   fi
 
-  if [[ ",$platforms," == *,instagram,* ]]; then
-    inspect_production_unrecoverable_envelopes "before-$label"
+  if [[ -e "$log" || -e "$summary" ]]; then
+    require_root_artifact "$log" "$(basename "$log")"
+    require_root_artifact "$summary" "$(basename "$summary")"
+    sealed=true
   fi
-  set +e
-  "$STACK_DIR/bin/fbig_history_run.sh" "${arguments[@]}" 2>&1 | tee "$log"
-  statuses=("${PIPESTATUS[@]}")
-  set -e
+
+  if [[ "$sealed" == false ]]; then
+    if [[ ",$platforms," == *,instagram,* ]]; then
+      acquire_production_verification_lock
+      inspect_production_unrecoverable_envelopes "before-$label"
+      release_production_verification_lock
+    fi
+    set +e
+    "$STACK_DIR/bin/fbig_history_run.sh" "${arguments[@]}" 2>&1 | tee "$log"
+    statuses=("${PIPESTATUS[@]}")
+    set -e
+    test "${#statuses[@]}" -eq 2
+    test "${statuses[0]}" -eq 0
+    test "${statuses[1]}" -eq 0
+    test "$(grep -c '^\[UMI-FBIG\] stage=history_import_summary ' "$log")" -eq 1
+    grep '^\[UMI-FBIG\] stage=history_import_summary ' "$log" >"$summary"
+    chmod 0400 "$log" "$summary"
+  fi
+
+  acquire_production_verification_lock
   if [[ ",$platforms," == *,instagram,* ]]; then
     inspect_production_unrecoverable_envelopes "after-$label"
   fi
-  test "${#statuses[@]}" -eq 2
-  test "${statuses[0]}" -eq 0
-  test "${statuses[1]}" -eq 0
+  test "$(grep -c '^\[UMI-FBIG\] stage=history_import_start ' "$log")" -eq 1
+  test "$(stage_value "$log" history_import_start inbox_id)" = "$INBOX_ID"
+  test "$(stage_value "$log" history_import_start dry_run)" = "$dry_run"
+  test "$(stage_value "$log" history_import_start platforms)" = "$platforms"
+  test "$(stage_value "$log" history_import_start since)" = \
+    "$(manifest_value "$HISTORY_APPROVAL" since)"
+  test "$(stage_value "$log" history_import_start before)" = "$CUTOFF"
+  test "$(stage_value "$log" history_import_start outbound_policy)" = \
+    "$(manifest_value "$HISTORY_APPROVAL" outbound_policy)"
+  test "$(stage_value "$log" history_import_start profile_mode)" = defer
   test "$(grep -c '^\[UMI-FBIG\] stage=history_import_summary ' "$log")" -eq 1
-  grep '^\[UMI-FBIG\] stage=history_import_summary ' "$log" >"$summary"
+  test "$(cat "$summary")" = \
+    "$(grep '^\[UMI-FBIG\] stage=history_import_summary ' "$log")"
   verify_production_history_state "$label"
 
   if [[ "$dry_run" == true ]]; then
@@ -2468,20 +3285,28 @@ production_history_run_with_verification() {
     test "$(stage_value "$summary" history_import_summary failed_threads)" = \
       "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
     test "$(stage_value "$summary" history_import_summary ambiguous_senders)" = 0
-    normalize_history_summary "$summary" >"$normalized"
+    if [[ -e "$normalized" ]]; then
+      require_root_artifact "$normalized" "$(basename "$normalized")"
+    else
+      normalize_history_summary "$summary" >"$normalized"
+      chmod 0400 "$normalized"
+    fi
+    test "$(cat "$normalized")" = "$(normalize_history_summary "$summary")"
     cmp -s "$AUDIT_DIR/history-dry-1-summary-normalized.tsv" "$normalized"
-    chmod 0400 "$normalized"
   else
     validate_history_apply_summary "$summary" false "$platforms"
   fi
-  chmod 0400 "$log" "$summary"
   if [[ "$dry_run" == false ]]; then
     validate_history_apply_summary "$summary" "$require_zero_writes" "$platforms"
   fi
+  release_production_verification_lock
 }
 
+verify_production_release_and_schema
 load_scoped_baseline_ids "$CLONE_BASELINE"
+acquire_production_verification_lock
 verify_production_history_state before-production-history
+release_production_verification_lock
 production_history_run_with_verification dry-1 true messenger,instagram
 production_history_run_with_verification dry-2 true messenger,instagram
 cmp -s \
@@ -2493,8 +3318,42 @@ Immediately before the first production history apply, take a new coordinated
 backup under the accepted digest:
 
 ```bash
-"$STACK_DIR/bin/fbig_coordinated_backup.sh" "$INBOX_ID" "$APP_DIGEST" |
-  tee "$AUDIT_DIR/pre-history-production-backup.log"
+PRE_HISTORY_BACKUP_LOG="$AUDIT_DIR/pre-history-production-backup.log"
+if [[ -e "$PRE_HISTORY_BACKUP_LOG" ]]; then
+  require_root_artifact \
+    "$PRE_HISTORY_BACKUP_LOG" "$(basename "$PRE_HISTORY_BACKUP_LOG")"
+else
+  set +e
+  "$STACK_DIR/bin/fbig_coordinated_backup.sh" "$INBOX_ID" "$APP_DIGEST" 2>&1 |
+    tee "$PRE_HISTORY_BACKUP_LOG"
+  PRE_HISTORY_BACKUP_STATUSES=("${PIPESTATUS[@]}")
+  set -e
+  test "${#PRE_HISTORY_BACKUP_STATUSES[@]}" -eq 2
+  test "${PRE_HISTORY_BACKUP_STATUSES[0]}" -eq 0
+  test "${PRE_HISTORY_BACKUP_STATUSES[1]}" -eq 0
+  chmod 0400 "$PRE_HISTORY_BACKUP_LOG"
+fi
+test "$(
+  grep -c '^\[UMI-FBIG\] stage=coordinated_backup_complete ' \
+    "$PRE_HISTORY_BACKUP_LOG"
+)" -eq 1
+PRE_HISTORY_BACKUP_DIRECTORY="$(
+  stage_value \
+    "$PRE_HISTORY_BACKUP_LOG" coordinated_backup_complete backup_directory
+)"
+PRE_HISTORY_BACKUP_MANIFEST="$(
+  printf '%s/fbig-coordinated-backup-v1.tsv' "$PRE_HISTORY_BACKUP_DIRECTORY"
+)"
+require_root_artifact \
+  "$PRE_HISTORY_BACKUP_MANIFEST" fbig-coordinated-backup-v1.tsv
+require_root_artifact \
+  "${PRE_HISTORY_BACKUP_MANIFEST}.sha256" \
+  fbig-coordinated-backup-v1.tsv.sha256
+verify_checksum "$PRE_HISTORY_BACKUP_MANIFEST" "${PRE_HISTORY_BACKUP_MANIFEST}.sha256"
+test "$(
+  stage_value "$PRE_HISTORY_BACKUP_LOG" \
+    coordinated_backup_complete manifest_sha256
+)" = "$(sha256_file "$PRE_HISTORY_BACKUP_MANIFEST")"
 ```
 
 Run Messenger apply and recovery first, then Instagram apply, then the
@@ -2548,35 +3407,614 @@ takes a fresh semantically verified DB/storage backup, runs the profile task,
 seals prestate/poststate/staging/log/summary/attempt evidence, and resumes
 writers only on success.
 
+Run production profiles as resumable phase programs. Every invocation performs
+exactly one `attempt`, `audit`, or `finalize` operation. Build each concretized
+program beneath the protected operations directory from section 9; prepend
+section 9's exact constants and helper definitions, including its self-
+checksum, production-release/schema verifier, history-state verifier, and
+unrecoverable-envelope inspector. A later phase consumes immutable paths from
+the earlier phase instead of shell-local state:
+
 ```bash
-"$STACK_DIR/bin/fbig_profile_attempt.sh" \
-  "$INBOX_ID" true messenger \
-  "$HISTORY_DIR/fbig-approval-v1.tsv" \
-  "$HISTORY_DIR/fbig-approval-v1.tsv.sha256" \
-  "$PROFILE_DIR/fbig-profile-approval-v1.tsv" \
-  "$PROFILE_DIR/fbig-profile-approval-v1.tsv.sha256"
+PROFILE_APPROVAL="$PROFILE_DIR/fbig-profile-approval-v1.tsv"
+PROFILE_APPROVAL_CHECKSUM="${PROFILE_APPROVAL}.sha256"
+PROFILE_ATTEMPT_ROOT='/opt/umi/fbig-profile-attempts'
+PROFILE_RESULT_ROOT="$AUDIT_DIR/profile-results"
+PROFILE_DELIVERY_AUDIT_ROOT="$AUDIT_DIR/profile-delivery-audits"
+PROFILE_OPERATION='<attempt|audit|finalize>'
+PROFILE_PHASE='<dry|apply|idempotency>'
+PROFILE_LABEL='<unique lowercase phase label>'
+PREVIOUS_PROFILE_RESULT='<none or prior fbig-profile-attempt-result-v1.tsv>'
+PREVIOUS_PROFILE_AUDIT='<none or prior fbig-profile-delivery-audit-v1.tsv>'
+CURRENT_PROFILE_RESULT='<result to audit/finalize, otherwise none>'
+CURRENT_PROFILE_AUDIT='<audit to finalize, otherwise none>'
 
-"$STACK_DIR/bin/fbig_profile_attempt.sh" \
-  "$INBOX_ID" false messenger,instagram \
-  "$HISTORY_DIR/fbig-approval-v1.tsv" \
-  "$HISTORY_DIR/fbig-approval-v1.tsv.sha256" \
-  "$PROFILE_DIR/fbig-profile-approval-v1.tsv" \
-  "$PROFILE_DIR/fbig-profile-approval-v1.tsv.sha256" \
-  "$TARGET_DIR/fbig-profile-targets-v1.tsv"
+mkdir -p "$PROFILE_RESULT_ROOT" "$PROFILE_DELIVERY_AUDIT_ROOT"
+chmod 0700 "$PROFILE_RESULT_ROOT" "$PROFILE_DELIVERY_AUDIT_ROOT"
 
-"$STACK_DIR/bin/fbig_profile_attempt.sh" \
-  "$INBOX_ID" false messenger,instagram \
-  "$HISTORY_DIR/fbig-approval-v1.tsv" \
-  "$HISTORY_DIR/fbig-approval-v1.tsv.sha256" \
-  "$PROFILE_DIR/fbig-profile-approval-v1.tsv" \
-  "$PROFILE_DIR/fbig-profile-approval-v1.tsv.sha256" \
-  "$TARGET_DIR/fbig-profile-targets-v1.tsv"
+verify_profile_attempt_result() {
+  local result="$1"
+  local result_checksum="${result}.sha256"
+  local result_directory
+  local attempt_directory
+  local attempt_manifest
+  local attempt_checksum
+  local completion
+  local summary
+  local run_log
+  local prestate
+  local poststate
+  local staging
+  local backup_directory
+  local backup_manifest
+  local predecessor_result
+  local predecessor_audit
+  local observed_zero=true
+  local counter
+  local platform
+  local timestamp_field
+  local -a selected_platforms
 
-inspect_production_unrecoverable_envelopes final-production
+  require_root_artifact "$result" fbig-profile-attempt-result-v1.tsv
+  require_root_artifact \
+    "$result_checksum" fbig-profile-attempt-result-v1.tsv.sha256
+  verify_checksum "$result" "$result_checksum"
+  require_ordered_fields "$result" \
+    schema_version label profile_phase predecessor_result_path \
+    predecessor_result_sha256 predecessor_audit_path \
+    predecessor_audit_sha256 attempt_directory \
+    attempt_manifest_sha256 pre_attempt_backup_directory \
+    pre_attempt_backup_sha256 wrapper_log_sha256 platforms dry_run \
+    zero_write_observed started_at finished_at sealed_at
+  test "$(manifest_value "$result" schema_version)" = 1
+  [[ "$(manifest_value "$result" label)" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+  [[ "$(manifest_value "$result" profile_phase)" =~ ^(dry|apply|idempotency)$ ]]
+  [[ "$(manifest_value "$result" platforms)" =~ \
+    ^(messenger|instagram|messenger,instagram)$ ]]
+  [[ "$(manifest_value "$result" dry_run)" =~ ^(true|false)$ ]]
+  [[ "$(manifest_value "$result" zero_write_observed)" =~ ^(true|false)$ ]]
+  for timestamp_field in started_at finished_at sealed_at; do
+    [[ "$(manifest_value "$result" "$timestamp_field")" =~ \
+      ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+  done
+  predecessor_result="$(manifest_value "$result" predecessor_result_path)"
+  predecessor_audit="$(manifest_value "$result" predecessor_audit_path)"
+  if [[ "$predecessor_result" == none ]]; then
+    test "$(manifest_value "$result" profile_phase)" = dry
+    test "$(manifest_value "$result" predecessor_result_sha256)" = none
+    test "$predecessor_audit" = none
+    test "$(manifest_value "$result" predecessor_audit_sha256)" = none
+  else
+    verify_profile_attempt_result "$predecessor_result"
+    verify_profile_delivery_audit "$predecessor_audit" "$predecessor_result"
+    test "$(manifest_value "$result" predecessor_result_sha256)" = \
+      "$(sha256_file "$predecessor_result")"
+    test "$(manifest_value "$result" predecessor_audit_sha256)" = \
+      "$(sha256_file "$predecessor_audit")"
+  fi
+
+  result_directory="$(dirname "$result")"
+  attempt_directory="$(manifest_value "$result" attempt_directory)"
+  test "$attempt_directory" = "$(realpath -e -- "$attempt_directory")"
+  test "$(dirname "$attempt_directory")" = "$PROFILE_ATTEMPT_ROOT"
+  test ! -L "$attempt_directory"
+  test "$(stat -c '%u:%a' "$attempt_directory")" = '0:700'
+  attempt_manifest="$attempt_directory/fbig-profile-production-attempt-v1.tsv"
+  attempt_checksum="${attempt_manifest}.sha256"
+  completion="$attempt_directory/fbig-profile-attempt-complete-v1.tsv"
+  summary="$attempt_directory/fbig-profile-production-run-summary.tsv"
+  run_log="$attempt_directory/fbig-profile-production-run.log"
+  prestate="$attempt_directory/fbig-profile-production-prestate-v1.tsv"
+  poststate="$attempt_directory/fbig-profile-production-poststate-v1.tsv"
+  staging="$attempt_directory/fbig-profile-avatar-staging-v1.tsv"
+  for artifact in \
+    "$attempt_manifest" "$attempt_checksum" "$completion" "$summary" "$run_log" \
+    "$prestate" "${prestate}.sha256" "$poststate" "${poststate}.sha256" \
+    "$staging" "${staging}.sha256"; do
+    require_root_artifact "$artifact" "$(basename "$artifact")"
+  done
+  verify_checksum "$attempt_manifest" "$attempt_checksum"
+  verify_checksum "$prestate" "${prestate}.sha256"
+  verify_checksum "$poststate" "${poststate}.sha256"
+  verify_checksum "$staging" "${staging}.sha256"
+  require_ordered_fields "$attempt_manifest" \
+    schema_version profile_approval_sha256 image_digest \
+    production_database_name platforms dry_run pre_attempt_backup_sha256 \
+    prestate_sha256 poststate_sha256 avatar_staging_sha256 run_log_sha256 \
+    run_summary_sha256 exit_status started_at finished_at
+  require_ordered_fields "$completion" \
+    schema_version attempt_id attempt_manifest_sha256 completed_at
+
+  test "$(manifest_value "$attempt_manifest" profile_approval_sha256)" = \
+    "$(sha256_file "$PROFILE_APPROVAL")"
+  test "$(manifest_value "$attempt_manifest" image_digest)" = "$APP_DIGEST"
+  test "$(manifest_value "$attempt_manifest" production_database_name)" = \
+    "$PRODUCTION_DATABASE"
+  test "$(manifest_value "$attempt_manifest" platforms)" = \
+    "$(manifest_value "$result" platforms)"
+  test "$(manifest_value "$attempt_manifest" dry_run)" = \
+    "$(manifest_value "$result" dry_run)"
+  test "$(manifest_value "$attempt_manifest" exit_status)" = 0
+  test "$(manifest_value "$attempt_manifest" prestate_sha256)" = \
+    "$(sha256_file "$prestate")"
+  test "$(manifest_value "$attempt_manifest" poststate_sha256)" = \
+    "$(sha256_file "$poststate")"
+  test "$(manifest_value "$attempt_manifest" avatar_staging_sha256)" = \
+    "$(sha256_file "$staging")"
+  test "$(manifest_value "$attempt_manifest" run_log_sha256)" = \
+    "$(sha256_file "$run_log")"
+  test "$(manifest_value "$attempt_manifest" run_summary_sha256)" = \
+    "$(sha256_file "$summary")"
+  test "$(stage_value "$summary" history_profiles_summary prestate_sha256)" = \
+    "$(sha256_file "$prestate")"
+  test "$(stage_value "$summary" history_profiles_summary poststate_sha256)" = \
+    "$(sha256_file "$poststate")"
+  test "$(stage_value "$summary" history_profiles_summary avatar_staging_sha256)" = \
+    "$(sha256_file "$staging")"
+  test "$(manifest_value "$completion" attempt_manifest_sha256)" = \
+    "$(sha256_file "$attempt_manifest")"
+  test "$(manifest_value "$completion" attempt_id)" = \
+    "${attempt_directory##*/fbig-profile-attempt-}"
+  test "$(manifest_value "$result" attempt_manifest_sha256)" = \
+    "$(sha256_file "$attempt_manifest")"
+  test "$(manifest_value "$result" started_at)" = \
+    "$(manifest_value "$attempt_manifest" started_at)"
+  test "$(manifest_value "$result" finished_at)" = \
+    "$(manifest_value "$attempt_manifest" finished_at)"
+
+  backup_directory="$(manifest_value "$result" pre_attempt_backup_directory)"
+  backup_manifest="$backup_directory/fbig-profile-pre-attempt-backup-v1.tsv"
+  require_root_artifact \
+    "$backup_manifest" fbig-profile-pre-attempt-backup-v1.tsv
+  require_root_artifact \
+    "${backup_manifest}.sha256" fbig-profile-pre-attempt-backup-v1.tsv.sha256
+  verify_checksum "$backup_manifest" "${backup_manifest}.sha256"
+  test "$(manifest_value "$attempt_manifest" pre_attempt_backup_sha256)" = \
+    "$(sha256_file "$backup_manifest")"
+  test "$(manifest_value "$result" pre_attempt_backup_sha256)" = \
+    "$(sha256_file "$backup_manifest")"
+  require_root_artifact \
+    "$result_directory/fbig-profile-wrapper.log" fbig-profile-wrapper.log
+  test "$(manifest_value "$result" wrapper_log_sha256)" = \
+    "$(sha256_file "$result_directory/fbig-profile-wrapper.log")"
+  test "$(grep -c '^\[UMI-FBIG\] stage=history_profiles_summary ' "$run_log")" = 1
+  test "$(cat "$summary")" = \
+    "$(grep '^\[UMI-FBIG\] stage=history_profiles_summary ' "$run_log")"
+  test "$(stage_value "$summary" history_profiles_summary scan_complete)" = true
+
+  if [[ "$(manifest_value "$result" dry_run)" == true ]]; then
+    test "$(stage_value "$summary" history_profiles_summary write_complete)" = \
+      not_applicable
+    observed_zero=false
+  else
+    test "$(stage_value "$summary" history_profiles_summary write_complete)" = true
+    cmp -s "$prestate" "$poststate" || observed_zero=false
+    for counter in \
+      scalar_changes_applied name_changes_applied username_changes_applied \
+      optional_changes_applied avatars_attached avatar_bytes mirror_jobs; do
+      if [[ "$(stage_value "$summary" history_profiles_summary "$counter")" != 0 ]]; then
+        observed_zero=false
+      fi
+    done
+  fi
+  for counter in \
+    exit_failures lock_loss profile_errors avatar_failures \
+    messenger_targets_blocking instagram_targets_blocking \
+    seed_targets_blocking; do
+    test "$(stage_value "$summary" history_profiles_summary "$counter")" = 0
+  done
+  IFS=',' read -r -a selected_platforms <<<"$(
+    manifest_value "$result" platforms
+  )"
+  for platform in "${selected_platforms[@]}"; do
+    test "$(
+      stage_value "$summary" history_profiles_summary \
+        "stable_${platform}_targets"
+    )" = "$(manifest_value "$PROFILE_APPROVAL" \
+      "${platform}_stable_target_count")"
+    test "$(
+      stage_value "$summary" history_profiles_summary \
+        "stable_${platform}_fingerprint"
+    )" = "$(manifest_value "$PROFILE_APPROVAL" \
+      "${platform}_stable_target_fingerprint")"
+  done
+  test "$(manifest_value "$result" zero_write_observed)" = "$observed_zero"
+}
+
+verify_profile_delivery_audit() {
+  local audit_manifest="$1"
+  local result="$2"
+  local audit_checksum="${audit_manifest}.sha256"
+  local audit_directory
+  local messenger_subscription
+  local instagram_subscription
+  local messenger_recon
+  local instagram_recon
+  local platform
+  local recon
+
+  verify_profile_attempt_result "$result"
+  require_root_artifact \
+    "$audit_manifest" fbig-profile-delivery-audit-v1.tsv
+  require_root_artifact \
+    "$audit_checksum" fbig-profile-delivery-audit-v1.tsv.sha256
+  verify_checksum "$audit_manifest" "$audit_checksum"
+  require_ordered_fields "$audit_manifest" \
+    schema_version attempt_result_sha256 attempt_manifest_sha256 \
+    attempt_started_at attempt_finished_at audit_window_started_at \
+    audit_window_finished_at page_identity_sha256 \
+    instagram_identity_sha256 page_subscription_evidence_sha256 \
+    instagram_subscription_evidence_sha256 messenger_recon_summary_sha256 \
+    instagram_recon_summary_sha256 messenger_missing instagram_missing \
+    messenger_threads_failed instagram_threads_failed messenger_caps_hit \
+    instagram_caps_hit zero_unrecovered_deliveries audited_at
+  test "$(manifest_value "$audit_manifest" schema_version)" = 1
+  test "$(manifest_value "$audit_manifest" attempt_result_sha256)" = \
+    "$(sha256_file "$result")"
+  test "$(manifest_value "$audit_manifest" attempt_manifest_sha256)" = \
+    "$(manifest_value "$result" attempt_manifest_sha256)"
+  test "$(manifest_value "$audit_manifest" attempt_started_at)" = \
+    "$(manifest_value "$result" started_at)"
+  test "$(manifest_value "$audit_manifest" attempt_finished_at)" = \
+    "$(manifest_value "$result" finished_at)"
+
+  audit_directory="$(dirname "$audit_manifest")"
+  messenger_subscription="$audit_directory/messenger-subscription.tsv"
+  instagram_subscription="$audit_directory/instagram-subscription.tsv"
+  messenger_recon="$audit_directory/messenger-recon-summary.tsv"
+  instagram_recon="$audit_directory/instagram-recon-summary.tsv"
+  for artifact in \
+    "$messenger_subscription" "$instagram_subscription" \
+    "$messenger_recon" "$instagram_recon"; do
+    require_root_artifact "$artifact" "$(basename "$artifact")"
+  done
+  test "$(manifest_value "$audit_manifest" page_subscription_evidence_sha256)" = \
+    "$(sha256_file "$messenger_subscription")"
+  test "$(manifest_value "$audit_manifest" instagram_subscription_evidence_sha256)" = \
+    "$(sha256_file "$instagram_subscription")"
+  test "$(manifest_value "$audit_manifest" messenger_recon_summary_sha256)" = \
+    "$(sha256_file "$messenger_recon")"
+  test "$(manifest_value "$audit_manifest" instagram_recon_summary_sha256)" = \
+    "$(sha256_file "$instagram_recon")"
+  for platform in messenger instagram; do
+    if [[ "$platform" == messenger ]]; then
+      recon="$messenger_recon"
+    else
+      recon="$instagram_recon"
+    fi
+    test "$(stage_value "$recon" reconcile_summary missing)" = \
+      "$(manifest_value "$audit_manifest" "${platform}_missing")"
+    test "$(stage_value "$recon" reconcile_summary threads_failed)" = \
+      "$(manifest_value "$audit_manifest" "${platform}_threads_failed")"
+    test "$(stage_value "$recon" reconcile_summary caps_hit)" = \
+      "$(manifest_value "$audit_manifest" "${platform}_caps_hit")"
+    test "$(grep -c ' error=' "$recon")" = 0
+    test "$(manifest_value "$audit_manifest" "${platform}_missing")" = 0
+    test "$(manifest_value "$audit_manifest" "${platform}_threads_failed")" = 0
+    test "$(manifest_value "$audit_manifest" "${platform}_caps_hit")" = 0
+  done
+  test "$(manifest_value "$audit_manifest" zero_unrecovered_deliveries)" = true
+}
+
+run_profile_attempt_phase() {
+  local label="$1"
+  local profile_phase="$2"
+  local dry_run="$3"
+  local platforms="$4"
+  local require_zero_writes="$5"
+  local result_directory="$PROFILE_RESULT_ROOT/$label"
+  local result="$result_directory/fbig-profile-attempt-result-v1.tsv"
+  local result_checksum="${result}.sha256"
+  local wrapper_log="$result_directory/fbig-profile-wrapper.log"
+  local arguments=(
+    "$INBOX_ID" "$dry_run" "$platforms"
+    "$HISTORY_DIR/fbig-approval-v1.tsv"
+    "$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+    "$PROFILE_APPROVAL" "$PROFILE_APPROVAL_CHECKSUM"
+  )
+  local statuses
+  local attempt_directory
+  local attempt_manifest
+  local summary
+  local prestate
+  local poststate
+  local backup_directory
+  local backup_manifest
+  local observed_zero=true
+  local counter
+  local temporary
+  local checksum_temporary
+
+  [[ "$label" =~ ^[a-z0-9][a-z0-9-]*$ ]]
+  [[ "$profile_phase" =~ ^(dry|apply|idempotency)$ ]]
+  test "$dry_run" = true || test "$dry_run" = false
+  test "$require_zero_writes" = true || test "$require_zero_writes" = false
+  test ! -e "$result_directory"
+  mkdir "$result_directory"
+  chmod 0700 "$result_directory"
+  if [[ ",$platforms," == *,instagram,* ]]; then
+    arguments+=("$TARGET_DIR/fbig-profile-targets-v1.tsv")
+  fi
+
+  set +e
+  "$STACK_DIR/bin/fbig_profile_attempt.sh" "${arguments[@]}" 2>&1 |
+    tee "$wrapper_log"
+  statuses=("${PIPESTATUS[@]}")
+  set -e
+  test "${#statuses[@]}" -eq 2
+  test "${statuses[0]}" -eq 0
+  test "${statuses[1]}" -eq 0
+  chmod 0400 "$wrapper_log"
+  test "$(grep -c '^\[UMI-FBIG\] stage=profile_attempt_complete ' "$wrapper_log")" = 1
+  attempt_directory="$(
+    stage_value "$wrapper_log" profile_attempt_complete attempt_directory
+  )"
+  backup_directory="$(
+    stage_value "$wrapper_log" profile_attempt_complete backup_directory
+  )"
+  attempt_manifest="$attempt_directory/fbig-profile-production-attempt-v1.tsv"
+  summary="$attempt_directory/fbig-profile-production-run-summary.tsv"
+  prestate="$attempt_directory/fbig-profile-production-prestate-v1.tsv"
+  poststate="$attempt_directory/fbig-profile-production-poststate-v1.tsv"
+  backup_manifest="$backup_directory/fbig-profile-pre-attempt-backup-v1.tsv"
+
+  if [[ "$dry_run" == true ]]; then
+    observed_zero=false
+  else
+    cmp -s "$prestate" "$poststate" || observed_zero=false
+    for counter in \
+      scalar_changes_applied name_changes_applied username_changes_applied \
+      optional_changes_applied avatars_attached avatar_bytes mirror_jobs; do
+      if [[ "$(stage_value "$summary" history_profiles_summary "$counter")" != 0 ]]; then
+        observed_zero=false
+      fi
+    done
+  fi
+  temporary="${result}.$$.tmp"
+  checksum_temporary="${result_checksum}.$$.tmp"
+  {
+    printf 'schema_version\t1\n'
+    printf 'label\t%s\n' "$label"
+    printf 'profile_phase\t%s\n' "$profile_phase"
+    printf 'predecessor_result_path\t%s\n' "$PREVIOUS_PROFILE_RESULT"
+    if [[ "$PREVIOUS_PROFILE_RESULT" == none ]]; then
+      printf 'predecessor_result_sha256\tnone\n'
+      printf 'predecessor_audit_path\tnone\n'
+      printf 'predecessor_audit_sha256\tnone\n'
+    else
+      printf 'predecessor_result_sha256\t%s\n' \
+        "$(sha256_file "$PREVIOUS_PROFILE_RESULT")"
+      printf 'predecessor_audit_path\t%s\n' "$PREVIOUS_PROFILE_AUDIT"
+      printf 'predecessor_audit_sha256\t%s\n' \
+        "$(sha256_file "$PREVIOUS_PROFILE_AUDIT")"
+    fi
+    printf 'attempt_directory\t%s\n' "$attempt_directory"
+    printf 'attempt_manifest_sha256\t%s\n' "$(sha256_file "$attempt_manifest")"
+    printf 'pre_attempt_backup_directory\t%s\n' "$backup_directory"
+    printf 'pre_attempt_backup_sha256\t%s\n' "$(sha256_file "$backup_manifest")"
+    printf 'wrapper_log_sha256\t%s\n' "$(sha256_file "$wrapper_log")"
+    printf 'platforms\t%s\n' "$platforms"
+    printf 'dry_run\t%s\n' "$dry_run"
+    printf 'zero_write_observed\t%s\n' "$observed_zero"
+    printf 'started_at\t%s\n' "$(manifest_value "$attempt_manifest" started_at)"
+    printf 'finished_at\t%s\n' "$(manifest_value "$attempt_manifest" finished_at)"
+    printf 'sealed_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary"
+  chmod 0400 "$temporary"
+  "$STORAGE_HELPER" fsync "$temporary"
+  printf '%s  %s\n' "$(sha256_file "$temporary")" "$(basename "$result")" \
+    >"$checksum_temporary"
+  chmod 0400 "$checksum_temporary"
+  "$STORAGE_HELPER" fsync "$checksum_temporary"
+  mv "$temporary" "$result"
+  mv "$checksum_temporary" "$result_checksum"
+  "$STORAGE_HELPER" fsync "$result_directory"
+  verify_profile_attempt_result "$result"
+  printf '[UMI-FBIG] stage=profile_attempt_result result=%s zero_write_observed=%s\n' \
+    "$result" "$observed_zero"
+  if [[ "$require_zero_writes" == true && "$observed_zero" != true ]]; then
+    return 42
+  fi
+}
+
+produce_profile_delivery_audit() {
+  local result="$1"
+  local label
+  local audit_directory
+  local audit_manifest
+  local audit_checksum
+  local subscription_log
+  local recon_log
+  local messenger_subscription
+  local instagram_subscription
+  local messenger_recon
+  local instagram_recon
+  local grace_epoch
+  local temporary
+  local checksum_temporary
+
+  verify_profile_attempt_result "$result"
+  label="$(manifest_value "$result" label)"
+  audit_directory="$PROFILE_DELIVERY_AUDIT_ROOT/$label"
+  audit_manifest="$audit_directory/fbig-profile-delivery-audit-v1.tsv"
+  audit_checksum="${audit_manifest}.sha256"
+  subscription_log="$audit_directory/subscription-evidence.log"
+  recon_log="$audit_directory/reconciliation.log"
+  messenger_subscription="$audit_directory/messenger-subscription.tsv"
+  instagram_subscription="$audit_directory/instagram-subscription.tsv"
+  messenger_recon="$audit_directory/messenger-recon-summary.tsv"
+  instagram_recon="$audit_directory/instagram-recon-summary.tsv"
+  test ! -e "$audit_directory"
+  grace_epoch="$(
+    date -u -d "$(manifest_value "$result" finished_at) + 15 minutes" +%s
+  )"
+  test "$(date -u +%s)" -ge "$grace_epoch"
+  mkdir "$audit_directory"
+  chmod 0700 "$audit_directory"
+  verify_production_release_and_schema
+
+  docker compose exec -T \
+    -e UMI_FBIG_AUDIT_INBOX_ID="$INBOX_ID" \
+    rails bundle exec rails runner - <<'RUBY' >"$subscription_log"
+require "digest"
+inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_AUDIT_INBOX_ID"), 10))
+channel = inbox.channel
+abort("Facebook-page channel required") unless channel.is_a?(Channel::FacebookPage)
+app_id = GlobalConfigService.load("FB_APP_ID", "").to_s
+abort("FB_APP_ID missing") if app_id.blank?
+api = Koala::Facebook::API.new(channel.page_access_token)
+{
+  messenger: [channel.page_id, %w[messages message_echoes]],
+  instagram: [channel.instagram_id, %w[messages]]
+}.each do |platform, (identity, required_fields)|
+  abort("#{platform} identity missing") if identity.blank?
+  rows = api.get_connections(
+    identity, "subscribed_apps", fields: "id,subscribed_fields"
+  ).to_a
+  row = rows.find { |entry| entry.fetch("id").to_s == app_id }
+  abort("#{platform} app subscription missing") unless row
+  fields = Array(row["subscribed_fields"]).map(&:to_s).sort
+  abort("#{platform} subscribed fields missing") unless
+    (required_fields - fields).empty?
+  puts [
+    "[UMI-FBIG]", "stage=subscription_evidence", "platform=#{platform}",
+    "identity_sha256=#{Digest::SHA256.hexdigest(identity.to_s)}",
+    "app_id_sha256=#{Digest::SHA256.hexdigest(app_id)}",
+    "subscribed_fields_sha256=#{Digest::SHA256.hexdigest(fields.join(','))}"
+  ].join(" ")
+end
+RUBY
+  grep '^\[UMI-FBIG\] stage=subscription_evidence platform=messenger ' \
+    "$subscription_log" >"$messenger_subscription"
+  grep '^\[UMI-FBIG\] stage=subscription_evidence platform=instagram ' \
+    "$subscription_log" >"$instagram_subscription"
+  test "$(wc -l <"$messenger_subscription")" = 1
+  test "$(wc -l <"$instagram_subscription")" = 1
+
+  docker compose exec -T \
+    -e UMI_FBIG_RECON_HEAL=false \
+    -e UMI_FBIG_AUDIT_INBOX_ID="$INBOX_ID" \
+    rails bundle exec rails runner - <<'RUBY' >"$recon_log"
+inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_AUDIT_INBOX_ID"), 10))
+channel = inbox.channel
+abort("Facebook-page channel required") unless channel.is_a?(Channel::FacebookPage)
+Rails.logger = ActiveSupport::Logger.new($stdout)
+Umi::Fbig::ConversationReconService.new(channel).perform
+RUBY
+  grep '^\[UMI-FBIG\] stage=reconcile_summary platform=messenger ' \
+    "$recon_log" >"$messenger_recon"
+  grep '^\[UMI-FBIG\] stage=reconcile_summary platform=instagram ' \
+    "$recon_log" >"$instagram_recon"
+  test "$(wc -l <"$messenger_recon")" = 1
+  test "$(wc -l <"$instagram_recon")" = 1
+  for recon in "$messenger_recon" "$instagram_recon"; do
+    test "$(stage_value "$recon" reconcile_summary missing)" = 0
+    test "$(stage_value "$recon" reconcile_summary threads_failed)" = 0
+    test "$(stage_value "$recon" reconcile_summary caps_hit)" = 0
+    test "$(grep -c ' error=' "$recon")" = 0
+  done
+  chmod 0400 \
+    "$subscription_log" "$recon_log" "$messenger_subscription" \
+    "$instagram_subscription" "$messenger_recon" "$instagram_recon"
+
+  temporary="${audit_manifest}.$$.tmp"
+  checksum_temporary="${audit_checksum}.$$.tmp"
+  {
+    printf 'schema_version\t1\n'
+    printf 'attempt_result_sha256\t%s\n' "$(sha256_file "$result")"
+    printf 'attempt_manifest_sha256\t%s\n' \
+      "$(manifest_value "$result" attempt_manifest_sha256)"
+    printf 'attempt_started_at\t%s\n' "$(manifest_value "$result" started_at)"
+    printf 'attempt_finished_at\t%s\n' "$(manifest_value "$result" finished_at)"
+    printf 'audit_window_started_at\t%s\n' \
+      "$(manifest_value "$result" started_at)"
+    printf 'audit_window_finished_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'page_identity_sha256\t%s\n' \
+      "$(stage_value "$messenger_subscription" subscription_evidence identity_sha256)"
+    printf 'instagram_identity_sha256\t%s\n' \
+      "$(stage_value "$instagram_subscription" subscription_evidence identity_sha256)"
+    printf 'page_subscription_evidence_sha256\t%s\n' \
+      "$(sha256_file "$messenger_subscription")"
+    printf 'instagram_subscription_evidence_sha256\t%s\n' \
+      "$(sha256_file "$instagram_subscription")"
+    printf 'messenger_recon_summary_sha256\t%s\n' "$(sha256_file "$messenger_recon")"
+    printf 'instagram_recon_summary_sha256\t%s\n' "$(sha256_file "$instagram_recon")"
+    printf 'messenger_missing\t0\n'
+    printf 'instagram_missing\t0\n'
+    printf 'messenger_threads_failed\t0\n'
+    printf 'instagram_threads_failed\t0\n'
+    printf 'messenger_caps_hit\t0\n'
+    printf 'instagram_caps_hit\t0\n'
+    printf 'zero_unrecovered_deliveries\ttrue\n'
+    printf 'audited_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary"
+  chmod 0400 "$temporary"
+  "$STORAGE_HELPER" fsync "$temporary"
+  printf '%s  %s\n' \
+    "$(sha256_file "$temporary")" "$(basename "$audit_manifest")" \
+    >"$checksum_temporary"
+  chmod 0400 "$checksum_temporary"
+  "$STORAGE_HELPER" fsync "$checksum_temporary"
+  mv "$temporary" "$audit_manifest"
+  mv "$checksum_temporary" "$audit_checksum"
+  "$STORAGE_HELPER" fsync "$audit_directory"
+  verify_profile_delivery_audit "$audit_manifest" "$result"
+  printf '[UMI-FBIG] stage=profile_delivery_audit_complete audit=%s\n' \
+    "$audit_manifest"
+}
+
+case "$PROFILE_OPERATION" in
+  attempt)
+    if [[ "$PROFILE_PHASE" == dry ]]; then
+      test "$PREVIOUS_PROFILE_RESULT" = none
+      test "$PREVIOUS_PROFILE_AUDIT" = none
+      run_profile_attempt_phase "$PROFILE_LABEL" dry true messenger false
+    else
+      verify_profile_attempt_result "$PREVIOUS_PROFILE_RESULT"
+      verify_profile_delivery_audit \
+        "$PREVIOUS_PROFILE_AUDIT" "$PREVIOUS_PROFILE_RESULT"
+      if [[ "$PROFILE_PHASE" == apply ]]; then
+        run_profile_attempt_phase \
+          "$PROFILE_LABEL" apply false messenger,instagram false
+      else
+        test "$PROFILE_PHASE" = idempotency
+        run_profile_attempt_phase \
+          "$PROFILE_LABEL" idempotency false messenger,instagram true
+      fi
+    fi
+    ;;
+  audit)
+    test "$CURRENT_PROFILE_RESULT" != none
+    produce_profile_delivery_audit "$CURRENT_PROFILE_RESULT"
+    ;;
+  finalize)
+    verify_profile_attempt_result "$CURRENT_PROFILE_RESULT"
+    verify_profile_delivery_audit \
+      "$CURRENT_PROFILE_AUDIT" "$CURRENT_PROFILE_RESULT"
+    test "$(manifest_value "$CURRENT_PROFILE_RESULT" dry_run)" = false
+    test "$(manifest_value "$CURRENT_PROFILE_RESULT" zero_write_observed)" = true
+    verify_production_release_and_schema
+    acquire_production_verification_lock
+    inspect_production_unrecoverable_envelopes final-production
+    release_production_verification_lock
+    printf '[UMI-FBIG] stage=production_writes_complete final_audit_pending=true inbox_id=%s\n' \
+      "$INBOX_ID"
+    ;;
+  *)
+    printf 'invalid PROFILE_OPERATION\n' >&2
+    exit 64
+    ;;
+esac
 ```
 
-The third command is the zero-write idempotency proof. Audit webhook retry and
-subscription state after every maintenance window.
+Execute dry attempt → dry audit → apply attempt → apply audit → idempotency
+attempt → idempotency audit → finalize. If an intended idempotency attempt
+returns `42`, its result was sealed first; treat it as another apply, audit it,
+and use a new label for the next idempotency attempt. Never begin a new
+maintenance window until the predecessor result and delivery audit recursively
+validate. Re-running a completed phase means validating and supplying its
+sealed path, not invoking the wrapper again.
+
 
 If any wrapper exits nonzero, Rails and Sidekiq remain stopped. Review the
 sealed attempt and its bound pre-attempt backup. If pre/post/staging evidence
@@ -2626,6 +4064,348 @@ Record per platform:
 
 Also record the merged commit/digest, history/profile approval SHAs, all
 coordinated backup and production attempt directories, migration/index proof,
-and webhook retry audit. The honest completion statement is: all history and
-profile data still exposed by Meta was migrated; exact API-unavailable data is
-counted and retained as a limitation.
+and delivery audit. Profile mutation counters are aggregate across the selected
+profile platforms because that task does not expose trustworthy per-platform
+mutation counters; do not manufacture a split.
+
+The final count artifact emits concrete `messenger_imported_messages` and
+`instagram_imported_messages` fields, together with matching pre-existing/
+current, direction, archive, attachment, and linked-contact fields. The
+producer constructs the two identical field groups in a loop.
+
+Produce and seal the final live-database reconciliation under the shared
+production lock. This program reuses all exact constants/helpers from sections
+9–10 and is installed as another protected, self-checksummed phase program:
+
+```bash
+FINAL_HISTORY_SUMMARY='<sealed final two-platform zero-write history summary>'
+PRODUCTION_DRY_1_NORMALIZED="$AUDIT_DIR/production-history-dry-1-summary-normalized.tsv"
+PRODUCTION_DRY_2_NORMALIZED="$AUDIT_DIR/production-history-dry-2-summary-normalized.tsv"
+MESSENGER_APPLY_SUMMARY="$AUDIT_DIR/production-history-messenger-apply-summary.tsv"
+INSTAGRAM_APPLY_SUMMARY="$AUDIT_DIR/production-history-instagram-apply-summary.tsv"
+FINAL_PROFILE_RESULT='<sealed final zero-write profile result>'
+FINAL_PROFILE_AUDIT='<sealed audit for final zero-write profile result>'
+PRE_HISTORY_BACKUP_MANIFEST='<sealed pre-history coordinated backup manifest>'
+FINAL_AUDIT_DIR="$AUDIT_DIR/final-production-audit"
+FINAL_PLATFORM_COUNTS="$FINAL_AUDIT_DIR/fbig-production-platform-counts-v1.tsv"
+FINAL_PLATFORM_COUNTS_CHECKSUM="${FINAL_PLATFORM_COUNTS}.sha256"
+FINAL_SCHEMA_EVIDENCE="$FINAL_AUDIT_DIR/production-release-schema.tsv"
+FINAL_ENVELOPE_EVIDENCE="$FINAL_AUDIT_DIR/production-unrecoverable-final.tsv"
+FINAL_AUDIT_MANIFEST="$FINAL_AUDIT_DIR/fbig-production-migration-audit-v1.tsv"
+FINAL_AUDIT_CHECKSUM="${FINAL_AUDIT_MANIFEST}.sha256"
+
+produce_final_migration_audit() {
+  local temporary
+  local checksum_temporary
+  local platform
+  local current_value
+  local summary_value
+  local -a expected_final_count_fields
+
+  test ! -e "$FINAL_AUDIT_DIR"
+  mkdir "$FINAL_AUDIT_DIR"
+  chmod 0700 "$FINAL_AUDIT_DIR"
+  for artifact in \
+    "$FINAL_HISTORY_SUMMARY" "$PRODUCTION_DRY_1_NORMALIZED" \
+    "$PRODUCTION_DRY_2_NORMALIZED" "$MESSENGER_APPLY_SUMMARY" \
+    "$INSTAGRAM_APPLY_SUMMARY" "$CLONE_BASELINE" \
+    "$PRE_HISTORY_BACKUP_MANIFEST" "${PRE_HISTORY_BACKUP_MANIFEST}.sha256"; do
+    require_root_artifact "$artifact" "$(basename "$artifact")"
+  done
+  verify_checksum \
+    "$PRE_HISTORY_BACKUP_MANIFEST" "${PRE_HISTORY_BACKUP_MANIFEST}.sha256"
+  cmp -s "$PRODUCTION_DRY_1_NORMALIZED" "$PRODUCTION_DRY_2_NORMALIZED"
+  validate_history_apply_summary \
+    "$FINAL_HISTORY_SUMMARY" true messenger,instagram
+  verify_profile_attempt_result "$FINAL_PROFILE_RESULT"
+  verify_profile_delivery_audit "$FINAL_PROFILE_AUDIT" "$FINAL_PROFILE_RESULT"
+  test "$(manifest_value "$FINAL_PROFILE_RESULT" dry_run)" = false
+  test "$(manifest_value "$FINAL_PROFILE_RESULT" zero_write_observed)" = true
+
+  verify_production_release_and_schema >"$FINAL_SCHEMA_EVIDENCE"
+  acquire_production_verification_lock
+  load_scoped_baseline_ids "$CLONE_BASELINE"
+  docker compose exec -T \
+    -e UMI_FBIG_AUDIT_INBOX_ID="$INBOX_ID" \
+    -e UMI_FBIG_AUDIT_DATABASE="$PRODUCTION_DATABASE" \
+    -e FBIG_ARCHIVE_IDS="$FBIG_ARCHIVE_IDS" \
+    -e FBIG_MESSAGE_IDS="$FBIG_MESSAGE_IDS" \
+    -e FBIG_ATTACHMENT_IDS="$FBIG_ATTACHMENT_IDS" \
+    rails bundle exec rails runner - <<'RUBY' >"$FINAL_PLATFORM_COUNTS"
+inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_AUDIT_INBOX_ID"), 10))
+actual_database = ActiveRecord::Base.connection.select_value("SELECT current_database()")
+abort("production database mismatch") unless
+  actual_database == ENV.fetch("UMI_FBIG_AUDIT_DATABASE")
+parse_ids = lambda do |name|
+  value = ENV.fetch(name)
+  value.empty? ? [] : value.split(",").map { |item| Integer(item, 10) }
+end
+baseline_archive_ids = parse_ids.call("FBIG_ARCHIVE_IDS")
+baseline_message_ids = parse_ids.call("FBIG_MESSAGE_IDS")
+baseline_attachment_ids = parse_ids.call("FBIG_ATTACHMENT_IDS")
+archives = inbox.conversations.where(
+  "jsonb_exists(conversations.additional_attributes, :key)",
+  key: "umi_history_import"
+)
+messages = Message.where(inbox_id: inbox.id).where(
+  "messages.additional_attributes ->> 'umi_history_import' = 'true'"
+)
+attachments = Attachment.joins(:message).where(messages: { inbox_id: inbox.id }).where(
+  "attachments.meta ->> 'umi_history_import' = 'true'"
+)
+values = { "schema_version" => 1 }
+%w[messenger instagram].each do |platform|
+  platform_archives = archives.where(
+    "conversations.additional_attributes -> 'umi_history_import' ->> 'platform' = ?",
+    platform
+  )
+  platform_messages = messages.where(
+    "messages.additional_attributes ->> 'umi_history_platform' = ?",
+    platform
+  )
+  platform_attachments = attachments.where(
+    "messages.additional_attributes ->> 'umi_history_platform' = ?",
+    platform
+  )
+  values["#{platform}_archives"] = platform_archives.count
+  values["#{platform}_preexisting_archives"] =
+    platform_archives.where(id: baseline_archive_ids).count
+  values["#{platform}_current_archives"] =
+    values.fetch("#{platform}_archives") -
+    values.fetch("#{platform}_preexisting_archives")
+  values["#{platform}_imported_messages"] = platform_messages.count
+  values["#{platform}_preexisting_messages"] =
+    platform_messages.where(id: baseline_message_ids).count
+  values["#{platform}_current_messages"] =
+    values.fetch("#{platform}_imported_messages") -
+    values.fetch("#{platform}_preexisting_messages")
+  values["#{platform}_incoming"] =
+    platform_messages.where(message_type: Message.message_types.fetch("incoming")).count
+  values["#{platform}_current_incoming"] =
+    platform_messages.where.not(id: baseline_message_ids)
+                     .where(message_type: Message.message_types.fetch("incoming")).count
+  values["#{platform}_outgoing"] =
+    platform_messages.where(message_type: Message.message_types.fetch("outgoing")).count
+  values["#{platform}_current_outgoing"] =
+    platform_messages.where.not(id: baseline_message_ids)
+                     .where(message_type: Message.message_types.fetch("outgoing")).count
+  values["#{platform}_attachments"] = platform_attachments.count
+  values["#{platform}_preexisting_attachments"] =
+    platform_attachments.where(attachments: { id: baseline_attachment_ids }).count
+  values["#{platform}_current_attachments"] =
+    values.fetch("#{platform}_attachments") -
+    values.fetch("#{platform}_preexisting_attachments")
+  values["#{platform}_linked_contacts"] =
+    platform_archives.distinct.count(:contact_id)
+  values["#{platform}_preexisting_linked_contacts"] =
+    platform_archives.where(id: baseline_archive_ids).distinct.count(:contact_id)
+end
+values["empty_importer_archives"] =
+  archives.left_joins(:messages).group("conversations.id")
+          .having("COUNT(messages.id) = 0").count.size
+values["duplicate_imported_source_ids"] =
+  messages.group(:source_id).having("COUNT(*) > 1").count.size
+values["invalid_importer_archives"] = archives.where(
+  "status <> :resolved OR assignee_id IS NOT NULL OR team_id IS NOT NULL " \
+  "OR waiting_since IS NOT NULL OR first_reply_created_at IS NOT NULL",
+  resolved: Conversation.statuses.fetch("resolved")
+).count
+values["duplicate_contact_avatars"] = ActiveStorage::Attachment
+  .where(record_type: "Contact", name: "avatar")
+  .group(:record_id).having("COUNT(*) > 1").count.size
+values["unclassified_importer_messages"] = messages.where.not(
+  "messages.additional_attributes ->> 'umi_history_platform' IN (?)",
+  %w[messenger instagram]
+).count
+order = [
+  "schema_version",
+  *%w[messenger instagram].flat_map do |platform|
+    %W[
+      #{platform}_archives #{platform}_preexisting_archives
+      #{platform}_current_archives #{platform}_imported_messages
+      #{platform}_preexisting_messages #{platform}_current_messages
+      #{platform}_incoming #{platform}_current_incoming
+      #{platform}_outgoing #{platform}_current_outgoing
+      #{platform}_attachments #{platform}_preexisting_attachments
+      #{platform}_current_attachments #{platform}_linked_contacts
+      #{platform}_preexisting_linked_contacts
+    ]
+  end,
+  "empty_importer_archives", "duplicate_imported_source_ids",
+  "invalid_importer_archives", "duplicate_contact_avatars",
+  "unclassified_importer_messages"
+]
+order.each { |key| puts "#{key}\t#{values.fetch(key)}" }
+RUBY
+  inspect_production_unrecoverable_envelopes final-audit
+  cp "$AUDIT_DIR/production-unrecoverable-final-audit.tsv" \
+    "$FINAL_ENVELOPE_EVIDENCE"
+  chmod 0400 \
+    "$FINAL_PLATFORM_COUNTS" "$FINAL_SCHEMA_EVIDENCE" \
+    "$FINAL_ENVELOPE_EVIDENCE"
+  release_production_verification_lock
+  expected_final_count_fields=(schema_version)
+  for platform in messenger instagram; do
+    expected_final_count_fields+=(
+      "${platform}_archives" "${platform}_preexisting_archives"
+      "${platform}_current_archives" "${platform}_imported_messages"
+      "${platform}_preexisting_messages" "${platform}_current_messages"
+      "${platform}_incoming" "${platform}_current_incoming"
+      "${platform}_outgoing" "${platform}_current_outgoing"
+      "${platform}_attachments" "${platform}_preexisting_attachments"
+      "${platform}_current_attachments" "${platform}_linked_contacts"
+      "${platform}_preexisting_linked_contacts"
+    )
+  done
+  expected_final_count_fields+=(
+    empty_importer_archives duplicate_imported_source_ids
+    invalid_importer_archives duplicate_contact_avatars
+    unclassified_importer_messages
+  )
+  require_ordered_fields \
+    "$FINAL_PLATFORM_COUNTS" "${expected_final_count_fields[@]}"
+
+  for invariant in \
+    empty_importer_archives duplicate_imported_source_ids \
+    invalid_importer_archives duplicate_contact_avatars \
+    unclassified_importer_messages; do
+    test "$(manifest_value "$FINAL_PLATFORM_COUNTS" "$invariant")" = 0
+  done
+  for platform in messenger instagram; do
+    if [[ "$platform" == messenger ]]; then
+      apply_summary="$MESSENGER_APPLY_SUMMARY"
+    else
+      apply_summary="$INSTAGRAM_APPLY_SUMMARY"
+    fi
+    for equation in \
+      current_archives:imported_archives \
+      current_messages:imported_messages \
+      current_incoming:imported_incoming \
+      current_outgoing:imported_outgoing \
+      current_attachments:imported_attachments; do
+      current_value="$(
+        manifest_value "$FINAL_PLATFORM_COUNTS" \
+          "${platform}_${equation%%:*}"
+      )"
+      summary_value="$(
+        stage_value "$apply_summary" history_import_summary "${equation##*:}"
+      )"
+      test "$current_value" = "$summary_value"
+    done
+    test "$(
+      manifest_value "$FINAL_PLATFORM_COUNTS" "${platform}_imported_messages"
+    )" = "$(
+      (
+        printf '%s\n' \
+          "$(manifest_value "$FINAL_PLATFORM_COUNTS" "${platform}_incoming")" \
+          "$(manifest_value "$FINAL_PLATFORM_COUNTS" "${platform}_outgoing")"
+      ) | awk '{ total += $1 } END { print total + 0 }'
+    )"
+  done
+  test "$(stage_value "$FINAL_ENVELOPE_EVIDENCE" \
+    unrecoverable_envelope_inspection count)" = \
+    "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  test "$(stage_value "$FINAL_ENVELOPE_EVIDENCE" \
+    unrecoverable_envelope_inspection fingerprint)" = \
+    "$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)"
+
+  printf '%s  %s\n' \
+    "$(sha256_file "$FINAL_PLATFORM_COUNTS")" \
+    "$(basename "$FINAL_PLATFORM_COUNTS")" \
+    >"$FINAL_PLATFORM_COUNTS_CHECKSUM"
+  chmod 0400 "$FINAL_PLATFORM_COUNTS_CHECKSUM"
+  verify_checksum "$FINAL_PLATFORM_COUNTS" "$FINAL_PLATFORM_COUNTS_CHECKSUM"
+
+  temporary="${FINAL_AUDIT_MANIFEST}.$$.tmp"
+  checksum_temporary="${FINAL_AUDIT_CHECKSUM}.$$.tmp"
+  {
+    printf 'schema_version\t1\n'
+    printf 'repository_commit\t%s\n' "$APP_COMMIT"
+    printf 'image_digest\t%s\n' "$APP_DIGEST"
+    printf 'inbox_id\t%s\n' "$INBOX_ID"
+    printf 'r4_acceptance_sha256\t%s\n' \
+      "$(sha256_file "$R4_ACCEPTANCE_MANIFEST")"
+    printf 'history_approval_sha256\t%s\n' \
+      "$(sha256_file "$HISTORY_APPROVAL")"
+    printf 'profile_approval_sha256\t%s\n' \
+      "$(sha256_file "$PROFILE_APPROVAL")"
+    printf 'pre_history_backup_sha256\t%s\n' \
+      "$(sha256_file "$PRE_HISTORY_BACKUP_MANIFEST")"
+    printf 'platform_counts_sha256\t%s\n' \
+      "$(sha256_file "$FINAL_PLATFORM_COUNTS")"
+    printf 'production_dry_1_sha256\t%s\n' \
+      "$(sha256_file "$PRODUCTION_DRY_1_NORMALIZED")"
+    printf 'production_dry_2_sha256\t%s\n' \
+      "$(sha256_file "$PRODUCTION_DRY_2_NORMALIZED")"
+    printf 'messenger_apply_summary_sha256\t%s\n' \
+      "$(sha256_file "$MESSENGER_APPLY_SUMMARY")"
+    printf 'instagram_apply_summary_sha256\t%s\n' \
+      "$(sha256_file "$INSTAGRAM_APPLY_SUMMARY")"
+    printf 'messenger_contacts_created_current_apply\t%s\n' \
+      "$(stage_value "$MESSENGER_APPLY_SUMMARY" \
+        history_import_summary imported_contacts)"
+    printf 'instagram_contacts_created_current_apply\t%s\n' \
+      "$(stage_value "$INSTAGRAM_APPLY_SUMMARY" \
+        history_import_summary imported_contacts)"
+    printf 'final_history_summary_sha256\t%s\n' \
+      "$(sha256_file "$FINAL_HISTORY_SUMMARY")"
+    printf 'final_profile_result_sha256\t%s\n' \
+      "$(sha256_file "$FINAL_PROFILE_RESULT")"
+    printf 'final_profile_audit_sha256\t%s\n' \
+      "$(sha256_file "$FINAL_PROFILE_AUDIT")"
+    printf 'pre_history_backup_directory\t%s\n' \
+      "$(dirname "$PRE_HISTORY_BACKUP_MANIFEST")"
+    printf 'final_profile_attempt_directory\t%s\n' \
+      "$(manifest_value "$FINAL_PROFILE_RESULT" attempt_directory)"
+    printf 'final_profile_backup_directory\t%s\n' \
+      "$(manifest_value "$FINAL_PROFILE_RESULT" pre_attempt_backup_directory)"
+    printf 'final_profile_audit_directory\t%s\n' \
+      "$(dirname "$FINAL_PROFILE_AUDIT")"
+    printf 'release_schema_evidence_sha256\t%s\n' \
+      "$(sha256_file "$FINAL_SCHEMA_EVIDENCE")"
+    printf 'unrecoverable_evidence_sha256\t%s\n' \
+      "$(sha256_file "$FINAL_ENVELOPE_EVIDENCE")"
+    printf 'unrecoverable_instagram_envelopes\t%s\n' \
+      "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+    printf 'profile_mutations_are_aggregate\ttrue\n'
+    printf 'audited_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$temporary"
+  chmod 0400 "$temporary"
+  "$STORAGE_HELPER" fsync "$temporary"
+  printf '%s  %s\n' \
+    "$(sha256_file "$temporary")" "$(basename "$FINAL_AUDIT_MANIFEST")" \
+    >"$checksum_temporary"
+  chmod 0400 "$checksum_temporary"
+  "$STORAGE_HELPER" fsync "$checksum_temporary"
+  mv "$temporary" "$FINAL_AUDIT_MANIFEST"
+  mv "$checksum_temporary" "$FINAL_AUDIT_CHECKSUM"
+  "$STORAGE_HELPER" fsync "$FINAL_AUDIT_DIR"
+  require_root_artifact \
+    "$FINAL_AUDIT_MANIFEST" fbig-production-migration-audit-v1.tsv
+  require_root_artifact \
+    "$FINAL_AUDIT_CHECKSUM" fbig-production-migration-audit-v1.tsv.sha256
+  verify_checksum "$FINAL_AUDIT_MANIFEST" "$FINAL_AUDIT_CHECKSUM"
+  require_ordered_fields "$FINAL_AUDIT_MANIFEST" \
+    schema_version repository_commit image_digest inbox_id \
+    r4_acceptance_sha256 history_approval_sha256 profile_approval_sha256 \
+    pre_history_backup_sha256 platform_counts_sha256 \
+    production_dry_1_sha256 production_dry_2_sha256 \
+    messenger_apply_summary_sha256 instagram_apply_summary_sha256 \
+    messenger_contacts_created_current_apply \
+    instagram_contacts_created_current_apply \
+    final_history_summary_sha256 final_profile_result_sha256 \
+    final_profile_audit_sha256 pre_history_backup_directory \
+    final_profile_attempt_directory final_profile_backup_directory \
+    final_profile_audit_directory release_schema_evidence_sha256 \
+    unrecoverable_evidence_sha256 unrecoverable_instagram_envelopes \
+    profile_mutations_are_aggregate audited_at
+  printf '[UMI-FBIG] stage=production_migration_complete audit_sha256=%s inbox_id=%s\n' \
+    "$(sha256_file "$FINAL_AUDIT_MANIFEST")" "$INBOX_ID"
+}
+
+produce_final_migration_audit
+```
+
+Only the checksummed final manifest authorizes the completion statement: all
+history and profile data still exposed by Meta was migrated; exact
+API-unavailable data is counted and retained as a limitation.

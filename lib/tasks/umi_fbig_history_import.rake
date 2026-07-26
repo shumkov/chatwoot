@@ -215,6 +215,139 @@ namespace :umi do
     ensure
       Umi::Fbig::HistoryImportLock.release(inbox.channel.id, run_id) if acquired
     end
+
+    desc 'Capture a checksummed PII-free history importer graph without Meta access'
+    task :history_state, [:inbox_id] => :environment do |_task, args|
+      abort('Usage: bundle exec rake "umi:fbig:history_state[INBOX_ID]"') unless
+        args[:inbox_id].to_s.match?(/\A[1-9]\d*\z/)
+      expected_database = ENV.fetch('UMI_FBIG_HISTORY_EXPECTED_DATABASE', '').presence
+      abort('[UMI-FBIG] configuration_error=UMI_FBIG_HISTORY_EXPECTED_DATABASE is required') unless expected_database
+      output_directory = ENV.fetch('UMI_FBIG_HISTORY_STATE_OUTPUT_DIR', '').presence
+      abort('[UMI-FBIG] configuration_error=UMI_FBIG_HISTORY_STATE_OUTPUT_DIR is required') unless output_directory
+      basename = ENV.fetch('UMI_FBIG_HISTORY_STATE_BASENAME', '').presence
+      abort('[UMI-FBIG] configuration_error=UMI_FBIG_HISTORY_STATE_BASENAME is required') unless basename
+      platforms = ENV.fetch('PLATFORMS', '').split(',')
+      unless platforms.present? && platforms.uniq.size == platforms.size &&
+             (platforms - Umi::Fbig::HistoryStateSnapshot::PLATFORMS).empty?
+        abort('[UMI-FBIG] configuration_error=PLATFORMS is invalid')
+      end
+
+      actual_database = ActiveRecord::Base.connection.select_value('SELECT current_database()')
+      abort('[UMI-FBIG] database_identity_mismatch') unless actual_database == expected_database
+      inbox = Inbox.find(args[:inbox_id].to_i)
+      run_id = SecureRandom.uuid
+      acquired = Umi::Fbig::HistoryImportLock.acquire(inbox.channel.id, run_id)
+      abort('[UMI-FBIG] another FB/IG writer owns the channel lock') unless acquired
+      artifact = Umi::Fbig::HistoryStateSnapshot.capture_and_seal!(
+        inbox,
+        platforms: platforms,
+        directory: output_directory,
+        basename: basename,
+        renewer: -> { Umi::Fbig::HistoryImportLock.renew(inbox.channel.id, run_id) }
+      )
+      puts [
+        '[UMI-FBIG] stage=history_state_complete',
+        "database=#{actual_database}",
+        "inbox_id=#{inbox.id}",
+        "platforms=#{artifact.platforms.join(',')}",
+        "row_count=#{artifact.rows.size}",
+        "state_sha256=#{artifact.sha256}"
+      ].join(' ')
+    rescue ActiveRecord::RecordNotFound
+      abort("[UMI-FBIG] inbox_id=#{args[:inbox_id]} not found")
+    rescue Umi::Fbig::HistoryStateSnapshot::InvalidSnapshot
+      abort('[UMI-FBIG] history state capture is invalid')
+    ensure
+      Umi::Fbig::HistoryImportLock.release(inbox.channel.id, run_id) if acquired
+    end
+
+    desc 'Compare sealed history importer graphs and validate normal-run counters'
+    task :history_state_compare, [:inbox_id] => :environment do |_task, args|
+      abort('Usage: bundle exec rake "umi:fbig:history_state_compare[INBOX_ID]"') unless
+        args[:inbox_id].to_s.match?(/\A[1-9]\d*\z/)
+      expected_database = ENV.fetch('UMI_FBIG_HISTORY_EXPECTED_DATABASE', '').presence
+      abort('[UMI-FBIG] configuration_error=UMI_FBIG_HISTORY_EXPECTED_DATABASE is required') unless expected_database
+      snapshot_paths = %w[
+        UMI_FBIG_HISTORY_PRESTATE_PATH UMI_FBIG_HISTORY_PRESTATE_CHECKSUM_PATH
+        UMI_FBIG_HISTORY_POSTSTATE_PATH UMI_FBIG_HISTORY_POSTSTATE_CHECKSUM_PATH
+      ].index_with { |name| ENV.fetch(name, '').presence }
+      abort('[UMI-FBIG] configuration_error=snapshot paths are required') if snapshot_paths.value?(nil)
+      summary_path = ENV.fetch('UMI_FBIG_HISTORY_SUMMARY_PATH', '').presence
+      abort('[UMI-FBIG] configuration_error=summary path is required') unless summary_path
+      require_zero = ENV.fetch('UMI_FBIG_HISTORY_REQUIRE_ZERO_WRITES', '')
+      abort('[UMI-FBIG] configuration_error=zero-write mode is invalid') unless require_zero.in?(%w[true false])
+
+      actual_database = ActiveRecord::Base.connection.select_value('SELECT current_database()')
+      abort('[UMI-FBIG] database_identity_mismatch') unless actual_database == expected_database
+      inbox = Inbox.find(args[:inbox_id].to_i)
+      before = Umi::Fbig::HistoryStateSnapshot.load(
+        path: snapshot_paths.fetch('UMI_FBIG_HISTORY_PRESTATE_PATH'),
+        checksum_path: snapshot_paths.fetch('UMI_FBIG_HISTORY_PRESTATE_CHECKSUM_PATH')
+      )
+      after = Umi::Fbig::HistoryStateSnapshot.load(
+        path: snapshot_paths.fetch('UMI_FBIG_HISTORY_POSTSTATE_PATH'),
+        checksum_path: snapshot_paths.fetch('UMI_FBIG_HISTORY_POSTSTATE_CHECKSUM_PATH')
+      )
+      summary = summary_path == 'none' ? nil : Umi::Fbig::HistoryStateComparator.parse_summary(File.binread(summary_path))
+      result = Umi::Fbig::HistoryStateComparator.compare(
+        before: before,
+        after: after,
+        summary_stats: summary,
+        require_zero_writes: require_zero == 'true'
+      )
+      abort('[UMI-FBIG] history snapshot scope mismatch') unless
+        before.account_id == inbox.account_id && before.inbox_id == inbox.id
+      result.per_platform.each do |platform, counts|
+        puts [
+          '[UMI-FBIG] stage=history_state_delta',
+          "platform=#{platform}",
+          *counts.sort.map { |key, value| "#{key}=#{value}" }
+        ].join(' ')
+      end
+      puts [
+        '[UMI-FBIG] stage=history_state_comparison',
+        "success=#{result.success?}",
+        "protected_changes=#{result.protected_changes}",
+        "deleted_rows=#{result.deleted_rows}",
+        "unattributed_changes=#{result.unattributed_changes}",
+        "counter_mismatches=#{result.counter_mismatches.presence&.join(',') || 'none'}",
+        "zero_write_observed=#{result.zero_write_observed}"
+      ].join(' ')
+      abort('[UMI-FBIG] history state comparison failed') unless result.success?
+    rescue ActiveRecord::RecordNotFound
+      abort("[UMI-FBIG] inbox_id=#{args[:inbox_id]} not found")
+    rescue Umi::Fbig::HistoryStateSnapshot::InvalidSnapshot
+      abort('[UMI-FBIG] history state evidence is invalid')
+    end
+
+    desc 'Reconcile durable historical attachment staging intents'
+    task :history_attachment_reconcile, [:inbox_id] => :environment do |_task, args|
+      abort('Usage: bundle exec rake "umi:fbig:history_attachment_reconcile[INBOX_ID]"') unless
+        args[:inbox_id].to_s.match?(/\A[1-9]\d*\z/)
+      expected_database = ENV.fetch('UMI_FBIG_HISTORY_EXPECTED_DATABASE', '').presence
+      abort('[UMI-FBIG] configuration_error=UMI_FBIG_HISTORY_EXPECTED_DATABASE is required') unless expected_database
+
+      actual_database = ActiveRecord::Base.connection.select_value('SELECT current_database()')
+      abort('[UMI-FBIG] database_identity_mismatch') unless actual_database == expected_database
+      inbox = Inbox.find(args[:inbox_id].to_i)
+      run_id = SecureRandom.uuid
+      acquired = Umi::Fbig::HistoryImportLock.acquire(inbox.channel.id, run_id)
+      abort('[UMI-FBIG] another FB/IG writer owns the channel lock') unless acquired
+      result = Umi::Fbig::HistoryImportAttachmentService.reconcile!(inbox: inbox)
+      puts [
+        '[UMI-FBIG] stage=history_attachment_reconciliation',
+        "database=#{actual_database}",
+        "inbox_id=#{inbox.id}",
+        "purged=#{result.fetch(:purged)}",
+        "attached=#{result.fetch(:attached)}"
+      ].join(' ')
+    rescue ActiveRecord::RecordNotFound
+      abort("[UMI-FBIG] inbox_id=#{args[:inbox_id]} not found")
+    rescue Umi::Fbig::HistoryImportAttachmentService::CleanupError
+      abort('[UMI-FBIG] historical attachment reconciliation failed')
+    ensure
+      Umi::Fbig::HistoryImportLock.release(inbox.channel.id, run_id) if acquired
+    end
   end
 end
 # rubocop:enable Metrics/BlockLength

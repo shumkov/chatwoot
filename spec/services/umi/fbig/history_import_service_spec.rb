@@ -1847,7 +1847,9 @@ describe Umi::Fbig::HistoryImportService do
   it 'accounts bytes consumed by a transient attachment-stage failure before rethrowing it' do
     attachment_service = instance_double(Umi::Fbig::HistoryImportAttachmentService)
     error = Umi::Fbig::HistoryImportAttachmentService::TransientError.new('transport failed', bytes_used: 7)
-    item = described_class::PreparedMessage.new(candidate: nil, detail: {}, attachment_plan: :plan, stage_result: nil)
+    listing = described_class::NormalizedListing.new(payload: { 'id' => 'mid-1' }, created_at: before_time)
+    candidate = described_class::Candidate.new(listing: listing, direction: :incoming)
+    item = described_class::PreparedMessage.new(candidate: candidate, detail: {}, attachment_plan: :plan, stage_result: nil)
     service = described_class.new(
       inbox,
       since: nil,
@@ -1875,7 +1877,9 @@ describe Umi::Fbig::HistoryImportService do
       bytes_used: 8,
       budget_exhausted: true
     )
-    item = described_class::PreparedMessage.new(candidate: nil, detail: {}, attachment_plan: :plan, stage_result: nil)
+    listing = described_class::NormalizedListing.new(payload: { 'id' => 'mid-1' }, created_at: before_time)
+    candidate = described_class::Candidate.new(listing: listing, direction: :incoming)
+    item = described_class::PreparedMessage.new(candidate: candidate, detail: {}, attachment_plan: :plan, stage_result: nil)
     service = described_class.new(
       inbox,
       since: nil,
