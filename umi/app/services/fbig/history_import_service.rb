@@ -638,7 +638,10 @@ class Umi::Fbig::HistoryImportService
       renew_if_due!
       unless detail
         @stats[:content_unavailable] += 1
-        fail_write!
+        mid = candidate.mid
+        raise ThreadError, :duplicate_contentless_mid unless @contentless_mid_sets[platform].add?(mid)
+
+        @contentless_mids[platform] << mid
         next
       end
 

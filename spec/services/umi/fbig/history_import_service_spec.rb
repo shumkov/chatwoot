@@ -1764,7 +1764,7 @@ describe Umi::Fbig::HistoryImportService do
     expect(profile_service).not_to have_received(:attach_avatar)
   end
 
-  it 'counts every queued avatar URL skipped by incomplete history' do
+  it 'skips every queued avatar before a contentless mismatch aborts remaining platforms' do
     shared_contact = create(:contact, account: account, name: 'Existing Person')
     create(:contact_inbox, contact: shared_contact, inbox: inbox, source_id: 'person-1')
     create(:contact_inbox, contact: shared_contact, inbox: inbox, source_id: 'instagram-person-1')
@@ -1803,7 +1803,11 @@ describe Umi::Fbig::HistoryImportService do
     ).perform
 
     expect(result).not_to be_success
-    expect(result.stats).to include(avatars_offered: 2, avatars_skipped_history_incomplete: 2)
+    expect(result.stats).to include(
+      avatars_offered: 1,
+      avatars_skipped_history_incomplete: 1,
+      contentless_acceptance_mismatches: 1
+    )
   end
 
   it 'imports a thread whose downloaded attachment exactly fills the remaining budget' do
@@ -2003,6 +2007,40 @@ describe Umi::Fbig::HistoryImportService do
       contentless_acceptance_mismatches: 0
     )
     expect(result.stats.values_at(:profile_requests, :profile_changes_applied, :avatars_offered, :avatar_bytes)).to all(be_zero)
+  end
+
+  it 'accepts an exact listed message whose detail is permanently unavailable' do
+    accepted = {
+      'messenger' => Umi::Fbig::ContentlessFingerprint.build(platform: 'messenger', mids: ['mid-in'])
+    }
+    allow(graph_client).to receive(:detail) do |mid|
+      mid == 'mid-in' ? nil : details.fetch(mid)
+    end
+    service = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: false,
+      platforms: ['messenger'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      max_download_bytes: max_download_bytes,
+      accepted_contentless: accepted,
+      profile_mode: 'defer'
+    )
+
+    result = service.perform
+
+    expect(result).to be_success
+    expect(Message.exists?(source_id: 'mid-in')).to be(false)
+    expect(Message.exists?(source_id: 'mid-out')).to be(true)
+    expect(result.stats).to include(
+      content_unavailable: 1,
+      messenger_contentless_details: 1,
+      messenger_contentless_fingerprint: accepted.fetch('messenger').fingerprint,
+      contentless_acceptance_mismatches: 0,
+      exit_failures: 0
+    )
   end
 
   it 'retains committed rows but blocks marker normalization when the accepted contentless fingerprint drifts' do
