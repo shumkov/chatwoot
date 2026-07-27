@@ -1006,7 +1006,7 @@ clone_database_fingerprint() {
   docker compose exec -T postgres \
     pg_dump -U chatwoot --dbname="$CLONE_DATABASE" \
       --data-only --no-owner --no-privileges --no-comments --large-objects \
-      --restrict-key=UMI_FBIG_CLONE_DATABASE_FINGERPRINT |
+      --restrict-key=UMIFBIGCLONEDATABASEFINGERPRINT |
     sha256sum |
     awk '{print "FBIG_IMMUTABLE|database|" $1}'
 }

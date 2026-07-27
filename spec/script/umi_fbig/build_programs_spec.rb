@@ -56,6 +56,19 @@ RSpec.describe 'UMI FB/IG production program builder' do
     end
   end
 
+  it 'emits PostgreSQL restrict keys containing only alphanumeric characters' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+
+      acceptance = File.binread(File.join(directory, 'fbig-acceptance.sh'))
+      restrict_keys = acceptance.scan(/--restrict-key=([^\s|]+)/).flatten
+
+      expect(restrict_keys).not_to be_empty
+      expect(restrict_keys).to all(match(/\A[[:alnum:]]+\z/))
+    end
+  end
+
   it 'publishes the exact reviewed profile maintenance wrapper' do
     Dir.mktmpdir do |directory|
       _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
