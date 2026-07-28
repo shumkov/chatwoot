@@ -67,6 +67,26 @@ program's `finalize` action before a successor can start. The current R4 clone
 invocation predates this protected launch contract and is rehearsal evidence
 only; it cannot authorize production.
 
+Before clone acceptance starts, `fbig-acceptance-control.sh` runs a disposable
+same-host systemd probe. It proves that `RefuseManualStop=yes` rejects an
+explicit `systemctl restart` without changing the disposable invocation, then
+removes the probe completely. The accepted unit fragment carries the same
+property, and its effective value is bound into the pre/post descriptors and
+start intent. This protects the multi-hour clone process from compliant direct
+service restarts such as Ubuntu `needrestart`; it does not prevent dependency
+failure, process failure, forceful kill, OOM termination, reboot, or shutdown.
+
+If an emergency operator abort is required, terminate the acceptance process
+explicitly rather than weakening or editing the protected fragment:
+
+```bash
+systemctl kill --kill-whom=all --signal=TERM "$ACCEPTANCE_UNIT"
+```
+
+That invocation can never authorize production. Preserve its audit directory,
+clone database, and clone storage as unsealed forensic evidence; investigate,
+then generate a new acceptance id with fresh audit and clone roots.
+
 ## 1. Stop conditions
 
 Stop immediately if any of these is true:

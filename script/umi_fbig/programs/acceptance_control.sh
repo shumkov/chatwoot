@@ -35,7 +35,11 @@ readonly START_INTENT_FIELDS=(
   schema_version acceptance_id created_at previous_invocation_id
   acceptance_binding_sha256 acceptance_program_sha256
   acceptance_control_sha256 unit_fragment_sha256
-  prelaunch_descriptor_sha256
+  restart_guard_probe_sha256 prelaunch_descriptor_sha256
+)
+readonly RESTART_GUARD_PROBE_FIELDS=(
+  schema_version acceptance_id systemd_version restart_status
+  invocation_preserved cleanup_complete verified_at
 )
 
 [[ "$ACTION" =~ ^(launch|finalize)$ ]] || die 'action must be launch|finalize'
@@ -78,6 +82,9 @@ readonly UNIT_FRAGMENT_ARCHIVE="$OPS_DIR/$ACCEPTANCE_UNIT"
 readonly UNIT_FRAGMENT_ARCHIVE_CHECKSUM="${UNIT_FRAGMENT_ARCHIVE}.sha256"
 readonly PRELAUNCH_DESCRIPTOR="$OPS_DIR/fbig-acceptance-unit-prelaunch-v1.tsv"
 readonly POSTLAUNCH_DESCRIPTOR="$OPS_DIR/fbig-acceptance-unit-postlaunch-v1.tsv"
+readonly RESTART_GUARD_PROBE="$OPS_DIR/fbig-acceptance-restart-guard-probe-v1.tsv"
+readonly RESTART_GUARD_PROBE_CHECKSUM="${RESTART_GUARD_PROBE}.sha256"
+readonly RESTART_GUARD_UNIT="umi-fbig-refuse-stop-probe-${ACCEPTANCE_ID}.service"
 readonly START_INTENT="$OPS_DIR/fbig-acceptance-start-intent-v1.tsv"
 readonly START_INTENT_CHECKSUM="${START_INTENT}.sha256"
 readonly LAUNCH_MANIFEST="$OPS_DIR/fbig-acceptance-launch-v1.tsv"
@@ -90,7 +97,9 @@ readonly SYSTEM_PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/b
 
 require_safe_token acceptance_id "$ACCEPTANCE_ID"
 require_safe_token acceptance_unit "$ACCEPTANCE_UNIT"
+require_safe_token restart_guard_unit "$RESTART_GUARD_UNIT"
 [[ "$ACCEPTANCE_UNIT" =~ ^umi-fbig-[a-z0-9.-]+\.service$ ]]
+[[ "$RESTART_GUARD_UNIT" =~ ^umi-fbig-refuse-stop-probe-[a-z0-9.-]+\.service$ ]]
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]]
 [[ "$CLONE_DATABASE" =~ ^[a-z_][a-z0-9_]*$ ]]
 [[ "$PRODUCTION_DATABASE" =~ ^[a-z_][a-z0-9_]*$ ]]
@@ -152,6 +161,8 @@ validate_unit_fragment() {
   test "$(grep -c '^Environment=' "$fragment")" -eq 1
   test "$(grep -c '^EnvironmentFile=' "$fragment")" -eq 0
   test "$(grep -c '^PassEnvironment=' "$fragment")" -eq 0
+  test "$(grep -c '^RefuseManualStop=' "$fragment")" -eq 1
+  grep -Fxq 'RefuseManualStop=yes' "$fragment"
   grep -Fxq 'Type=exec' "$fragment"
   grep -Fxq 'User=root' "$fragment"
   grep -Fxq 'Group=root' "$fragment"
@@ -186,7 +197,8 @@ publish_unit_fragment_archive() {
       printf '[Unit]\n'
       printf 'Description=UMI FB/IG clone acceptance %s\n' "$ACCEPTANCE_ID"
       printf 'After=docker.service\n'
-      printf 'Requires=docker.service\n\n'
+      printf 'Requires=docker.service\n'
+      printf 'RefuseManualStop=yes\n\n'
       printf '[Service]\n'
       printf 'Type=exec\n'
       printf 'User=root\n'
@@ -235,6 +247,7 @@ capture_effective_descriptor() {
   local environment
   local environment_files
   local pass_environment
+  local refuse_manual_stop
   local working_directory
   local drop_in_paths
   local temporary
@@ -245,6 +258,7 @@ capture_effective_descriptor() {
   environment="$(unit_property Environment)"
   environment_files="$(unit_property EnvironmentFiles)"
   pass_environment="$(unit_property PassEnvironment)"
+  refuse_manual_stop="$(unit_property RefuseManualStop)"
   working_directory="$(unit_property WorkingDirectory)"
   drop_in_paths="$(unit_property DropInPaths)"
 
@@ -256,6 +270,7 @@ capture_effective_descriptor() {
   test "$environment" = "PATH=$SYSTEM_PATH"
   test -z "$environment_files"
   test -z "$pass_environment"
+  test "$refuse_manual_stop" = yes
   test "$working_directory" = /
   test -z "$drop_in_paths"
   test "$(unit_property User)" = root
@@ -274,6 +289,7 @@ capture_effective_descriptor() {
       printf 'environment\tPATH=%s\n' "$SYSTEM_PATH"
       printf 'environment_files\tnone\n'
       printf 'pass_environment\tnone\n'
+      printf 'refuse_manual_stop\tyes\n'
       printf 'working_directory\t/\n'
       printf 'drop_in_paths\tnone\n'
       printf 'user\troot\n'
@@ -303,9 +319,147 @@ capture_effective_descriptor() {
   fi
 }
 
+restart_guard_unit_property() {
+  local property="$1"
+  systemctl show "$RESTART_GUARD_UNIT" --property="$property" --value
+}
+
+cleanup_restart_guard_unit() {
+  local active_state
+  local attempt
+  local load_state
+
+  load_state="$(restart_guard_unit_property LoadState)"
+  if [[ "$load_state" = not-found ]]; then
+    return
+  fi
+
+  systemctl kill --kill-whom=all --signal=TERM "$RESTART_GUARD_UNIT" \
+    >/dev/null 2>&1 || true
+  for ((attempt = 0; attempt < 100; attempt += 1)); do
+    load_state="$(restart_guard_unit_property LoadState)"
+    if [[ "$load_state" = not-found ]]; then
+      return
+    fi
+    active_state="$(restart_guard_unit_property ActiveState)"
+    if [[ "$active_state" = inactive || "$active_state" = failed ]]; then
+      systemctl reset-failed "$RESTART_GUARD_UNIT" >/dev/null 2>&1 || true
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+validate_restart_guard_probe() {
+  local manifest="$1"
+  local restart_status
+  local systemd_version
+
+  require_root_artifact "$manifest"
+  require_ordered_manifest "$manifest" "${RESTART_GUARD_PROBE_FIELDS[@]}"
+  test "$(manifest_value "$manifest" schema_version)" = 1
+  test "$(manifest_value "$manifest" acceptance_id)" = "$ACCEPTANCE_ID"
+  systemd_version="$(systemctl --version | sed -n '1p')"
+  test -n "$systemd_version"
+  test "$(manifest_value "$manifest" systemd_version)" = "$systemd_version"
+  restart_status="$(manifest_value "$manifest" restart_status)"
+  [[ "$restart_status" =~ ^[1-9][0-9]*$ ]]
+  test "$restart_status" -le 255
+  test "$(manifest_value "$manifest" invocation_preserved)" = true
+  test "$(manifest_value "$manifest" cleanup_complete)" = true
+  [[ "$(manifest_value "$manifest" verified_at)" =~ \
+    ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+}
+
+publish_restart_guard_probe() {
+  local invocation_before
+  local invocation_after
+  local probe_active=false
+  local restart_status
+  local systemd_version
+  local temporary
+
+  if [[ -e "$RESTART_GUARD_PROBE_CHECKSUM" && ! -e "$RESTART_GUARD_PROBE" ]]; then
+    die 'restart guard probe checksum exists without its artifact'
+  fi
+  if [[ -e "$RESTART_GUARD_PROBE" ]]; then
+    validate_restart_guard_probe "$RESTART_GUARD_PROBE"
+    if [[ -e "$RESTART_GUARD_PROBE_CHECKSUM" ]]; then
+      verify_checksum "$RESTART_GUARD_PROBE" "$RESTART_GUARD_PROBE_CHECKSUM"
+    else
+      seal_in_place "$RESTART_GUARD_PROBE"
+    fi
+    return
+  fi
+
+  test "$(restart_guard_unit_property LoadState)" = not-found
+  systemd_version="$(systemctl --version | sed -n '1p')"
+  test -n "$systemd_version"
+  [[ "$systemd_version" != *$'\t'* && "$systemd_version" != *$'\n'* &&
+    "$systemd_version" != *$'\r'* ]]
+
+  restart_guard_probe_exit() {
+    local status="$?"
+    trap - EXIT
+    set +e
+    if [[ "$probe_active" = true ]]; then
+      cleanup_restart_guard_unit
+    fi
+    exit "$status"
+  }
+  trap restart_guard_probe_exit EXIT
+
+  probe_active=true
+  systemd-run --quiet \
+    --unit="$RESTART_GUARD_UNIT" \
+    --property=Type=exec \
+    --property=RefuseManualStop=yes \
+    --property=CollectMode=inactive-or-failed \
+    /usr/bin/sleep infinity
+  test "$(restart_guard_unit_property ActiveState)" = active
+  test "$(restart_guard_unit_property RefuseManualStop)" = yes
+  invocation_before="$(restart_guard_unit_property InvocationID)"
+  [[ "$invocation_before" =~ ^[0-9a-f]{32}$ ]]
+
+  set +e
+  systemctl restart "$RESTART_GUARD_UNIT" >/dev/null 2>&1
+  restart_status="$?"
+  set -e
+  test "$restart_status" -ne 0
+
+  test "$(restart_guard_unit_property ActiveState)" = active
+  test "$(restart_guard_unit_property RefuseManualStop)" = yes
+  invocation_after="$(restart_guard_unit_property InvocationID)"
+  test "$invocation_after" = "$invocation_before"
+
+  cleanup_restart_guard_unit
+  probe_active=false
+  trap - EXIT
+  test "$(restart_guard_unit_property LoadState)" = not-found
+
+  temporary="${RESTART_GUARD_PROBE}.$$.tmp"
+  (
+    set -o noclobber
+    {
+      printf 'schema_version\t1\n'
+      printf 'acceptance_id\t%s\n' "$ACCEPTANCE_ID"
+      printf 'systemd_version\t%s\n' "$systemd_version"
+      printf 'restart_status\t%s\n' "$restart_status"
+      printf 'invocation_preserved\ttrue\n'
+      printf 'cleanup_complete\ttrue\n'
+      printf 'verified_at\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } >"$temporary"
+  )
+  chmod 0400 "$temporary"
+  validate_restart_guard_probe "$temporary"
+  publish_artifact "$temporary" "$RESTART_GUARD_PROBE"
+  validate_restart_guard_probe "$RESTART_GUARD_PROBE"
+}
+
 validate_launch_manifest() {
   local manifest="$1"
 
+  validate_start_intent "$START_INTENT"
   require_ordered_manifest "$manifest" "${LAUNCH_FIELDS[@]}"
   test "$(manifest_value "$manifest" schema_version)" = 1
   test "$(manifest_value "$manifest" acceptance_id)" = "$ACCEPTANCE_ID"
@@ -345,6 +499,11 @@ validate_start_intent() {
     "$CONTROL_SHA256"
   test "$(manifest_value "$manifest" unit_fragment_sha256)" = \
     "$(sha256_file "$UNIT_FRAGMENT_ARCHIVE")"
+  verify_checksum "$RESTART_GUARD_PROBE" "$RESTART_GUARD_PROBE_CHECKSUM"
+  validate_restart_guard_probe "$RESTART_GUARD_PROBE"
+  verify_checksum "$PRELAUNCH_DESCRIPTOR" "${PRELAUNCH_DESCRIPTOR}.sha256"
+  test "$(manifest_value "$manifest" restart_guard_probe_sha256)" = \
+    "$(sha256_file "$RESTART_GUARD_PROBE")"
   test "$(manifest_value "$manifest" prelaunch_descriptor_sha256)" = \
     "$(sha256_file "$PRELAUNCH_DESCRIPTOR")"
 }
@@ -364,11 +523,13 @@ launch_acceptance() {
   local invocation_id
   local previous_invocation_id
   local started_at
+  local start_intent_created=false
   local temporary
 
   publish_unit_fragment_archive
   install_unit_fragment
   systemctl daemon-reload
+  publish_restart_guard_probe
   capture_effective_descriptor "$PRELAUNCH_DESCRIPTOR"
 
   if [[ -e "$LAUNCH_CHECKSUM" && ! -e "$LAUNCH_MANIFEST" ]]; then
@@ -415,16 +576,21 @@ launch_acceptance() {
         printf 'acceptance_control_sha256\t%s\n' "$CONTROL_SHA256"
         printf 'unit_fragment_sha256\t%s\n' \
           "$(sha256_file "$UNIT_FRAGMENT_ARCHIVE")"
+        printf 'restart_guard_probe_sha256\t%s\n' \
+          "$(sha256_file "$RESTART_GUARD_PROBE")"
         printf 'prelaunch_descriptor_sha256\t%s\n' \
           "$(sha256_file "$PRELAUNCH_DESCRIPTOR")"
       } >"$temporary"
     )
     publish_artifact "$temporary" "$START_INTENT"
     validate_start_intent "$START_INTENT"
+    start_intent_created=true
   fi
 
   if [[ "$active_state" = inactive ]]; then
     if [[ ! -e "$AUDIT_DIR" ]]; then
+      [[ "$start_intent_created" = true ]] ||
+        die 'inactive acceptance with existing start intent cannot be restarted'
       systemctl start "$ACCEPTANCE_UNIT"
     else
       test "$(unit_property Result)" = success

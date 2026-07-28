@@ -1550,6 +1550,16 @@ failure. Those failures never modify history markers.
 - **Existing avatar:** do not fetch or replace it.
 - **Requests-folder or other Meta omission:** impossible to infer; disclose
   the API boundary in the final report.
+- **Direct service restart during clone acceptance:** the protected unit
+  refuses explicit systemd stop/restart transactions, including the direct
+  `systemctl restart` path used by this host's Ubuntu `needrestart` APT hook.
+  This does not prevent dependency failure, process failure, forceful kill,
+  OOM termination, reboot, or shutdown. A terminated invocation keeps its
+  partial audit and isolated clone as unsealed forensic evidence only; never
+  adopt it, seal it after the fact, or restart it against the same paths.
+  Recovery requires investigation followed by a fresh acceptance id and fresh
+  audit/clone roots. The runbook documents a forceful emergency-abort path;
+  using it intentionally prevents terminal acceptance.
 
 ## Rejected alternatives
 
@@ -1591,6 +1601,21 @@ that parser while continuing to use Koala's HTTP and Graph behavior.
 Rejected because ordinary writes and jobs can overwrite data, emit events,
 replace avatars, log signed URLs, or introduce live-channel side effects.
 
+### Disable unattended upgrades or add an external needrestart exception
+
+Rejected because disabling the host timers delays security updates, while a
+temporary `/etc/needrestart/conf.d` exception is mutable host state outside the
+checksummed acceptance descriptor. The unit-local `RefuseManualStop=yes`
+property and its host conformance evidence are protected before launch and
+verified again after exit.
+
+### Add mid-probe checkpoint and resume state
+
+Rejected because the dry probe performs no product writes and a fresh isolated
+clone rerun is already safe. Durable per-thread resume state would add a second
+acceptance protocol without eliminating the need to protect later multi-hour
+clone stages from the same host restart.
+
 ### Enrich every target-inbox contact independently of Meta threads
 
 Rejected because it expands the migration beyond Meta-returned identities and
@@ -1612,7 +1637,9 @@ Bug-fix tests are written and run red before implementation:
 - an existing exact `Instagram user ####` remains unchanged today even when a
   profile name is available;
 - a broader apply against a predecessor archive configuration is rejected
-  today.
+  today; and
+- the generated acceptance unit currently omits the explicit-stop guard and
+  its effective descriptor/evidence.
 
 After implementation, focused specs must prove:
 
@@ -1626,6 +1653,17 @@ After implementation, focused specs must prove:
   storage, and selected-platform projection;
 - acceptance configuration errors fail before writer-lock acquisition, any
   Meta request, or any write;
+- the generated acceptance fragment contains exactly one
+  `[Unit] RefuseManualStop=yes`, fragment validation requires it,
+  `systemctl show` must return exact `yes`, and pre/post ordered descriptors
+  include the property so a mismatch blocks terminal acceptance;
+- the same-host disposable conformance preflight proves direct restart refusal
+  without invocation change, unsupported-property failure, complete cleanup,
+  and start-intent binding of its sealed systemd-version/outcome artifact and
+  the pre-launch descriptor;
+- an inactive unit with a pre-existing start intent, no launch manifest, and
+  no audit directory is never restarted; only the controller invocation that
+  just published the intent may issue the initial start;
 - unaccepted-probe mode is dry-only, canonical two-platform/all/
   `pre_presence`/deferred, rejects approval paths and direct acceptance, and
   generates or validates the frozen cutoff; approved mode requires the exact
@@ -1890,9 +1928,28 @@ apply:
     `daemon-reload`; drop-ins are forbidden. A checksummed pre-launch effective
     unit descriptor records the fragment path/SHA, exact-one `ExecStart`,
     explicit environment, empty environment-file/pass-environment sets, and
-    working directory. The same effective properties and fragment SHA are
-    re-read after exit and must match the pre-launch descriptor before the
-    invocation id and both program SHAs are bound into the terminal manifest.
+    working directory. The fragment requires exact
+    `[Unit] RefuseManualStop=yes`; fragment validation rejects its absence,
+    `systemctl show` must expose exact `yes`, and the ordered descriptor records
+    `refuse_manual_stop` as `yes`.
+    Before launching the real unit, the protected controller runs a disposable
+    conformance probe on the same host. It records the systemd version and
+    proves that a direct `systemctl restart` of a guarded disposable unit is
+    refused without changing its live invocation. Unsupported properties, a
+    changed invocation, an unexpected outcome, or incomplete disposable-unit
+    cleanup fail before clone/audit creation. The checksummed start intent
+    binds both the sealed probe-result SHA and pre-launch descriptor SHA.
+    This protection is deliberately limited to compliant explicit systemd
+    stop/restart jobs. It does not prevent dependency failure, process failure,
+    forceful kill, OOM termination, reboot, or shutdown. Those paths remain
+    fail-closed and cannot publish terminal acceptance.
+    If a sealed start intent exists without a launch manifest while the unit is
+    inactive and no audit directory exists, a later controller invocation
+    refuses to start it. Only the same controller process that just published
+    that intent may issue the initial `systemctl start`.
+    The same effective properties and fragment SHA are re-read after exit and
+    must match the intent-bound pre-launch descriptor before the invocation id
+    and both program SHAs are bound into the terminal manifest.
     The manifest also binds the merged commit/digest,
     clone/production database names, inbox, history/profile approvals, target
     manifest, clone baseline, final history/profile idempotency summaries, and
@@ -2037,9 +2094,13 @@ apply:
 23. Profile delivery and final audits use validate-and-skip only for a fully
     sealed, recursively valid result. A partial directory is resumed only
     through explicit monotonic publication stages; it is not deleted or
-    silently reused. Every referenced artifact and checksum is individually
-    fsynced before the terminal manifest/checksum pair is published, and the
-    containing directory is fsynced after every rename/publication boundary.
+    silently reused. For acceptance specifically, only a completed,
+    intent-bound successful unit invocation may resume an interrupted terminal
+    finalizer publication; an invocation terminated before success is
+    forensic-only and can never be finalized, adopted, or reused. Every
+    referenced artifact and checksum is individually fsynced before the
+    terminal manifest/checksum pair is published, and the containing directory
+    is fsynced after every rename/publication boundary.
     These byte-exact checksum and strict TSV rules apply to acceptance,
     history, profile, delivery-checkpoint, delivery-audit, and final-audit
     artifacts: checksum verification compares generated bytes with `cmp`, and

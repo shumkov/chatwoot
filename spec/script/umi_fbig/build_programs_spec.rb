@@ -219,6 +219,41 @@ RSpec.describe 'UMI FB/IG production program builder' do
     end
   end
 
+  it 'refuses to restart an inactive acceptance after intent publication' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+
+      bytes = File.binread(File.join(directory, 'fbig-acceptance-control.sh'))
+      expect(bytes).to include(
+        'local start_intent_created=false',
+        'start_intent_created=true',
+        '[[ "$start_intent_created" = true ]] ||',
+        'inactive acceptance with existing start intent cannot be restarted'
+      )
+    end
+  end
+
+  it 'refuses explicit acceptance restarts and binds same-host proof' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+
+      bytes = File.binread(File.join(directory, 'fbig-acceptance-control.sh'))
+      expect(bytes).to include(
+        "printf 'RefuseManualStop=yes\\n\\n'",
+        "grep -Fxq 'RefuseManualStop=yes'",
+        'refuse_manual_stop="$(unit_property RefuseManualStop)"',
+        "printf 'refuse_manual_stop\\tyes\\n'",
+        'fbig-acceptance-restart-guard-probe-v1.tsv',
+        'systemd-run',
+        'systemctl restart "$RESTART_GUARD_UNIT"',
+        'test "$restart_status" -ne 0',
+        'restart_guard_probe_sha256'
+      )
+    end
+  end
+
   it 'validates every root acceptance path before filesystem or Docker mutation' do
     Dir.mktmpdir do |directory|
       _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
