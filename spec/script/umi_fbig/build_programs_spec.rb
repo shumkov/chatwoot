@@ -78,7 +78,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
       source = File.join(repository_root, 'script/umi_fbig/support/fbig_profile_attempt.sh')
       expect(File.binread(generated)).to eq(File.binread(source))
       expect(Digest::SHA256.file(generated).hexdigest).to eq(
-        'ad5315b4385fddbe3def69828195f7b52068a3584ab59124d8d21ba9760911e7'
+        'd27ebf756ae4333ce1db94c7c665014a243efd771e00af2b863f4cf440babe7b'
       )
     end
   end
@@ -331,6 +331,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
         backup_dir: backup,
         history_cutoff: '2025-01-01T00:00:00Z',
         expected_instagram_unrecoverable_threads: 0,
+        expected_instagram_unavailable_message_threads: 2,
         profile_graph_delay_ms: 250,
         profile_max_conversation_pages: 10_000,
         profile_max_rate_limit_wait_seconds: 600,
@@ -480,8 +481,8 @@ RSpec.describe 'UMI FB/IG production program builder' do
         production_database: 'chatwoot_production',
         audit_root: '/protected/audit',
         inbox_id: 2,
-        history_approval: '/protected/history/fbig-approval-v1.tsv',
-        history_approval_checksum: '/protected/history/fbig-approval-v1.tsv.sha256',
+        history_approval: '/protected/history/fbig-approval-v2.tsv',
+        history_approval_checksum: '/protected/history/fbig-approval-v2.tsv.sha256',
         history_approval_sha256: 'd' * 64,
         acceptance_manifest: '/protected/acceptance/fbig-acceptance-complete-v1.tsv',
         acceptance_checksum: '/protected/acceptance/fbig-acceptance-complete-v1.tsv.sha256',
@@ -656,8 +657,124 @@ RSpec.describe 'UMI FB/IG production program builder' do
       expect(final_audit).to include(
         'MESSENGER_DRY_PAIR_SHA',
         'INSTAGRAM_DRY_PAIR_SHA',
-        'test "$(manifest_value "$result" dry_pair_sha256)" = none'
+        'test "$(manifest_value "$result" dry_pair_sha256)" = none',
+        'messenger_listed_threads',
+        'instagram_listed_threads',
+        'unavailable_message_thread_acceptance_mismatches',
+        '$((expected_structural + unavailable))',
+        '$((cursor_exhausted + classified + failed))'
       )
+    end
+  end
+
+  # rubocop:disable RSpec/ExampleLength
+  it 'rejects internally conserved history summaries that differ from the approved structural count' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    validator = history_attempt.match(
+      /^validate_history_terminal_summary\(\) \{.*?^\}/m
+    )[0]
+    shell = <<~BASH
+      set -Eeuo pipefail
+      die() { printf '%s\n' "$*" >&2; exit 1; }
+      manifest_value() {
+        case "$2" in
+          instagram_unavailable_message_thread_count) printf '2\n' ;;
+          instagram_unavailable_message_thread_fingerprint) printf '%064d\n' 0 ;;
+          *) exit 2 ;;
+        esac
+      }
+      stage_value() {
+        case "$3" in
+          platforms) printf 'instagram\n' ;;
+          dry_run) printf 'true\n' ;;
+          scan_complete) printf 'true\n' ;;
+          write_complete) printf 'not_applicable\n' ;;
+          contentless_acceptance_mismatches|unavailable_message_thread_acceptance_mismatches|exit_failures)
+            printf '0\n'
+            ;;
+          partially_paginated_threads|uncategorized_threads) printf '0\n' ;;
+          ambiguous_participants|structural_unrecoverable_threads) printf '%s\n' "$STRUCTURAL" ;;
+          unavailable_message_threads|instagram_unavailable_message_threads|instagram_unavailable_message_thread_count)
+            printf '2\n'
+            ;;
+          instagram_unavailable_message_thread_fingerprint) printf '%064d\n' 0 ;;
+          classified_omitted_threads|instagram_classified_omitted_threads) printf '%s\n' "$CLASSIFIED" ;;
+          failed_threads|instagram_failed_threads) printf '0\n' ;;
+          listed_threads|instagram_listed_threads) printf '748\n' ;;
+          message_cursor_exhausted_threads|instagram_message_cursor_exhausted_threads) printf '%s\n' "$CURSOR" ;;
+          instagram_structural_unrecoverable_threads) printf '%s\n' "$STRUCTURAL" ;;
+          *) exit 3 ;;
+        esac
+      }
+      HISTORY_APPROVAL=/approval
+      PLATFORMS=instagram
+      EXPECTED_STRUCTURAL_THREADS=1
+      #{validator}
+      validate_history_terminal_summary /summary true not_applicable
+    BASH
+
+    _stdout, stderr, status = Open3.capture3(
+      { 'STRUCTURAL' => '0', 'CLASSIFIED' => '2', 'CURSOR' => '746' },
+      'bash',
+      stdin_data: shell
+    )
+    expect(status).not_to be_success
+    expect(stderr).to include('history terminal summary platform accounting mismatch')
+
+    _stdout, stderr, status = Open3.capture3(
+      { 'STRUCTURAL' => '1', 'CLASSIFIED' => '3', 'CURSOR' => '745' },
+      'bash',
+      stdin_data: shell
+    )
+    expect(status).to be_success, stderr
+  end
+  # rubocop:enable RSpec/ExampleLength
+
+  it 'rejects a production envelope fingerprint change even when its count is unchanged' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    inspector = history_attempt.match(/^inspect_unrecoverable_envelopes\(\) \{.*?^\}/m)[0]
+
+    Dir.mktmpdir do |directory|
+      output = File.join(directory, 'unrecoverable-before.tsv')
+      File.write(output, "[UMI-FBIG] stage=unrecoverable_envelope_inspection count=1 fingerprint=observed\n")
+      shell = <<~BASH
+        set -Eeuo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        verify_checksum() { :; }
+        stage_value() {
+          case "$3" in
+            count) printf '1\n' ;;
+            fingerprint) printf 'observed\n' ;;
+            *) exit 2 ;;
+          esac
+        }
+        manifest_value() { printf '%s\n' "$EXPECTED_FINGERPRINT"; }
+        PLATFORMS=instagram
+        EXPECTED_STRUCTURAL_THREADS=1
+        IN_PROGRESS_DIRECTORY=#{directory}
+        UNRECOVERABLE_SIDECAR=/sidecar
+        #{inspector}
+        inspect_unrecoverable_envelopes #{output} before
+      BASH
+
+      _stdout, stderr, status = Open3.capture3(
+        { 'EXPECTED_FINGERPRINT' => 'approved' },
+        'bash',
+        stdin_data: shell
+      )
+      expect(status).not_to be_success
+      expect(stderr).to include('production unrecoverable-envelope inspection differs from acceptance')
+
+      _stdout, stderr, status = Open3.capture3(
+        { 'EXPECTED_FINGERPRINT' => 'observed' },
+        'bash',
+        stdin_data: shell
+      )
+      expect(status).to be_success, stderr
     end
   end
 

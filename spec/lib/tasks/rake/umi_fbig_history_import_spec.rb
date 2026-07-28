@@ -13,7 +13,7 @@ RSpec.describe 'umi:fbig:history_import' do
   let(:inbox) { create(:inbox, account: account, channel: channel) }
   let(:approval) do
     values = {
-      'schema_version' => '1',
+      'schema_version' => '2',
       'repository_commit' => 'a' * 40,
       'image_digest' => "ghcr.io/shumkov/chatwoot@sha256:#{'b' * 64}",
       'clone_backup_id' => '20260724T190000Z-0123456789abcdef',
@@ -33,6 +33,10 @@ RSpec.describe 'umi:fbig:history_import' do
       'messenger_fingerprint' => 'f' * 64,
       'instagram_count' => '0',
       'instagram_fingerprint' => '1' * 64,
+      'messenger_unavailable_message_thread_count' => '0',
+      'messenger_unavailable_message_thread_fingerprint' => '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa',
+      'instagram_unavailable_message_thread_count' => '2',
+      'instagram_unavailable_message_thread_fingerprint' => '3cd76b2a651ef9eab0883e3d7969b3257df34336dd44a2e7e3b05dc6c763042b',
       'placeholder_targets_sha256' => '2' * 64,
       'source_dry_log_sha256' => '3' * 64,
       'source_dry_summary_sha256' => '4' * 64,
@@ -58,6 +62,7 @@ RSpec.describe 'umi:fbig:history_import' do
       UMI_FBIG_APPROVAL_MANIFEST_PATH: nil,
       UMI_FBIG_APPROVAL_CHECKSUM_PATH: nil,
       UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS: nil,
+      UMI_FBIG_HISTORY_ACCEPTED_UNAVAILABLE_MESSAGE_THREADS: nil,
       UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: nil,
       UMI_FBIG_RUNTIME_IMAGE_DIGEST: nil,
       UMI_FBIG_HISTORY_EXPECTED_DATABASE: ActiveRecord::Base.connection_db_config.database,
@@ -177,6 +182,10 @@ RSpec.describe 'umi:fbig:history_import' do
         'messenger' => Umi::Fbig::ContentlessFingerprint.build(platform: 'messenger', mids: []),
         'instagram' => Umi::Fbig::ContentlessFingerprint.build(platform: 'instagram', mids: [])
       },
+      accepted_unavailable_message_threads: {
+        'messenger' => Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: 'messenger', records: []),
+        'instagram' => Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: 'instagram', records: [])
+      },
       profile_mode: 'defer',
       ack_expand_existing: false,
       max_download_bytes: nil,
@@ -205,8 +214,8 @@ RSpec.describe 'umi:fbig:history_import' do
       PLATFORMS: 'messenger',
       ACK_EXPAND_EXISTING: 'true',
       UMI_FBIG_HISTORY_APPROVAL_MODE: 'approved',
-      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v1.tsv',
-      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v1.tsv.sha256',
+      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v2.tsv',
+      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v2.tsv.sha256',
       UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: approval.repository_commit,
       UMI_FBIG_RUNTIME_IMAGE_DIGEST: approval.image_digest,
       UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES: '104857600'
@@ -225,6 +234,12 @@ RSpec.describe 'umi:fbig:history_import' do
       outbound_policy: 'pre_presence',
       accepted_contentless: {
         'messenger' => Umi::Fbig::ContentlessFingerprint::Result.new(count: 1, fingerprint: 'f' * 64)
+      },
+      accepted_unavailable_message_threads: {
+        'messenger' => Umi::Fbig::UnavailableMessageThreadFingerprint::Result.new(
+          count: 0,
+          fingerprint: '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa'
+        )
       },
       profile_mode: 'defer',
       ack_expand_existing: true,
@@ -312,8 +327,8 @@ RSpec.describe 'umi:fbig:history_import' do
       PLATFORMS: 'messenger',
       ACK_EXPAND_EXISTING: 'true',
       UMI_FBIG_HISTORY_APPROVAL_MODE: 'approved',
-      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v1.tsv',
-      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v1.tsv.sha256',
+      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v2.tsv',
+      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v2.tsv.sha256',
       UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: approval.repository_commit,
       UMI_FBIG_RUNTIME_IMAGE_DIGEST: approval.image_digest,
       UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES: '0'

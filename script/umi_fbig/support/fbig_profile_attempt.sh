@@ -599,8 +599,8 @@ run_profile_task() {
     --env UMI_FBIG_HISTORY_EXPECTED_DATABASE="$DATABASE_NAME" \
     --env DRY_RUN="$DRY_RUN" \
     --env PLATFORMS="$PLATFORMS" \
-    --env UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v1.tsv \
-    --env UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v1.tsv.sha256 \
+    --env UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv \
+    --env UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256 \
     --env UMI_FBIG_PROFILE_APPROVAL_MANIFEST_PATH=/run/fbig/profile/fbig-profile-approval-v1.tsv \
     --env UMI_FBIG_PROFILE_APPROVAL_CHECKSUM_PATH=/run/fbig/profile/fbig-profile-approval-v1.tsv.sha256 \
     --env UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_PATH=/run/fbig/backup/fbig-profile-pre-attempt-backup-v1.tsv \
@@ -805,8 +805,8 @@ if [[ "$PLATFORMS" == *instagram* ]]; then
 else
   [[ -z "$PROFILE_TARGETS" ]] || die "Messenger-only profile runs must not receive the target sidecar"
 fi
-require_root_artifact "$HISTORY_MANIFEST" fbig-approval-v1.tsv
-require_root_artifact "$HISTORY_CHECKSUM" fbig-approval-v1.tsv.sha256
+require_root_artifact "$HISTORY_MANIFEST" fbig-approval-v2.tsv
+require_root_artifact "$HISTORY_CHECKSUM" fbig-approval-v2.tsv.sha256
 require_root_artifact "$PROFILE_APPROVAL" fbig-profile-approval-v1.tsv
 require_root_artifact "$PROFILE_CHECKSUM" fbig-profile-approval-v1.tsv.sha256
 if [[ -n "$PROFILE_TARGETS" ]]; then
@@ -881,8 +881,8 @@ create_backup
 seal_attempt_binding
 elapsed="$(($(date +%s) - STARTED_EPOCH))"
 (( elapsed < MAX_WRITER_OUTAGE_SECONDS )) || die "writer outage ceiling reached before the task"
-require_root_artifact "$HISTORY_MANIFEST" fbig-approval-v1.tsv
-require_root_artifact "$HISTORY_CHECKSUM" fbig-approval-v1.tsv.sha256
+require_root_artifact "$HISTORY_MANIFEST" fbig-approval-v2.tsv
+require_root_artifact "$HISTORY_CHECKSUM" fbig-approval-v2.tsv.sha256
 require_root_artifact "$PROFILE_APPROVAL" fbig-profile-approval-v1.tsv
 require_root_artifact "$PROFILE_CHECKSUM" fbig-profile-approval-v1.tsv.sha256
 verify_checksum "$HISTORY_MANIFEST" "$HISTORY_CHECKSUM"

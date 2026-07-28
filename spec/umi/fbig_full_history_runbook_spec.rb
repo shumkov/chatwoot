@@ -18,6 +18,42 @@ RSpec.describe 'UMI FB/IG full-history runbook' do
     expect(runbook).to include('inspector_script_sha256')
   end
 
+  it 'binds exact release-bound unavailable-message omissions into approval and thread conservation' do
+    acceptance = File.read(File.join(program_directory, 'acceptance.sh'))
+    history_attempt = File.read(File.join(program_directory, 'history_attempt.sh'))
+    acceptance_control = File.read(File.join(program_directory, 'acceptance_control.sh'))
+    final_audit = File.read(File.join(program_directory, 'final_audit.sh'))
+
+    expect([runbook, acceptance, history_attempt, acceptance_control]).to all(include('fbig-approval-v2.tsv'))
+    expect([runbook, acceptance, history_attempt, acceptance_control].count do |artifact|
+      artifact.include?('fbig-approval-v1.tsv')
+    end).to be_zero
+    expect([runbook, acceptance]).to all(
+      include(
+        'messenger_unavailable_message_thread_count',
+        'messenger_unavailable_message_thread_fingerprint',
+        'instagram_unavailable_message_thread_count',
+        'instagram_unavailable_message_thread_fingerprint',
+        'unavailable_message_thread_acceptance_mismatches'
+      )
+    )
+    expect([runbook, acceptance, history_attempt, final_audit]).to all(
+      include(
+        'listed_threads',
+        'message_cursor_exhausted_threads',
+        'structural_unrecoverable_threads',
+        'unavailable_message_threads',
+        'classified_omitted_threads',
+        'partially_paginated_threads'
+      )
+    )
+    expect(final_audit).to include(
+      'messenger_unavailable_message_thread_fingerprint',
+      'instagram_unavailable_message_thread_fingerprint',
+      'unavailable_message_thread_acceptance_mismatches'
+    )
+  end
+
   it 'refuses to fingerprint an ambiguous envelope that has become recoverable' do
     inspector = runbook.match(
       /UNRECOVERABLE_INSPECTOR=.*?<<'RUBY'\n(?<body>.*?)\nRUBY/m
@@ -47,6 +83,13 @@ RSpec.describe 'UMI FB/IG full-history runbook' do
 
     expect(positions).to all(be_a(Integer))
     expect(positions).to eq(positions.sort)
+  end
+
+  it 'uses the platform-aware Graph message API in every embedded inspector' do
+    acceptance = File.read(File.join(program_directory, 'acceptance.sh'))
+
+    expect([runbook, acceptance]).to all(include("client.messages('instagram', thread_id)"))
+    expect([runbook, acceptance].count { |artifact| artifact.include?('client.messages(thread_id)') }).to be_zero
   end
 
   it 'brackets every Instagram-inclusive clone and production history run with exact envelope checks' do

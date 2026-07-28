@@ -249,8 +249,8 @@ RSpec.describe Umi::Fbig::ProfileTaskConfiguration do
 
   def common_env(attempt_directory, intent_directory)
     {
-      'UMI_FBIG_APPROVAL_MANIFEST_PATH' => '/history/fbig-approval-v1.tsv',
-      'UMI_FBIG_APPROVAL_CHECKSUM_PATH' => '/history/fbig-approval-v1.tsv.sha256',
+      'UMI_FBIG_APPROVAL_MANIFEST_PATH' => '/history/fbig-approval-v2.tsv',
+      'UMI_FBIG_APPROVAL_CHECKSUM_PATH' => '/history/fbig-approval-v2.tsv.sha256',
       'UMI_FBIG_RUNTIME_REPOSITORY_COMMIT' => commit,
       'UMI_FBIG_RUNTIME_IMAGE_DIGEST' => image,
       'UMI_FBIG_PROFILE_TARGETS_PATH' => '/history/fbig-profile-targets-v1.tsv',

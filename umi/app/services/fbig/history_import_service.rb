@@ -53,6 +53,7 @@ class Umi::Fbig::HistoryImportService
     :outbound_policy,
     :profile_mode,
     :accepted_contentless,
+    :accepted_unavailable_message_threads,
     :ack_expand_existing,
     :max_download_bytes,
     :graph_delay_ms,
@@ -68,6 +69,7 @@ class Umi::Fbig::HistoryImportService
     :outbound_policy,
     :profile_mode,
     :accepted_contentless,
+    :accepted_unavailable_message_threads,
     :ack_expand_existing,
     :max_download_bytes,
     :graph_delay_ms,
@@ -99,13 +101,16 @@ class Umi::Fbig::HistoryImportService
     max_message_pages: 10_000
   }.freeze
   STAT_KEYS = %i[
-    conversation_pages threads_scanned message_pages mids_scanned in_scope_mids_scanned out_of_scope_mids
+    conversation_pages threads_scanned listed_threads message_cursor_exhausted_threads message_pages mids_scanned
+    in_scope_mids_scanned out_of_scope_mids
     already_present previously_imported
     candidate_incoming candidate_outbound outbound_no_native_presence_import outbound_no_native_presence_skip
     outbound_pre_presence_import outbound_pre_presence_skip outbound_all_import outbound_all_skip details_fetched
     content_unavailable attachment_urls_found attachments_downloaded attachments_unsupported attachments_unavailable
     imported_contacts imported_archives imported_incoming imported_outgoing imported_messages imported_attachments
-    ambiguous_participants ambiguous_senders foreign_source_id_anomalies failed_threads platform_failures
+    ambiguous_participants ambiguous_senders structural_unrecoverable_threads unavailable_message_threads
+    classified_omitted_threads failed_threads partially_paginated_threads uncategorized_threads
+    foreign_source_id_anomalies platform_failures
     retry_exhaustion rate_limits authentication_failures lock_loss late_already_present reindex_jobs reindex_failures
     mirror_jobs projected_archives predecessor_archive_not_returned content_truncated detail_logs_suppressed exit_failures
     profile_requests profile_successes profile_unavailable profile_errors profile_changes_projected
@@ -113,6 +118,15 @@ class Umi::Fbig::HistoryImportService
     avatar_failures avatars_skipped_history_incomplete attachment_bytes avatar_bytes total_download_bytes
     download_budget_exhaustions marker_normalizations platforms_history_complete
     messenger_contentless_details instagram_contentless_details contentless_acceptance_mismatches
+    unavailable_message_thread_acceptance_mismatches
+    messenger_listed_threads instagram_listed_threads
+    messenger_message_cursor_exhausted_threads instagram_message_cursor_exhausted_threads
+    messenger_structural_unrecoverable_threads instagram_structural_unrecoverable_threads
+    messenger_unavailable_message_threads instagram_unavailable_message_threads
+    messenger_classified_omitted_threads instagram_classified_omitted_threads
+    messenger_failed_threads instagram_failed_threads
+    messenger_partially_paginated_threads instagram_partially_paginated_threads
+    messenger_uncategorized_threads instagram_uncategorized_threads
     history_evidence_changes_projected history_evidence_changes_applied
     messenger_history_evidence_changes_projected messenger_history_evidence_changes_applied
     instagram_history_evidence_changes_projected instagram_history_evidence_changes_applied
@@ -126,6 +140,8 @@ class Umi::Fbig::HistoryImportService
       raise ConfigurationError, 'DRY_RUN is required' if env['DRY_RUN'].nil?
       raise ConfigurationError, 'UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS is not a supported override' if
         env['UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS'].present?
+      raise ConfigurationError, 'UMI_FBIG_HISTORY_ACCEPTED_UNAVAILABLE_MESSAGE_THREADS is not a supported override' if
+        env['UMI_FBIG_HISTORY_ACCEPTED_UNAVAILABLE_MESSAGE_THREADS'].present?
 
       mode == 'unaccepted_probe' ? unaccepted_probe_envelope(env, now) : approved_envelope(env, now, expected_uid)
     rescue Umi::Fbig::HistoryApprovalManifest::InvalidManifest
@@ -170,6 +186,7 @@ class Umi::Fbig::HistoryImportService
         outbound_policy: 'pre_presence',
         profile_mode: 'defer',
         accepted_contentless: empty_contentless(platforms),
+        accepted_unavailable_message_threads: empty_unavailable_message_threads(platforms),
         ack_expand_existing: false,
         max_download_bytes: nil,
         **graph_task_options(env),
@@ -180,7 +197,10 @@ class Umi::Fbig::HistoryImportService
     def approved_envelope(env, now, expected_uid)
       dry_run = parse_boolean(env['DRY_RUN'], default: nil, name: 'DRY_RUN')
       platforms = parse_canonical_platforms!(env['PLATFORMS'])
-      reject_present!(env, %w[SINCE BEFORE OUTBOUND_POLICY PROFILE_MODE UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS])
+      reject_present!(env, %w[
+                        SINCE BEFORE OUTBOUND_POLICY PROFILE_MODE UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS
+                        UMI_FBIG_HISTORY_ACCEPTED_UNAVAILABLE_MESSAGE_THREADS
+                      ])
       approval = Umi::Fbig::HistoryApprovalManifest.load(
         manifest_path: env['UMI_FBIG_APPROVAL_MANIFEST_PATH'],
         checksum_path: env['UMI_FBIG_APPROVAL_CHECKSUM_PATH'],
@@ -214,6 +234,7 @@ class Umi::Fbig::HistoryImportService
         outbound_policy: approval.outbound_policy,
         profile_mode: approval.profile_mode,
         accepted_contentless: approval.accepted_contentless(platforms),
+        accepted_unavailable_message_threads: approval.accepted_unavailable_message_threads(platforms),
         ack_expand_existing: ack_expand_existing,
         max_download_bytes: max_download_bytes,
         **graph_task_options(env),
@@ -263,6 +284,12 @@ class Umi::Fbig::HistoryImportService
 
     def empty_contentless(platforms)
       platforms.index_with { |platform| Umi::Fbig::ContentlessFingerprint.build(platform: platform, mids: []) }
+    end
+
+    def empty_unavailable_message_threads(platforms)
+      platforms.index_with do |platform|
+        Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: [])
+      end
     end
 
     def exact_environment!(env, name, expected)
@@ -335,7 +362,7 @@ class Umi::Fbig::HistoryImportService
   def initialize(inbox, since:, before:, dry_run:, platforms:, outbound_policy:, graph_client: nil,
                  attachment_service: nil, logger: Rails.logger, run_id: SecureRandom.uuid, clock: -> { Time.current },
                  graph_options: nil, ack_expand_existing: false, max_download_bytes: nil, profile_service: nil,
-                 accepted_contentless: nil, profile_mode: 'inline')
+                 accepted_contentless: nil, accepted_unavailable_message_threads: nil, profile_mode: 'inline')
     @inbox = inbox
     @channel = inbox.channel
     @account = inbox.account
@@ -347,6 +374,10 @@ class Umi::Fbig::HistoryImportService
     @accepted_contentless_explicit = !accepted_contentless.nil?
     @accepted_contentless = accepted_contentless || platforms.index_with do |platform|
       Umi::Fbig::ContentlessFingerprint.build(platform: platform, mids: [])
+    end
+    @accepted_unavailable_message_threads_explicit = !accepted_unavailable_message_threads.nil?
+    @accepted_unavailable_message_threads = accepted_unavailable_message_threads || platforms.index_with do |platform|
+      Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: [])
     end
     @profile_mode = profile_mode
     @ack_expand_existing = ack_expand_existing
@@ -374,6 +405,7 @@ class Umi::Fbig::HistoryImportService
     @platform_history_complete = {}
     @contentless_mids = Hash.new { |hash, platform| hash[platform] = [] }
     @contentless_mid_sets = Hash.new { |hash, platform| hash[platform] = Set.new }
+    @unavailable_message_thread_records = Hash.new { |hash, platform| hash[platform] = [] }
   end
 
   def perform
@@ -417,6 +449,7 @@ class Umi::Fbig::HistoryImportService
     end
     @stats[:conversation_pages] += pages
     compare_contentless_acceptance!(platform)
+    compare_unavailable_message_thread_acceptance!(platform)
     record_archives_not_returned(platform)
     return if @dry_run || @history_failures[platform] != history_failures_before
 
@@ -444,16 +477,17 @@ class Umi::Fbig::HistoryImportService
 
   def process_thread(platform, thread)
     @stats[:threads_scanned] += 1
+    increment_platform_stat(platform, :listed_threads)
     thread_id = required_text!(thread['id'], ApplicationRecord::MAX_TEXT_COLUMN_LENGTH, :invalid_thread_id)
     participant = external_participant!(platform, thread)
-    result = graph_client.messages(thread_id, on_page: -> { renew_if_due! })
+    archive_exists = validate_existing_archive_for_scan!(platform, thread_id, participant['id'])
+    result = graph_client.messages(platform, thread_id, on_page: -> { renew_if_due! })
     @stats[:message_pages] += result.pages
     @stats[:mids_scanned] += result.items.size
 
     listings = in_scope_listings(result.items)
     @stats[:in_scope_mids_scanned] += listings.size
     @stats[:out_of_scope_mids] += result.items.size - listings.size
-    archive_exists = validate_existing_archive_for_scan!(platform, thread_id, participant['id'])
     existing_contact_inbox = @inbox.contact_inboxes.find_by(source_id: participant['id'])
     existing_profile_plan = profile_plan_for(platform, participant, listings, existing_contact_inbox.contact) if existing_contact_inbox
     begin
@@ -464,7 +498,7 @@ class Umi::Fbig::HistoryImportService
     end
     if candidates.empty?
       apply_existing_profile(existing_contact_inbox, existing_profile_plan) if existing_contact_inbox
-      log_detail(:thread_complete, platform: platform, thread_id: thread_id, candidates: 0, dry_run: @dry_run)
+      complete_thread(platform, thread_id, candidates: 0)
       return
     end
 
@@ -498,14 +532,16 @@ class Umi::Fbig::HistoryImportService
     if prepared.empty? || @dry_run
       @stats[:projected_archives] += 1 if @dry_run && prepared.present? && !archive_exists
       record_projected_profile_change(profile_plan) if @dry_run && profile_plan
-      log_detail(:thread_complete, platform: platform, thread_id: thread_id, candidates: prepared.size, dry_run: @dry_run)
+      complete_thread(platform, thread_id, candidates: prepared.size)
       return
     end
 
     import_thread(platform, thread_id, participant, prepared, profile_plan)
-    log_detail(:thread_complete, platform: platform, thread_id: thread_id, candidates: prepared.size, dry_run: false)
+    complete_thread(platform, thread_id, candidates: prepared.size)
   rescue LockError, Umi::Fbig::HistoryImportGraphClient::AuthenticationError
     raise
+  rescue Umi::Fbig::HistoryImportGraphClient::MessageConnectionUnavailableError => e
+    record_unavailable_message_thread(platform, thread_id, participant['id'], archive_exists, e)
   rescue Umi::Fbig::HistoryImportGraphClient::RequestError => e
     @scan_complete = false
     @stats[:retry_exhaustion] += 1
@@ -518,8 +554,12 @@ class Umi::Fbig::HistoryImportService
       fail_thread(platform, thread&.[]('id'), e.reason)
     end
   rescue StandardError => e
-    @scan_complete = false if e.is_a?(Umi::Fbig::HistoryImportGraphClient::PaginationError) ||
-                              e.is_a?(Koala::Facebook::APIError)
+    if e.is_a?(Umi::Fbig::HistoryImportGraphClient::PaginationError)
+      @scan_complete = false
+      increment_platform_stat(platform, :partially_paginated_threads)
+    elsif e.is_a?(Koala::Facebook::APIError)
+      @scan_complete = false
+    end
     fail_thread(platform, thread&.[]('id'), :exception, error: e.class.name)
   end
 
@@ -1543,8 +1583,11 @@ class Umi::Fbig::HistoryImportService
     raise ConfigurationError, 'profile mode must be inline or defer' unless @profile_mode.in?(%w[inline defer])
     raise ConfigurationError, 'accepted contentless details require pre_presence outbound policy' if
       @accepted_contentless_explicit && @outbound_policy != 'pre_presence'
+    raise ConfigurationError, 'accepted unavailable message threads require pre_presence outbound policy' if
+      @accepted_unavailable_message_threads_explicit && @outbound_policy != 'pre_presence'
 
     validate_accepted_contentless!
+    validate_accepted_unavailable_message_threads!
   end
 
   def validate_accepted_contentless!
@@ -1571,6 +1614,40 @@ class Umi::Fbig::HistoryImportService
     end
 
     @stats[:contentless_acceptance_mismatches] += 1
+    fail_write!
+    @abort_scan = true unless @dry_run
+  end
+
+  def validate_accepted_unavailable_message_threads!
+    accepted = @accepted_unavailable_message_threads
+    unless accepted.is_a?(Hash) && accepted.keys.sort == @platforms.sort
+      raise ConfigurationError, 'accepted unavailable message threads must cover exactly the selected platforms'
+    end
+
+    accepted.each do |platform, result|
+      valid = result.is_a?(Umi::Fbig::UnavailableMessageThreadFingerprint::Result) &&
+              result.count.is_a?(Integer) &&
+              result.count >= 0 &&
+              result.fingerprint.match?(/\A[0-9a-f]{64}\z/)
+      valid &&= result == Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: []) if
+        platform == 'messenger'
+      raise ConfigurationError, "invalid accepted unavailable message threads for #{platform}" unless valid
+    end
+  end
+
+  def compare_unavailable_message_thread_acceptance!(platform)
+    observed = Umi::Fbig::UnavailableMessageThreadFingerprint.build(
+      platform: platform,
+      records: @unavailable_message_thread_records[platform]
+    )
+    @stats[:"#{platform}_unavailable_message_thread_count"] = observed.count
+    @stats[:"#{platform}_unavailable_message_thread_fingerprint"] = observed.fingerprint
+    if observed == @accepted_unavailable_message_threads.fetch(platform)
+      @degraded = true if observed.count.positive?
+      return
+    end
+
+    @stats[:unavailable_message_thread_acceptance_mismatches] += 1
     fail_write!
     @abort_scan = true unless @dry_run
   end
@@ -1605,7 +1682,7 @@ class Umi::Fbig::HistoryImportService
   def fail_thread(platform, thread_id, reason, error: nil)
     @stats[:ambiguous_participants] += 1 if reason == :ambiguous_participants
     @stats[:ambiguous_senders] += 1 if reason == :ambiguous_sender
-    @stats[:failed_threads] += 1
+    increment_platform_stat(platform, :failed_threads)
     fail_write!
     fields = { platform: platform, thread_id: thread_id, reason: reason }
     fields[:error] = error if error
@@ -1614,9 +1691,32 @@ class Umi::Fbig::HistoryImportService
 
   def record_permanent_ambiguity(platform)
     @stats[:ambiguous_participants] += 1
-    @stats[:failed_threads] += 1
+    increment_platform_stat(platform, :structural_unrecoverable_threads)
+    increment_platform_stat(platform, :classified_omitted_threads)
     @degraded = true
     log_detail(:thread_omitted, platform: platform, reason: :ambiguous_participants)
+  end
+
+  def record_unavailable_message_thread(platform, thread_id, participant_id, archive_exists, error)
+    @unavailable_message_thread_records[platform] << {
+      'thread_id' => thread_id,
+      'external_participant_id' => participant_id,
+      'archive_present' => archive_exists
+    }.merge(error.to_h.stringify_keys)
+    increment_platform_stat(platform, :unavailable_message_threads)
+    increment_platform_stat(platform, :classified_omitted_threads)
+    @degraded = true
+    log_detail(:thread_omitted, platform: platform, reason: :message_connection_unavailable)
+  end
+
+  def complete_thread(platform, thread_id, candidates:)
+    increment_platform_stat(platform, :message_cursor_exhausted_threads)
+    log_detail(:thread_complete, platform: platform, thread_id: thread_id, candidates: candidates, dry_run: @dry_run)
+  end
+
+  def increment_platform_stat(platform, stat)
+    @stats[stat] += 1
+    @stats[:"#{platform}_#{stat}"] += 1
   end
 
   def history_archive_exists?(platform, thread_id)

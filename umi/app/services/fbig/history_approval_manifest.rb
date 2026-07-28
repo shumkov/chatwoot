@@ -3,7 +3,7 @@
 require 'digest'
 require 'pathname'
 
-# rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 class Umi::Fbig::HistoryApprovalManifest
   class InvalidManifest < StandardError; end
 
@@ -12,6 +12,8 @@ class Umi::Fbig::HistoryApprovalManifest
     database_dump_sha256 source_storage_manifest_sha256 restored_storage_manifest_sha256
     account_id inbox_id facebook_page_id instagram_business_id since before outbound_policy
     profile_mode messenger_count messenger_fingerprint instagram_count instagram_fingerprint
+    messenger_unavailable_message_thread_count messenger_unavailable_message_thread_fingerprint
+    instagram_unavailable_message_thread_count instagram_unavailable_message_thread_fingerprint
     placeholder_targets_sha256 source_dry_log_sha256 source_dry_summary_sha256 approved_by approved_at
   ].freeze
   SHA256_FIELDS = %w[
@@ -19,8 +21,14 @@ class Umi::Fbig::HistoryApprovalManifest
     placeholder_targets_sha256 source_dry_log_sha256 source_dry_summary_sha256
   ].freeze
   ID_FIELDS = %w[account_id inbox_id facebook_page_id instagram_business_id].freeze
-  COUNT_FIELDS = %w[messenger_count instagram_count].freeze
-  FINGERPRINT_FIELDS = %w[messenger_fingerprint instagram_fingerprint].freeze
+  COUNT_FIELDS = %w[
+    messenger_count instagram_count
+    messenger_unavailable_message_thread_count instagram_unavailable_message_thread_count
+  ].freeze
+  FINGERPRINT_FIELDS = %w[
+    messenger_fingerprint instagram_fingerprint
+    messenger_unavailable_message_thread_fingerprint instagram_unavailable_message_thread_fingerprint
+  ].freeze
   SHA256_PATTERN = /\A[0-9a-f]{64}\z/
   COUNT_PATTERN = /\A(?:0|[1-9][0-9]*)\z/
   MAX_COUNT = 2_147_483_647
@@ -56,8 +64,8 @@ class Umi::Fbig::HistoryApprovalManifest
   end
 
   def self.load(manifest_path:, checksum_path:, expected_uid: 0)
-    manifest = canonical_artifact_path!(manifest_path, 'fbig-approval-v1.tsv')
-    checksum = canonical_artifact_path!(checksum_path, 'fbig-approval-v1.tsv.sha256')
+    manifest = canonical_artifact_path!(manifest_path, 'fbig-approval-v2.tsv')
+    checksum = canonical_artifact_path!(checksum_path, 'fbig-approval-v2.tsv.sha256')
     raise InvalidManifest unless manifest.dirname == checksum.dirname
 
     verify_directory!(manifest.dirname, expected_uid)
@@ -111,6 +119,17 @@ class Umi::Fbig::HistoryApprovalManifest
     raise InvalidManifest
   end
 
+  def accepted_unavailable_message_threads(platforms)
+    platforms.index_with do |platform|
+      Umi::Fbig::UnavailableMessageThreadFingerprint::Result.new(
+        count: Integer(values.fetch("#{platform}_unavailable_message_thread_count"), 10),
+        fingerprint: values.fetch("#{platform}_unavailable_message_thread_fingerprint")
+      )
+    end
+  rescue KeyError
+    raise InvalidManifest
+  end
+
   class << self
     private
 
@@ -151,7 +170,7 @@ class Umi::Fbig::HistoryApprovalManifest
     end
 
     def validate!(values)
-      exact!(values, 'schema_version', '1')
+      exact!(values, 'schema_version', '2')
       pattern!(values, 'repository_commit', /\A[0-9a-f]{40}\z/)
       pattern!(values, 'image_digest', %r{\Aghcr\.io/shumkov/chatwoot@sha256:[0-9a-f]{64}\z})
       pattern!(values, 'clone_backup_id', /\A[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}\z/)
@@ -164,6 +183,9 @@ class Umi::Fbig::HistoryApprovalManifest
       exact!(values, 'profile_mode', 'defer')
       COUNT_FIELDS.each { |name| count!(values, name) }
       FINGERPRINT_FIELDS.each { |name| pattern!(values, name, SHA256_PATTERN) }
+      empty_messenger = Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: 'messenger', records: [])
+      exact!(values, 'messenger_unavailable_message_thread_count', empty_messenger.count.to_s)
+      exact!(values, 'messenger_unavailable_message_thread_fingerprint', empty_messenger.fingerprint)
       approved_by = values.fetch('approved_by')
       raise InvalidManifest if approved_by.strip.empty? || approved_by.bytesize > 255
 
@@ -198,4 +220,4 @@ class Umi::Fbig::HistoryApprovalManifest
     end
   end
 end
-# rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity

@@ -5,7 +5,8 @@ readonly ACCEPTANCE_BINDING_FIELDS=(
   schema_version acceptance_id inbox_id production_database clone_database
   candidate_commit candidate_image approved_by stack_dir audit_dir clone_storage
   production_storage backup_dir history_cutoff
-  expected_instagram_unrecoverable_threads profile_graph_delay_ms
+  expected_instagram_unrecoverable_threads
+  expected_instagram_unavailable_message_threads profile_graph_delay_ms
   profile_max_conversation_pages profile_max_rate_limit_wait_seconds
   profile_max_download_bytes history_max_download_bytes storage_helper
   storage_helper_sha256 ops_dir acceptance_unit unit_fragment_path
@@ -40,6 +41,11 @@ readonly START_INTENT_FIELDS=(
 readonly RESTART_GUARD_PROBE_FIELDS=(
   schema_version acceptance_id systemd_version restart_status
   invocation_preserved cleanup_complete verified_at
+)
+readonly UNRECOVERABLE_SIDECAR_FIELDS=(
+  schema_version repository_commit image_digest account_id inbox_id
+  instagram_business_id before platform count fingerprint
+  inspector_script_sha256 approved_by approved_at
 )
 
 [[ "$ACTION" =~ ^(launch|finalize)$ ]] || die 'action must be launch|finalize'
@@ -636,12 +642,64 @@ launch_acceptance() {
 validate_history_terminal_summary() {
   local summary="$1"
   local platform="$2"
+  local approval="$AUDIT_DIR/history-approval/fbig-approval-v2.tsv"
+  local sidecar="$AUDIT_DIR/history-approval/fbig-unrecoverable-envelope-v1.tsv"
+  local unavailable_count
+  local expected_structural_count=0
+  local structural_count
+  local classified_count
+  local failed_count
+  local listed_count
+  local cursor_exhausted_count
   local counter
 
   require_root_artifact "$summary"
+  unavailable_count="$(
+    manifest_value "$approval" "${platform}_unavailable_message_thread_count"
+  )"
+  if test "$platform" = instagram; then
+    expected_structural_count="$(manifest_value "$sidecar" count)"
+  fi
+  structural_count="$(
+    stage_value "$summary" history_import_summary structural_unrecoverable_threads
+  )"
+  classified_count="$(
+    stage_value "$summary" history_import_summary classified_omitted_threads
+  )"
+  failed_count="$(stage_value "$summary" history_import_summary failed_threads)"
+  listed_count="$(stage_value "$summary" history_import_summary listed_threads)"
+  cursor_exhausted_count="$(
+    stage_value "$summary" history_import_summary message_cursor_exhausted_threads
+  )"
   test "$(stage_value "$summary" history_import_summary platforms)" = "$platform"
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
+  test "$structural_count" = "$expected_structural_count"
+  test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
+    "$expected_structural_count"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_structural_unrecoverable_threads")" = "$expected_structural_count"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$unavailable_count"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_unavailable_message_threads")" = "$unavailable_count"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_unavailable_message_thread_count")" = "$unavailable_count"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_unavailable_message_thread_fingerprint")" = \
+    "$(manifest_value "$approval" "${platform}_unavailable_message_thread_fingerprint")"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_classified_omitted_threads")" = "$classified_count"
+  test "$(stage_value "$summary" history_import_summary "${platform}_failed_threads")" = \
+    "$failed_count"
+  test "$(stage_value "$summary" history_import_summary "${platform}_listed_threads")" = \
+    "$listed_count"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_message_cursor_exhausted_threads")" = "$cursor_exhausted_count"
+  test "$classified_count" -eq "$((structural_count + unavailable_count))"
+  test "$failed_count" = 0
+  test "$listed_count" -eq \
+    "$((cursor_exhausted_count + classified_count + failed_count))"
   for counter in \
     imported_contacts imported_archives imported_incoming imported_outgoing \
     imported_messages imported_attachments marker_normalizations \
@@ -649,7 +707,9 @@ validate_history_terminal_summary() {
     messenger_history_evidence_changes_applied \
     instagram_history_evidence_changes_applied \
     profile_changes_applied avatars_attached avatars_raced \
-    contentless_acceptance_mismatches ambiguous_senders \
+    contentless_acceptance_mismatches \
+    unavailable_message_thread_acceptance_mismatches ambiguous_senders \
+    partially_paginated_threads uncategorized_threads \
     foreign_source_id_anomalies platform_failures retry_exhaustion \
     authentication_failures lock_loss reindex_failures \
     download_budget_exhaustions exit_failures; do
@@ -780,7 +840,7 @@ seal_audit_tree() {
 
 validate_terminal_manifest() {
   local manifest="$1"
-  local history_approval="$AUDIT_DIR/history-approval/fbig-approval-v1.tsv"
+  local history_approval="$AUDIT_DIR/history-approval/fbig-approval-v2.tsv"
   local profile_approval="$AUDIT_DIR/profile-approval/fbig-profile-approval-v1.tsv"
   local profile_targets="$AUDIT_DIR/profile-targets/fbig-profile-targets-v1.tsv"
   local clone_baseline="$AUDIT_DIR/clone-scoped-baseline.txt"
@@ -849,7 +909,7 @@ validate_terminal_manifest() {
 }
 
 publish_terminal_manifest() {
-  local history_approval="$AUDIT_DIR/history-approval/fbig-approval-v1.tsv"
+  local history_approval="$AUDIT_DIR/history-approval/fbig-approval-v2.tsv"
   local profile_approval="$AUDIT_DIR/profile-approval/fbig-profile-approval-v1.tsv"
   local profile_targets="$AUDIT_DIR/profile-targets/fbig-profile-targets-v1.tsv"
   local clone_baseline="$AUDIT_DIR/clone-scoped-baseline.txt"
@@ -931,7 +991,7 @@ publish_terminal_manifest() {
 }
 
 finalize_acceptance() {
-  local history_approval="$AUDIT_DIR/history-approval/fbig-approval-v1.tsv"
+  local history_approval="$AUDIT_DIR/history-approval/fbig-approval-v2.tsv"
   local profile_approval="$AUDIT_DIR/profile-approval/fbig-profile-approval-v1.tsv"
   local profile_targets="$AUDIT_DIR/profile-targets/fbig-profile-targets-v1.tsv"
   local clone_baseline="$AUDIT_DIR/clone-scoped-baseline.txt"
@@ -969,6 +1029,7 @@ finalize_acceptance() {
     "$profile_approval" "${profile_approval}.sha256" \
     "$profile_targets" "$clone_baseline" \
     "$messenger_summary" "$instagram_summary" "$profile_summary" \
+    "$AUDIT_DIR/fbig-unrecoverable-envelope-inspector.rb" \
     "$profile_directory/fbig-profile-clone-prestate-v1.tsv" \
     "$profile_directory/fbig-profile-clone-prestate-v1.tsv.sha256" \
     "$profile_directory/fbig-profile-clone-poststate-v1.tsv" \
@@ -979,6 +1040,7 @@ finalize_acceptance() {
   verify_checksum "$history_approval" "${history_approval}.sha256"
   verify_checksum "$profile_approval" "${profile_approval}.sha256"
   verify_checksum "$sidecar" "${sidecar}.sha256"
+  require_ordered_manifest "$sidecar" "${UNRECOVERABLE_SIDECAR_FIELDS[@]}"
 
   test "$(manifest_value "$history_approval" repository_commit)" = "$APP_COMMIT"
   test "$(manifest_value "$history_approval" image_digest)" = "$APP_DIGEST"
@@ -998,6 +1060,16 @@ finalize_acceptance() {
     "$(sha256_file "$profile_targets")"
   test "$(manifest_value "$profile_approval" clone_profile_idempotency_summary_sha256)" = \
     "$(sha256_file "$profile_summary")"
+  test "$(manifest_value "$sidecar" repository_commit)" = "$APP_COMMIT"
+  test "$(manifest_value "$sidecar" image_digest)" = "$APP_DIGEST"
+  test "$(manifest_value "$sidecar" inbox_id)" = "$INBOX_ID"
+  test "$(manifest_value "$sidecar" before)" = \
+    "$(manifest_value "$history_approval" before)"
+  test "$(manifest_value "$sidecar" platform)" = instagram
+  test "$(manifest_value "$sidecar" count)" = \
+    "$(manifest_value "$ACCEPTANCE_BINDING" expected_instagram_unrecoverable_threads)"
+  test "$(manifest_value "$sidecar" inspector_script_sha256)" = \
+    "$(sha256_file "$AUDIT_DIR/fbig-unrecoverable-envelope-inspector.rb")"
 
   validate_history_terminal_summary "$messenger_summary" messenger
   validate_history_terminal_summary "$instagram_summary" instagram

@@ -5,8 +5,8 @@ Messenger and Instagram conversation and message that Meta still exposes,
 creates no empty archive, and then enriches the resulting contacts without
 overwriting existing names, usernames, profile fields, or avatars.
 
-Meta can permanently omit old message bodies, attachments, profiles, or whole
-threads. Those omissions are reported and approved by exact aggregate
+Meta can omit old message bodies, attachments, profiles, or whole threads for
+a particular release and Graph response. Those omissions are reported and approved by exact aggregate
 fingerprints; they are never replaced with invented messages or user data.
 
 The accepted release is an immutable
@@ -54,13 +54,16 @@ The execution order is:
 4. run two Messenger dry attempts and two Instagram dry attempts, then bind
    each byte-identical successful pair into that platform's apply bindings;
 5. run Messenger apply attempts until a separate Messenger attempt proves
-   zero writes, then do the same for Instagram;
+   zero writes, then do the same for Instagram; every Instagram attempt seals
+   exact accepted-envelope inspections immediately before and after the
+   importer, while Messenger requires zero structural omissions;
 6. run profile dry/apply attempts, with a new overlapping checkpoint and
    sealed delivery audit after every maintenance window, until a profile
    attempt proves zero writes; and
 7. run `fbig-final-audit.sh`, which validates the complete result/checkpoint
-   chains and seals concrete per-platform totals from one repeatable-read live
-   database snapshot.
+   chains and seals concrete per-platform totals, unavailable-message
+   fingerprints, and thread-conservation counters from one repeatable-read
+   live database snapshot.
 
 An interrupted history or profile host process is finalized through its
 program's `finalize` action before a successor can start. The current R4 clone
@@ -101,6 +104,8 @@ Stop immediately if any of these is true:
 - an apply binding does not carry two distinct, successful, byte-identical
   dry-result artifacts for its selected platform;
 - a history run reports a new contentless count/fingerprint;
+- a history run reports a different unavailable-message thread
+  count/fingerprint or violates thread conservation;
 - the exact unrecoverable-envelope count/fingerprint differs before or after
   any Instagram-inclusive history stage;
 - a history apply does not use `PROFILE_MODE=defer` from the approval;
@@ -137,6 +142,7 @@ PROFILE_DIR="$AUDIT_DIR/profile-approval"
 TARGET_DIR="$AUDIT_DIR/profile-targets"
 CLONE_ROOT="$(dirname "$CLONE_STORAGE")"
 EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS='1'
+EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS='2'
 
 test "$(id -u)" -eq 0
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]]
@@ -148,6 +154,7 @@ test -n "$APPROVED_BY"
 [[ "$APPROVED_BY" != *$'\t'* && "$APPROVED_BY" != *$'\n'* && "$APPROVED_BY" != *$'\r'* ]]
 test "$(printf '%s' "$APPROVED_BY" | wc -c)" -le 255
 test "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS" = 1
+test "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS" = 2
 test ! -e "$AUDIT_DIR"
 test ! -L "$AUDIT_DIR"
 mkdir -p "$AUDIT_DIR"
@@ -201,7 +208,7 @@ The immutable input artifacts are:
 
 - `fbig-profile-targets-v1.tsv`: exactly six sorted
   `contact_inbox_id<TAB>contact_id<TAB>source_id` rows;
-- `fbig-approval-v1.tsv` plus `.sha256`: the exact 25-field
+- `fbig-approval-v2.tsv` plus `.sha256`: the exact 29-field
   `HistoryApprovalManifest::FIELD_NAMES` order;
 - `fbig-unrecoverable-envelope-v1.tsv` plus `.sha256`: the strict
   release/scope/cutoff-bound pseudonymous exception evidence chained through
@@ -222,6 +229,7 @@ must bind:
 - `since=all`, the frozen cutoff, `outbound_policy=pre_presence`, and
   `profile_mode=defer`;
 - both exact contentless count/fingerprints;
+- both exact unavailable-message thread count/fingerprints;
 - the strict unrecoverable-envelope sidecar checksum through the source probe
   log hash;
 - the six-row target SHA; and
@@ -888,7 +896,7 @@ conversation_pages = client.each_thread('instagram') do |thread|
   external = participants.reject { |participant| participant.fetch('business') }
   next if external.size == 1
 
-  result = client.messages(thread_id)
+  result = client.messages('instagram', thread_id)
   message_pages += result.pages
   mids = Set.new
   messages = result.items.filter_map do |listing|
@@ -1048,18 +1056,40 @@ cmp -s \
 CONTENTLESS_MISMATCHES="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary contentless_acceptance_mismatches
 )"
+UNAVAILABLE_MESSAGE_MISMATCHES="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary \
+    unavailable_message_thread_acceptance_mismatches
+)"
 EXIT_FAILURES="$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary exit_failures)"
 AMBIGUOUS_PARTICIPANTS="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary ambiguous_participants
 )"
+STRUCTURAL_UNRECOVERABLE_THREADS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary structural_unrecoverable_threads
+)"
+UNAVAILABLE_MESSAGE_THREADS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary unavailable_message_threads
+)"
+CLASSIFIED_OMITTED_THREADS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary classified_omitted_threads
+)"
 FAILED_THREADS="$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary failed_threads)"
 [[ "$CONTENTLESS_MISMATCHES" =~ ^[1-9][0-9]*$ ]]
-test "$EXIT_FAILURES" = "$CONTENTLESS_MISMATCHES"
+test "$UNAVAILABLE_MESSAGE_MISMATCHES" = 1
+test "$EXIT_FAILURES" -eq "$((CONTENTLESS_MISMATCHES + UNAVAILABLE_MESSAGE_MISMATCHES))"
 test "$AMBIGUOUS_PARTICIPANTS" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
-test "$FAILED_THREADS" = "$AMBIGUOUS_PARTICIPANTS"
+test "$STRUCTURAL_UNRECOVERABLE_THREADS" = "$AMBIGUOUS_PARTICIPANTS"
+test "$UNAVAILABLE_MESSAGE_THREADS" = "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+test "$CLASSIFIED_OMITTED_THREADS" -eq \
+  "$((STRUCTURAL_UNRECOVERABLE_THREADS + UNAVAILABLE_MESSAGE_THREADS))"
+test "$FAILED_THREADS" = 0
+test "$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary listed_threads)" -eq \
+  "$(( $(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary message_cursor_exhausted_threads) + \
+       CLASSIFIED_OMITTED_THREADS + FAILED_THREADS ))"
 test "$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary scan_complete)" = true
 for counter in \
-  ambiguous_senders platform_failures retry_exhaustion authentication_failures lock_loss \
+  ambiguous_senders partially_paginated_threads uncategorized_threads \
+  platform_failures retry_exhaustion authentication_failures lock_loss \
   profile_requests profile_successes profile_unavailable profile_errors \
   profile_changes_projected profile_changes_applied avatars_offered avatars_preserved \
   avatars_attached avatars_raced avatars_unavailable avatar_failures \
@@ -1073,10 +1103,12 @@ test "$(stat -c '%u:%a:%h' "$HISTORY_PROBE_SUMMARY")" = "0:400:1"
 The inspector emits no digest unless the ambiguous envelope still has exactly
 one business-only participant, one business-sent in-scope message listing and
 detail, no recipients, a blank body, and no supported or omitted attachment.
-The only allowed exit failure above is exact contentless-set mismatch. The
-single `failed_threads` count is independently bound to that exact
-unrecoverable envelope by the matching pre/post inspection. Review the
-per-platform counts/fingerprints, then construct the strict sidecar and
+The only allowed exit failures above are the two exact approval-set
+mismatches. Structural and API-unavailable threads are classified omissions,
+not failed threads, and the listed-thread conservation equation must close.
+The structural omission is independently bound to its exact unrecoverable
+envelope by the matching pre/post inspection. Review the per-platform
+counts/fingerprints, then construct the strict sidecar and
 approval in their exact field order. Every provenance hash is recomputed from
 its immutable artifact, the full random-suffixed coordinated backup ID is
 copied byte for byte, and permissions are sealed before the in-image loader
@@ -1170,6 +1202,18 @@ INSTAGRAM_CONTENTLESS_COUNT="$(
 INSTAGRAM_CONTENTLESS_FINGERPRINT="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary instagram_contentless_fingerprint
 )"
+MESSENGER_UNAVAILABLE_MESSAGE_COUNT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary messenger_unavailable_message_thread_count
+)"
+MESSENGER_UNAVAILABLE_MESSAGE_FINGERPRINT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary messenger_unavailable_message_thread_fingerprint
+)"
+INSTAGRAM_UNAVAILABLE_MESSAGE_COUNT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary instagram_unavailable_message_thread_count
+)"
+INSTAGRAM_UNAVAILABLE_MESSAGE_FINGERPRINT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary instagram_unavailable_message_thread_fingerprint
+)"
 
 test "$DATABASE_DUMP_SHA256" = "$(manifest_value "$BACKUP_MANIFEST" database_dump_sha256)"
 test "$SOURCE_STORAGE_MANIFEST_SHA256" = \
@@ -1179,18 +1223,23 @@ test "$SOURCE_STORAGE_MANIFEST_SHA256" = \
 [[ "$INSTAGRAM_CONTENTLESS_COUNT" =~ ^(0|[1-9][0-9]*)$ ]]
 [[ "$MESSENGER_CONTENTLESS_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 [[ "$INSTAGRAM_CONTENTLESS_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+test "$MESSENGER_UNAVAILABLE_MESSAGE_COUNT" = 0
+test "$INSTAGRAM_UNAVAILABLE_MESSAGE_COUNT" = \
+  "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+[[ "$MESSENGER_UNAVAILABLE_MESSAGE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+[[ "$INSTAGRAM_UNAVAILABLE_MESSAGE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 test "$UNRECOVERABLE_COUNT" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
 [[ "$UNRECOVERABLE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 [[ "$INSPECTOR_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
 
-HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
-HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v2.tsv"
+HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v2.tsv.sha256"
 test ! -e "$HISTORY_APPROVAL"
 test ! -e "$HISTORY_APPROVAL_CHECKSUM"
 (
   set -o noclobber
   {
-    printf 'schema_version\t1\n'
+    printf 'schema_version\t2\n'
     printf 'repository_commit\t%s\n' "$APP_COMMIT"
     printf 'image_digest\t%s\n' "$APP_DIGEST"
     printf 'clone_backup_id\t%s\n' "$BACKUP_ID"
@@ -1210,6 +1259,14 @@ test ! -e "$HISTORY_APPROVAL_CHECKSUM"
     printf 'messenger_fingerprint\t%s\n' "$MESSENGER_CONTENTLESS_FINGERPRINT"
     printf 'instagram_count\t%s\n' "$INSTAGRAM_CONTENTLESS_COUNT"
     printf 'instagram_fingerprint\t%s\n' "$INSTAGRAM_CONTENTLESS_FINGERPRINT"
+    printf 'messenger_unavailable_message_thread_count\t%s\n' \
+      "$MESSENGER_UNAVAILABLE_MESSAGE_COUNT"
+    printf 'messenger_unavailable_message_thread_fingerprint\t%s\n' \
+      "$MESSENGER_UNAVAILABLE_MESSAGE_FINGERPRINT"
+    printf 'instagram_unavailable_message_thread_count\t%s\n' \
+      "$INSTAGRAM_UNAVAILABLE_MESSAGE_COUNT"
+    printf 'instagram_unavailable_message_thread_fingerprint\t%s\n' \
+      "$INSTAGRAM_UNAVAILABLE_MESSAGE_FINGERPRINT"
     printf 'placeholder_targets_sha256\t%s\n' "$PLACEHOLDER_TARGETS_SHA256"
     printf 'source_dry_log_sha256\t%s\n' "$SOURCE_DRY_LOG_SHA256"
     printf 'source_dry_summary_sha256\t%s\n' "$SOURCE_DRY_SUMMARY_SHA256"
@@ -1240,8 +1297,8 @@ clone_compose run --rm --no-deps -T \
   rails bundle exec rails runner '
     require "digest"
     manifest = Umi::Fbig::HistoryApprovalManifest.load(
-      manifest_path: "/run/fbig/history/fbig-approval-v1.tsv",
-      checksum_path: "/run/fbig/history/fbig-approval-v1.tsv.sha256"
+      manifest_path: "/run/fbig/history/fbig-approval-v2.tsv",
+      checksum_path: "/run/fbig/history/fbig-approval-v2.tsv.sha256"
     )
     targets = Umi::Fbig::ProfileTargetManifest.load(
       path: "/run/fbig/targets/fbig-profile-targets-v1.tsv",
@@ -1301,8 +1358,8 @@ history_run() {
   clone_compose run --rm --no-deps -T \
     --volume "$HISTORY_DIR:/run/fbig/history:ro" \
     -e UMI_FBIG_HISTORY_APPROVAL_MODE=approved \
-    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v1.tsv \
-    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v1.tsv.sha256 \
+    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv \
+    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256 \
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$CLONE_DATABASE" \
     -e UMI_FBIG_RUNTIME_REPOSITORY_COMMIT="$APP_COMMIT" \
     -e UMI_FBIG_RUNTIME_IMAGE_DIGEST="$APP_DIGEST" \
@@ -1333,7 +1390,7 @@ normalize_history_summary() {
     {
       output = ""
       for (field = 1; field <= NF; field += 1) {
-        if ($field ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
+        if ($field ~ /^(contentless_acceptance_mismatches|unavailable_message_thread_acceptance_mismatches|exit_failures)=/) continue
         output = output (output == "" ? "" : " ") $field
       }
       print output
@@ -1347,11 +1404,15 @@ validate_history_apply_summary() {
   local platforms="$3"
   local expected_degraded=false
   local expected_ambiguous=0
+  local expected_unavailable=0
+  local expected_classified
   local observed_degraded
   local attachments_unavailable
   local platform
   local approved_count
   local approved_fingerprint
+  local approved_unavailable_count
+  local approved_unavailable_fingerprint
   local observed_count
   local observed_fingerprint
   local -a selected_platforms
@@ -1361,19 +1422,18 @@ validate_history_apply_summary() {
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
+  test "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
   if [[ ",$platforms," == *,instagram,* ]]; then
     expected_ambiguous="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
   fi
   test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
     "$expected_ambiguous"
-  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+  test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
     "$expected_ambiguous"
-  if [[ "$expected_ambiguous" != 0 ]]; then
-    expected_degraded=true
-  fi
   for counter in \
-    ambiguous_senders foreign_source_id_anomalies \
+    ambiguous_senders partially_paginated_threads uncategorized_threads \
+    foreign_source_id_anomalies \
     platform_failures retry_exhaustion authentication_failures \
     lock_loss reindex_failures download_budget_exhaustions; do
     test "$(stage_value "$summary" history_import_summary "$counter")" = 0
@@ -1382,10 +1442,10 @@ validate_history_apply_summary() {
   IFS=',' read -r -a selected_platforms <<<"$platforms"
   for platform in "${selected_platforms[@]}"; do
     approved_count="$(
-      manifest_value "$HISTORY_DIR/fbig-approval-v1.tsv" "${platform}_count"
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" "${platform}_count"
     )"
     approved_fingerprint="$(
-      manifest_value "$HISTORY_DIR/fbig-approval-v1.tsv" "${platform}_fingerprint"
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" "${platform}_fingerprint"
     )"
     observed_count="$(
       stage_value "$summary" history_import_summary "${platform}_contentless_details"
@@ -1397,10 +1457,36 @@ validate_history_apply_summary() {
     [[ "$approved_fingerprint" =~ ^[0-9a-f]{64}$ ]]
     test "$observed_count" = "$approved_count"
     test "$observed_fingerprint" = "$approved_fingerprint"
-    if [[ "$approved_count" != 0 ]]; then
+    approved_unavailable_count="$(
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" \
+        "${platform}_unavailable_message_thread_count"
+    )"
+    approved_unavailable_fingerprint="$(
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" \
+        "${platform}_unavailable_message_thread_fingerprint"
+    )"
+    test "$(stage_value "$summary" history_import_summary \
+      "${platform}_unavailable_message_thread_count")" = "$approved_unavailable_count"
+    test "$(stage_value "$summary" history_import_summary \
+      "${platform}_unavailable_message_thread_fingerprint")" = \
+      "$approved_unavailable_fingerprint"
+    expected_unavailable="$((expected_unavailable + approved_unavailable_count))"
+    if [[ "$approved_count" != 0 || "$approved_unavailable_count" != 0 ]]; then
       expected_degraded=true
     fi
   done
+  expected_classified="$((expected_ambiguous + expected_unavailable))"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$expected_unavailable"
+  test "$(stage_value "$summary" history_import_summary classified_omitted_threads)" = \
+    "$expected_classified"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary listed_threads)" -eq \
+    "$(( $(stage_value "$summary" history_import_summary message_cursor_exhausted_threads) + \
+         expected_classified ))"
+  if [[ "$expected_classified" != 0 ]]; then
+    expected_degraded=true
+  fi
 
   attachments_unavailable="$(
     stage_value "$summary" history_import_summary attachments_unavailable
@@ -1457,12 +1543,24 @@ accepted_history_dry_run() {
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = not_applicable
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
+  test "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
   test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
     "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
-  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+  test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
     "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+  test "$(stage_value "$summary" history_import_summary classified_omitted_threads)" -eq \
+    "$(( $(manifest_value "$UNRECOVERABLE_SIDECAR" count) + \
+         EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS ))"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary listed_threads)" -eq \
+    "$(( $(stage_value "$summary" history_import_summary message_cursor_exhausted_threads) + \
+         $(stage_value "$summary" history_import_summary classified_omitted_threads) ))"
   test "$(stage_value "$summary" history_import_summary ambiguous_senders)" = 0
+  test "$(stage_value "$summary" history_import_summary partially_paginated_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary uncategorized_threads)" = 0
   normalize_history_summary "$summary" >"$normalized"
   chmod 0400 "$log" "$summary" "$normalized"
 }
@@ -1665,8 +1763,8 @@ clone_profile_run() {
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$CLONE_DATABASE" \
     -e PLATFORMS=messenger,instagram \
     -e DRY_RUN="$dry_run" \
-    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v1.tsv \
-    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v1.tsv.sha256 \
+    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv \
+    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256 \
     -e UMI_FBIG_PROFILE_TARGETS_PATH=/run/fbig/targets/fbig-profile-targets-v1.tsv \
     -e UMI_FBIG_PROFILE_STATE_PATH=/run/fbig/state/fbig-profile-state-v1.tsv \
     -e UMI_FBIG_PROFILE_STATE_CHECKSUM_PATH=/run/fbig/state/fbig-profile-state-v1.tsv.sha256 \
@@ -2002,8 +2100,8 @@ clone_compose run --rm --no-deps -T \
   rails bundle exec rails runner '
     require "digest"
     history = Umi::Fbig::HistoryApprovalManifest.load(
-      manifest_path: "/run/fbig/history/fbig-approval-v1.tsv",
-      checksum_path: "/run/fbig/history/fbig-approval-v1.tsv.sha256"
+      manifest_path: "/run/fbig/history/fbig-approval-v2.tsv",
+      checksum_path: "/run/fbig/history/fbig-approval-v2.tsv.sha256"
     )
     profile = Umi::Fbig::ProfileApprovalManifest.load(
       manifest_path: "/run/fbig/profile/fbig-profile-approval-v1.tsv",
@@ -2130,7 +2228,7 @@ HISTORY_DIR="$AUDIT_DIR/history-approval"
 PROFILE_DIR="$AUDIT_DIR/profile-approval"
 TARGET_DIR="$AUDIT_DIR/profile-targets"
 CLONE_BASELINE="$AUDIT_DIR/clone-scoped-baseline.txt"
-HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
+HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v2.tsv"
 PROFILE_APPROVAL="$PROFILE_DIR/fbig-profile-approval-v1.tsv"
 UNRECOVERABLE_SIDECAR="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv"
 IDEMPOTENCY_ATTEMPT="$AUDIT_DIR/clone-profile/idempotency"
@@ -2268,6 +2366,8 @@ for counter in \
   history_evidence_changes_applied messenger_history_evidence_changes_applied \
   instagram_history_evidence_changes_applied profile_changes_applied \
   avatars_attached avatars_raced contentless_acceptance_mismatches \
+  unavailable_message_thread_acceptance_mismatches \
+  partially_paginated_threads uncategorized_threads \
   ambiguous_senders foreign_source_id_anomalies platform_failures \
   retry_exhaustion authentication_failures lock_loss reindex_failures \
   download_budget_exhaustions exit_failures; do
@@ -2276,6 +2376,22 @@ for counter in \
       history_import_summary "$counter"
   )" = 0
 done
+EXPECTED_CLASSIFIED_OMISSIONS="$(
+  (
+    manifest_value "$UNRECOVERABLE_SIDECAR" count
+    manifest_value "$HISTORY_APPROVAL" messenger_unavailable_message_thread_count
+    manifest_value "$HISTORY_APPROVAL" instagram_unavailable_message_thread_count
+  ) | awk '{ total += $1 } END { print total + 0 }'
+)"
+test "$(stage_value "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+  history_import_summary failed_threads)" = 0
+test "$(stage_value "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+  history_import_summary classified_omitted_threads)" = "$EXPECTED_CLASSIFIED_OMISSIONS"
+test "$(stage_value "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+  history_import_summary listed_threads)" -eq \
+  "$(( $(stage_value "$AUDIT_DIR/history-all-idempotency-summary.tsv" \
+           history_import_summary message_cursor_exhausted_threads) + \
+       EXPECTED_CLASSIFIED_OMISSIONS ))"
 for counter in \
   scalar_changes_applied name_changes_applied username_changes_applied \
   optional_changes_applied avatars_attached avatar_bytes mirror_jobs \
@@ -2603,6 +2719,7 @@ UNRECOVERABLE_SIDECAR="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv"
 UNRECOVERABLE_SIDECAR_CHECKSUM="$HISTORY_DIR/fbig-unrecoverable-envelope-v1.tsv.sha256"
 HISTORY_PROBE_LOG="$AUDIT_DIR/history-probe.log"
 EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS='1'
+EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS='2'
 R4_ACCEPTANCE_UNIT='<same loaded acceptance unit>'
 R4_ACCEPTANCE_INVOCATION_ID='<same 32 lowercase hex invocation id>'
 R4_ACCEPTANCE_EXEC_SCRIPT='<exact unit ExecStart script path>'
@@ -2625,6 +2742,7 @@ test "$(id -u)" -eq 0
 [[ "$R4_ACCEPTANCE_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$R4_ACCEPTANCE_FINALIZER_SHA256" =~ ^[0-9a-f]{64}$ ]]
 test "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS" = 1
+test "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS" = 2
 test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=LoadState --value)" = loaded
 test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=ActiveState --value)" = inactive
 test "$(systemctl show "$R4_ACCEPTANCE_UNIT" --property=SubState --value)" = dead
@@ -2689,8 +2807,8 @@ for path in \
   "$AUDIT_DIR/history-dry-1-summary-normalized.tsv" \
   "$HISTORY_PROBE_LOG" "$UNRECOVERABLE_INSPECTOR" \
   "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM" \
-  "$HISTORY_DIR/fbig-approval-v1.tsv" \
-  "$HISTORY_DIR/fbig-approval-v1.tsv.sha256" \
+  "$HISTORY_DIR/fbig-approval-v2.tsv" \
+  "$HISTORY_DIR/fbig-approval-v2.tsv.sha256" \
   "$PROFILE_DIR/fbig-profile-approval-v1.tsv" \
   "$PROFILE_DIR/fbig-profile-approval-v1.tsv.sha256" \
   "$TARGET_DIR/fbig-profile-targets-v1.tsv" \
@@ -2760,7 +2878,7 @@ test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" production_database_name)" = \
   "$PRODUCTION_DATABASE"
 test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" inbox_id)" = "$INBOX_ID"
 test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" history_approval_sha256)" = \
-  "$(sha256_file "$HISTORY_DIR/fbig-approval-v1.tsv")"
+  "$(sha256_file "$HISTORY_DIR/fbig-approval-v2.tsv")"
 test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" profile_approval_sha256)" = \
   "$(sha256_file "$PROFILE_DIR/fbig-profile-approval-v1.tsv")"
 test "$(manifest_value "$R4_ACCEPTANCE_MANIFEST" profile_targets_sha256)" = \
@@ -2802,8 +2920,8 @@ stage_value() {
   ' "$path"
 }
 
-HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
-HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v2.tsv"
+HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v2.tsv.sha256"
 verify_checksum "$HISTORY_APPROVAL" "$HISTORY_APPROVAL_CHECKSUM"
 verify_checksum "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM"
 EXPECTED_UNRECOVERABLE_FIELDS=(
@@ -2874,7 +2992,7 @@ normalize_history_summary() {
     {
       output = ""
       for (field = 1; field <= NF; field += 1) {
-        if ($field ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
+        if ($field ~ /^(contentless_acceptance_mismatches|unavailable_message_thread_acceptance_mismatches|exit_failures)=/) continue
         output = output (output == "" ? "" : " ") $field
       }
       print output
@@ -2914,11 +3032,15 @@ validate_history_apply_summary() {
   local platforms="$3"
   local expected_degraded=false
   local expected_ambiguous=0
+  local expected_unavailable=0
+  local expected_classified
   local observed_degraded
   local attachments_unavailable
   local platform
   local approved_count
   local approved_fingerprint
+  local approved_unavailable_count
+  local approved_unavailable_fingerprint
   local observed_count
   local observed_fingerprint
   local -a selected_platforms
@@ -2928,19 +3050,18 @@ validate_history_apply_summary() {
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
+  test "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
   if [[ ",$platforms," == *,instagram,* ]]; then
     expected_ambiguous="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
   fi
   test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
     "$expected_ambiguous"
-  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+  test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
     "$expected_ambiguous"
-  if [[ "$expected_ambiguous" != 0 ]]; then
-    expected_degraded=true
-  fi
   for counter in \
-    ambiguous_senders foreign_source_id_anomalies \
+    ambiguous_senders partially_paginated_threads uncategorized_threads \
+    foreign_source_id_anomalies \
     platform_failures retry_exhaustion authentication_failures \
     lock_loss reindex_failures download_budget_exhaustions; do
     test "$(stage_value "$summary" history_import_summary "$counter")" = 0
@@ -2949,10 +3070,10 @@ validate_history_apply_summary() {
   IFS=',' read -r -a selected_platforms <<<"$platforms"
   for platform in "${selected_platforms[@]}"; do
     approved_count="$(
-      manifest_value "$HISTORY_DIR/fbig-approval-v1.tsv" "${platform}_count"
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" "${platform}_count"
     )"
     approved_fingerprint="$(
-      manifest_value "$HISTORY_DIR/fbig-approval-v1.tsv" "${platform}_fingerprint"
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" "${platform}_fingerprint"
     )"
     observed_count="$(
       stage_value "$summary" history_import_summary "${platform}_contentless_details"
@@ -2964,10 +3085,36 @@ validate_history_apply_summary() {
     [[ "$approved_fingerprint" =~ ^[0-9a-f]{64}$ ]]
     test "$observed_count" = "$approved_count"
     test "$observed_fingerprint" = "$approved_fingerprint"
-    if [[ "$approved_count" != 0 ]]; then
+    approved_unavailable_count="$(
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" \
+        "${platform}_unavailable_message_thread_count"
+    )"
+    approved_unavailable_fingerprint="$(
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" \
+        "${platform}_unavailable_message_thread_fingerprint"
+    )"
+    test "$(stage_value "$summary" history_import_summary \
+      "${platform}_unavailable_message_thread_count")" = "$approved_unavailable_count"
+    test "$(stage_value "$summary" history_import_summary \
+      "${platform}_unavailable_message_thread_fingerprint")" = \
+      "$approved_unavailable_fingerprint"
+    expected_unavailable="$((expected_unavailable + approved_unavailable_count))"
+    if [[ "$approved_count" != 0 || "$approved_unavailable_count" != 0 ]]; then
       expected_degraded=true
     fi
   done
+  expected_classified="$((expected_ambiguous + expected_unavailable))"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$expected_unavailable"
+  test "$(stage_value "$summary" history_import_summary classified_omitted_threads)" = \
+    "$expected_classified"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary listed_threads)" -eq \
+    "$(( $(stage_value "$summary" history_import_summary message_cursor_exhausted_threads) + \
+         expected_classified ))"
+  if [[ "$expected_classified" != 0 ]]; then
+    expected_degraded=true
+  fi
 
   attachments_unavailable="$(
     stage_value "$summary" history_import_summary attachments_unavailable
@@ -3236,8 +3383,8 @@ production_history_run_with_verification() {
   local normalized="$AUDIT_DIR/production-history-$label-summary-normalized.tsv"
   local arguments=(
     "$INBOX_ID" "$dry_run" "$platforms"
-    "$HISTORY_DIR/fbig-approval-v1.tsv"
-    "$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+    "$HISTORY_DIR/fbig-approval-v2.tsv"
+    "$HISTORY_DIR/fbig-approval-v2.tsv.sha256"
   )
   local statuses
   local sealed=false
@@ -3299,12 +3446,24 @@ production_history_run_with_verification() {
     test "$(stage_value "$summary" history_import_summary scan_complete)" = true
     test "$(stage_value "$summary" history_import_summary write_complete)" = not_applicable
     test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
+    test "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0
     test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
     test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
       "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
-    test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+    test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
       "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+    test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+      "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+    test "$(stage_value "$summary" history_import_summary classified_omitted_threads)" -eq \
+      "$(( $(manifest_value "$UNRECOVERABLE_SIDECAR" count) + \
+           EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS ))"
+    test "$(stage_value "$summary" history_import_summary failed_threads)" = 0
+    test "$(stage_value "$summary" history_import_summary listed_threads)" -eq \
+      "$(( $(stage_value "$summary" history_import_summary message_cursor_exhausted_threads) + \
+           $(stage_value "$summary" history_import_summary classified_omitted_threads) ))"
     test "$(stage_value "$summary" history_import_summary ambiguous_senders)" = 0
+    test "$(stage_value "$summary" history_import_summary partially_paginated_threads)" = 0
+    test "$(stage_value "$summary" history_import_summary uncategorized_threads)" = 0
     if [[ -e "$normalized" ]]; then
       require_root_artifact "$normalized" "$(basename "$normalized")"
     else
@@ -3728,8 +3887,8 @@ run_profile_attempt_phase() {
   local wrapper_log="$result_directory/fbig-profile-wrapper.log"
   local arguments=(
     "$INBOX_ID" "$dry_run" "$platforms"
-    "$HISTORY_DIR/fbig-approval-v1.tsv"
-    "$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+    "$HISTORY_DIR/fbig-approval-v2.tsv"
+    "$HISTORY_DIR/fbig-approval-v2.tsv.sha256"
     "$PROFILE_APPROVAL" "$PROFILE_APPROVAL_CHECKSUM"
   )
   local statuses

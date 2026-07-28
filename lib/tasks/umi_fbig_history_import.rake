@@ -51,6 +51,7 @@ namespace :umi do
         outbound_policy: options.outbound_policy,
         profile_mode: options.profile_mode,
         accepted_contentless: options.accepted_contentless,
+        accepted_unavailable_message_threads: options.accepted_unavailable_message_threads,
         ack_expand_existing: options.ack_expand_existing,
         max_download_bytes: options.max_download_bytes,
         graph_options: graph_options

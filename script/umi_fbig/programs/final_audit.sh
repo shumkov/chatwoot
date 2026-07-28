@@ -33,6 +33,7 @@ readonly HISTORY_RESULT_FIELDS=(
   history_approval_sha256 acceptance_sha256 pre_history_backup_sha256
   dry_pair_sha256 attempt_identity_sha256 compose_override_sha256
   attachment_reconcile_start_sha256 prestate_sha256
+  unrecoverable_before_sha256 unrecoverable_after_sha256
   attachment_reconcile_final_sha256 poststate_sha256 release_schema_sha256
   finalizer_release_schema_sha256 run_log_sha256 run_summary_sha256
   exit_status_artifact_sha256 comparison_log_sha256 delta_sha256 exit_status
@@ -124,6 +125,10 @@ readonly LIVE_COUNT_FIELDS=(
 readonly PLATFORM_COUNT_FIELDS=(
   schema_version
   messenger_conversation_pages_scanned messenger_threads_scanned
+  messenger_listed_threads messenger_message_cursor_exhausted_threads
+  messenger_structural_unrecoverable_threads
+  messenger_unavailable_message_threads messenger_classified_omitted_threads
+  messenger_failed_threads messenger_unavailable_message_thread_fingerprint
   messenger_message_pages_scanned messenger_message_ids_scanned
   messenger_out_of_scope_message_ids messenger_already_present
   messenger_candidate_incoming messenger_candidate_outgoing
@@ -151,6 +156,10 @@ readonly PLATFORM_COUNT_FIELDS=(
   messenger_profile_targets_success
   messenger_profile_targets_unavailable messenger_profile_targets_blocking
   instagram_conversation_pages_scanned instagram_threads_scanned
+  instagram_listed_threads instagram_message_cursor_exhausted_threads
+  instagram_structural_unrecoverable_threads
+  instagram_unavailable_message_threads instagram_classified_omitted_threads
+  instagram_failed_threads instagram_unavailable_message_thread_fingerprint
   instagram_message_pages_scanned instagram_message_ids_scanned
   instagram_out_of_scope_message_ids instagram_already_present
   instagram_candidate_incoming instagram_candidate_outgoing
@@ -384,6 +393,18 @@ validate_history_result() {
     test "$(manifest_value "$result" run_summary_sha256)" = \
       "$(sha256_file "$artifact")"
   fi
+  for field in unrecoverable_before unrecoverable_after; do
+    artifact="$directory/${field//_/-}.tsv"
+    if [[ "$(manifest_value "$result" platforms)" = instagram ]]; then
+      verify_checksum "$artifact" "${artifact}.sha256"
+      test "$(manifest_value "$result" "${field}_sha256")" = \
+        "$(sha256_file "$artifact")"
+    else
+      test "$(manifest_value "$result" "${field}_sha256")" = none
+      test ! -e "$artifact"
+      test ! -e "${artifact}.sha256"
+    fi
+  done
 }
 
 validate_profile_result() {
@@ -506,6 +527,12 @@ validate_terminal_summary() {
   local imported_outgoing
   local late_already_present
   local contentless
+  local expected_structural=0
+  local unavailable
+  local classified
+  local failed
+  local listed
+  local cursor_exhausted
   local counter
 
   summary="$(dirname "$result")/history-summary.tsv"
@@ -528,6 +555,18 @@ validate_terminal_summary() {
   contentless="$(
     stage_value "$summary" history_import_summary "${platform}_contentless_details"
   )"
+  if test "$platform" = instagram; then
+    expected_structural="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  fi
+  unavailable="$(
+    manifest_value "$HISTORY_APPROVAL" "${platform}_unavailable_message_thread_count"
+  )"
+  classified="$(stage_value "$summary" history_import_summary classified_omitted_threads)"
+  failed="$(stage_value "$summary" history_import_summary failed_threads)"
+  listed="$(stage_value "$summary" history_import_summary listed_threads)"
+  cursor_exhausted="$(
+    stage_value "$summary" history_import_summary message_cursor_exhausted_threads
+  )"
   test "$in_scope" = \
     "$((already_present + candidate_incoming + candidate_outbound))"
   test "$candidate_outbound" = "$((outbound_import + outbound_skip))"
@@ -536,13 +575,40 @@ validate_terminal_summary() {
   test "$imported_messages" = "$((imported_incoming + imported_outgoing))"
   test "$(stage_value "$summary" history_import_summary content_unavailable)" = \
     "$contentless"
+  test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
+    "$expected_structural"
+  test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
+    "$expected_structural"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$unavailable"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_unavailable_message_thread_fingerprint")" = \
+    "$(manifest_value "$HISTORY_APPROVAL" \
+      "${platform}_unavailable_message_thread_fingerprint")"
+  test "$(stage_value "$summary" history_import_summary "${platform}_listed_threads")" = \
+    "$listed"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_message_cursor_exhausted_threads")" = "$cursor_exhausted"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_structural_unrecoverable_threads")" = "$expected_structural"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_unavailable_message_threads")" = "$unavailable"
+  test "$(stage_value "$summary" history_import_summary \
+    "${platform}_classified_omitted_threads")" = "$classified"
+  test "$(stage_value "$summary" history_import_summary "${platform}_failed_threads")" = \
+    "$failed"
+  test "$classified" -eq "$((expected_structural + unavailable))"
+  test "$failed" = 0
+  test "$listed" -eq "$((cursor_exhausted + classified + failed))"
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   for counter in \
     imported_contacts imported_archives imported_incoming imported_outgoing \
     imported_messages imported_attachments marker_normalizations \
     history_evidence_changes_applied profile_changes_applied avatars_attached \
-    avatars_raced contentless_acceptance_mismatches ambiguous_senders \
+    avatars_raced contentless_acceptance_mismatches \
+    unavailable_message_thread_acceptance_mismatches ambiguous_senders \
+    partially_paginated_threads uncategorized_threads \
     foreign_source_id_anomalies platform_failures retry_exhaustion \
     authentication_failures lock_loss reindex_failures \
     download_budget_exhaustions exit_failures; do
@@ -1144,6 +1210,14 @@ PLATFORM_COUNTS_TEMP="$STAGING_DIRECTORY/fbig-production-platform-counts-v1.tsv"
       "$(stage_value "$terminal_summary" history_import_summary conversation_pages)"
     printf '%s_threads_scanned\t%s\n' "$platform" \
       "$(stage_value "$terminal_summary" history_import_summary threads_scanned)"
+    for field in \
+      listed_threads message_cursor_exhausted_threads \
+      structural_unrecoverable_threads unavailable_message_threads \
+      classified_omitted_threads failed_threads \
+      unavailable_message_thread_fingerprint; do
+      printf '%s_%s\t%s\n' "$platform" "$field" \
+        "$(stage_value "$terminal_summary" history_import_summary "${platform}_${field}")"
+    done
     printf '%s_message_pages_scanned\t%s\n' "$platform" \
       "$(stage_value "$terminal_summary" history_import_summary message_pages)"
     printf '%s_message_ids_scanned\t%s\n' "$platform" \

@@ -4,7 +4,8 @@ readonly ACCEPTANCE_BINDING_FIELDS=(
   schema_version acceptance_id inbox_id production_database clone_database
   candidate_commit candidate_image approved_by stack_dir audit_dir clone_storage
   production_storage backup_dir history_cutoff
-  expected_instagram_unrecoverable_threads profile_graph_delay_ms
+  expected_instagram_unrecoverable_threads
+  expected_instagram_unavailable_message_threads profile_graph_delay_ms
   profile_max_conversation_pages profile_max_rate_limit_wait_seconds
   profile_max_download_bytes history_max_download_bytes storage_helper
   storage_helper_sha256 ops_dir acceptance_unit unit_fragment_path
@@ -30,6 +31,9 @@ CUTOFF="$(manifest_value "$ACCEPTANCE_BINDING" history_cutoff)"
 EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS="$(
   manifest_value "$ACCEPTANCE_BINDING" expected_instagram_unrecoverable_threads
 )"
+EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS="$(
+  manifest_value "$ACCEPTANCE_BINDING" expected_instagram_unavailable_message_threads
+)"
 PROFILE_GRAPH_DELAY_MS="$(manifest_value "$ACCEPTANCE_BINDING" profile_graph_delay_ms)"
 PROFILE_MAX_CONVERSATION_PAGES="$(
   manifest_value "$ACCEPTANCE_BINDING" profile_max_conversation_pages
@@ -50,7 +54,8 @@ STORAGE_HELPER_SHA256="$(
 readonly ACCEPTANCE_ID INBOX_ID PRODUCTION_DATABASE CLONE_DATABASE APP_COMMIT
 readonly APP_DIGEST APPROVED_BY STACK_DIR AUDIT_DIR CLONE_STORAGE
 readonly PRODUCTION_STORAGE BACKUP_DIR CUTOFF
-readonly EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS PROFILE_GRAPH_DELAY_MS
+readonly EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS
+readonly EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS PROFILE_GRAPH_DELAY_MS
 readonly PROFILE_MAX_CONVERSATION_PAGES PROFILE_MAX_RATE_LIMIT_WAIT_SECONDS
 readonly PROFILE_MAX_DOWNLOAD_BYTES HISTORY_MAX_DOWNLOAD_BYTES
 readonly STORAGE_HELPER STORAGE_HELPER_SHA256
@@ -73,6 +78,7 @@ test -n "$APPROVED_BY"
 [[ "$APPROVED_BY" != *$'\t'* && "$APPROVED_BY" != *$'\n'* && "$APPROVED_BY" != *$'\r'* ]]
 test "$(printf '%s' "$APPROVED_BY" | wc -c)" -le 255
 [[ "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS" =~ ^[0-9]+$ ]]
+[[ "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS" =~ ^[0-9]+$ ]]
 test "$ACCEPTANCE_ID" = "$(basename "$AUDIT_DIR")"
 test "$(basename "$CLONE_ROOT")" = "$ACCEPTANCE_ID"
 test "$(basename "$CLONE_STORAGE")" = storage
@@ -593,7 +599,7 @@ conversation_pages = client.each_thread('instagram') do |thread|
   external = participants.reject { |participant| participant.fetch('business') }
   next if external.size == 1
 
-  result = client.messages(thread_id)
+  result = client.messages('instagram', thread_id)
   message_pages += result.pages
   mids = Set.new
   messages = result.items.filter_map do |listing|
@@ -759,18 +765,40 @@ chmod 0400 "$HISTORY_PROBE_LOG" "$HISTORY_PROBE_SUMMARY"
 CONTENTLESS_MISMATCHES="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary contentless_acceptance_mismatches
 )"
+UNAVAILABLE_MESSAGE_MISMATCHES="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary \
+    unavailable_message_thread_acceptance_mismatches
+)"
 EXIT_FAILURES="$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary exit_failures)"
 AMBIGUOUS_PARTICIPANTS="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary ambiguous_participants
 )"
+STRUCTURAL_UNRECOVERABLE_THREADS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary structural_unrecoverable_threads
+)"
+UNAVAILABLE_MESSAGE_THREADS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary unavailable_message_threads
+)"
+CLASSIFIED_OMITTED_THREADS="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary classified_omitted_threads
+)"
 FAILED_THREADS="$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary failed_threads)"
 [[ "$CONTENTLESS_MISMATCHES" =~ ^[1-9][0-9]*$ ]]
-test "$EXIT_FAILURES" = "$CONTENTLESS_MISMATCHES"
+test "$UNAVAILABLE_MESSAGE_MISMATCHES" = 1
+test "$EXIT_FAILURES" -eq "$((CONTENTLESS_MISMATCHES + UNAVAILABLE_MESSAGE_MISMATCHES))"
 test "$AMBIGUOUS_PARTICIPANTS" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
-test "$FAILED_THREADS" = "$AMBIGUOUS_PARTICIPANTS"
+test "$STRUCTURAL_UNRECOVERABLE_THREADS" = "$AMBIGUOUS_PARTICIPANTS"
+test "$UNAVAILABLE_MESSAGE_THREADS" = "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+test "$CLASSIFIED_OMITTED_THREADS" -eq \
+  "$((STRUCTURAL_UNRECOVERABLE_THREADS + UNAVAILABLE_MESSAGE_THREADS))"
+test "$FAILED_THREADS" = 0
+test "$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary listed_threads)" -eq \
+  "$(( $(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary message_cursor_exhausted_threads) + \
+       CLASSIFIED_OMITTED_THREADS + FAILED_THREADS ))"
 test "$(stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary scan_complete)" = true
 for counter in \
-  ambiguous_senders platform_failures retry_exhaustion authentication_failures lock_loss \
+  ambiguous_senders partially_paginated_threads uncategorized_threads \
+  platform_failures retry_exhaustion authentication_failures lock_loss \
   profile_requests profile_successes profile_unavailable profile_errors \
   profile_changes_projected profile_changes_applied avatars_offered avatars_preserved \
   avatars_attached avatars_raced avatars_unavailable avatar_failures \
@@ -867,6 +895,18 @@ INSTAGRAM_CONTENTLESS_COUNT="$(
 INSTAGRAM_CONTENTLESS_FINGERPRINT="$(
   stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary instagram_contentless_fingerprint
 )"
+MESSENGER_UNAVAILABLE_MESSAGE_COUNT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary messenger_unavailable_message_thread_count
+)"
+MESSENGER_UNAVAILABLE_MESSAGE_FINGERPRINT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary messenger_unavailable_message_thread_fingerprint
+)"
+INSTAGRAM_UNAVAILABLE_MESSAGE_COUNT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary instagram_unavailable_message_thread_count
+)"
+INSTAGRAM_UNAVAILABLE_MESSAGE_FINGERPRINT="$(
+  stage_value "$HISTORY_PROBE_SUMMARY" history_import_summary instagram_unavailable_message_thread_fingerprint
+)"
 
 test "$DATABASE_DUMP_SHA256" = "$(manifest_value "$BACKUP_MANIFEST" database_dump_sha256)"
 test "$SOURCE_STORAGE_MANIFEST_SHA256" = \
@@ -876,18 +916,23 @@ test "$SOURCE_STORAGE_MANIFEST_SHA256" = \
 [[ "$INSTAGRAM_CONTENTLESS_COUNT" =~ ^(0|[1-9][0-9]*)$ ]]
 [[ "$MESSENGER_CONTENTLESS_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 [[ "$INSTAGRAM_CONTENTLESS_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+test "$MESSENGER_UNAVAILABLE_MESSAGE_COUNT" = 0
+test "$INSTAGRAM_UNAVAILABLE_MESSAGE_COUNT" = \
+  "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+[[ "$MESSENGER_UNAVAILABLE_MESSAGE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
+[[ "$INSTAGRAM_UNAVAILABLE_MESSAGE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 test "$UNRECOVERABLE_COUNT" = "$EXPECTED_INSTAGRAM_UNRECOVERABLE_THREADS"
 [[ "$UNRECOVERABLE_FINGERPRINT" =~ ^[0-9a-f]{64}$ ]]
 [[ "$INSPECTOR_SCRIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
 
-HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v1.tsv"
-HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v1.tsv.sha256"
+HISTORY_APPROVAL="$HISTORY_DIR/fbig-approval-v2.tsv"
+HISTORY_APPROVAL_CHECKSUM="$HISTORY_DIR/fbig-approval-v2.tsv.sha256"
 test ! -e "$HISTORY_APPROVAL"
 test ! -e "$HISTORY_APPROVAL_CHECKSUM"
 (
   set -o noclobber
   {
-    printf 'schema_version\t1\n'
+    printf 'schema_version\t2\n'
     printf 'repository_commit\t%s\n' "$APP_COMMIT"
     printf 'image_digest\t%s\n' "$APP_DIGEST"
     printf 'clone_backup_id\t%s\n' "$BACKUP_ID"
@@ -907,6 +952,14 @@ test ! -e "$HISTORY_APPROVAL_CHECKSUM"
     printf 'messenger_fingerprint\t%s\n' "$MESSENGER_CONTENTLESS_FINGERPRINT"
     printf 'instagram_count\t%s\n' "$INSTAGRAM_CONTENTLESS_COUNT"
     printf 'instagram_fingerprint\t%s\n' "$INSTAGRAM_CONTENTLESS_FINGERPRINT"
+    printf 'messenger_unavailable_message_thread_count\t%s\n' \
+      "$MESSENGER_UNAVAILABLE_MESSAGE_COUNT"
+    printf 'messenger_unavailable_message_thread_fingerprint\t%s\n' \
+      "$MESSENGER_UNAVAILABLE_MESSAGE_FINGERPRINT"
+    printf 'instagram_unavailable_message_thread_count\t%s\n' \
+      "$INSTAGRAM_UNAVAILABLE_MESSAGE_COUNT"
+    printf 'instagram_unavailable_message_thread_fingerprint\t%s\n' \
+      "$INSTAGRAM_UNAVAILABLE_MESSAGE_FINGERPRINT"
     printf 'placeholder_targets_sha256\t%s\n' "$PLACEHOLDER_TARGETS_SHA256"
     printf 'source_dry_log_sha256\t%s\n' "$SOURCE_DRY_LOG_SHA256"
     printf 'source_dry_summary_sha256\t%s\n' "$SOURCE_DRY_SUMMARY_SHA256"
@@ -937,8 +990,8 @@ clone_compose run --rm --no-deps -T \
   rails bundle exec rails runner '
     require "digest"
     manifest = Umi::Fbig::HistoryApprovalManifest.load(
-      manifest_path: "/run/fbig/history/fbig-approval-v1.tsv",
-      checksum_path: "/run/fbig/history/fbig-approval-v1.tsv.sha256"
+      manifest_path: "/run/fbig/history/fbig-approval-v2.tsv",
+      checksum_path: "/run/fbig/history/fbig-approval-v2.tsv.sha256"
     )
     targets = Umi::Fbig::ProfileTargetManifest.load(
       path: "/run/fbig/targets/fbig-profile-targets-v1.tsv",
@@ -991,8 +1044,8 @@ history_run() {
   clone_compose run --rm --no-deps -T \
     --volume "$HISTORY_DIR:/run/fbig/history:ro" \
     -e UMI_FBIG_HISTORY_APPROVAL_MODE=approved \
-    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v1.tsv \
-    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v1.tsv.sha256 \
+    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv \
+    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256 \
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$CLONE_DATABASE" \
     -e UMI_FBIG_RUNTIME_REPOSITORY_COMMIT="$APP_COMMIT" \
     -e UMI_FBIG_RUNTIME_IMAGE_DIGEST="$APP_DIGEST" \
@@ -1023,7 +1076,7 @@ normalize_history_summary() {
     {
       output = ""
       for (field = 1; field <= NF; field += 1) {
-        if ($field ~ /^(contentless_acceptance_mismatches|exit_failures)=/) continue
+        if ($field ~ /^(contentless_acceptance_mismatches|unavailable_message_thread_acceptance_mismatches|exit_failures)=/) continue
         output = output (output == "" ? "" : " ") $field
       }
       print output
@@ -1037,13 +1090,24 @@ validate_history_apply_summary() {
   local platforms="$3"
   local expected_degraded=false
   local expected_ambiguous=0
+  local expected_unavailable=0
+  local expected_classified
   local observed_degraded
   local attachments_unavailable
   local platform
+  local platform_structural
+  local platform_classified
+  local platform_failed
+  local platform_listed
+  local platform_cursor_exhausted
   local approved_count
   local approved_fingerprint
+  local approved_unavailable_count
+  local approved_unavailable_fingerprint
   local observed_count
   local observed_fingerprint
+  local observed_unavailable_count
+  local observed_unavailable_fingerprint
   local -a selected_platforms
   test "$require_zero_writes" = true || test "$require_zero_writes" = false
   [[ "$platforms" =~ ^(messenger|instagram|messenger,instagram)$ ]]
@@ -1051,19 +1115,18 @@ validate_history_apply_summary() {
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
+  test "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
   if [[ ",$platforms," == *,instagram,* ]]; then
     expected_ambiguous="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
   fi
   test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
     "$expected_ambiguous"
-  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+  test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
     "$expected_ambiguous"
-  if [[ "$expected_ambiguous" != 0 ]]; then
-    expected_degraded=true
-  fi
   for counter in \
-    ambiguous_senders foreign_source_id_anomalies \
+    ambiguous_senders partially_paginated_threads uncategorized_threads \
+    foreign_source_id_anomalies \
     platform_failures retry_exhaustion authentication_failures \
     lock_loss reindex_failures download_budget_exhaustions; do
     test "$(stage_value "$summary" history_import_summary "$counter")" = 0
@@ -1072,10 +1135,10 @@ validate_history_apply_summary() {
   IFS=',' read -r -a selected_platforms <<<"$platforms"
   for platform in "${selected_platforms[@]}"; do
     approved_count="$(
-      manifest_value "$HISTORY_DIR/fbig-approval-v1.tsv" "${platform}_count"
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" "${platform}_count"
     )"
     approved_fingerprint="$(
-      manifest_value "$HISTORY_DIR/fbig-approval-v1.tsv" "${platform}_fingerprint"
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" "${platform}_fingerprint"
     )"
     observed_count="$(
       stage_value "$summary" history_import_summary "${platform}_contentless_details"
@@ -1083,14 +1146,70 @@ validate_history_apply_summary() {
     observed_fingerprint="$(
       stage_value "$summary" history_import_summary "${platform}_contentless_fingerprint"
     )"
+    approved_unavailable_count="$(
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" \
+        "${platform}_unavailable_message_thread_count"
+    )"
+    approved_unavailable_fingerprint="$(
+      manifest_value "$HISTORY_DIR/fbig-approval-v2.tsv" \
+        "${platform}_unavailable_message_thread_fingerprint"
+    )"
+    observed_unavailable_count="$(
+      stage_value "$summary" history_import_summary \
+        "${platform}_unavailable_message_thread_count"
+    )"
+    observed_unavailable_fingerprint="$(
+      stage_value "$summary" history_import_summary \
+        "${platform}_unavailable_message_thread_fingerprint"
+    )"
     [[ "$approved_count" =~ ^(0|[1-9][0-9]*)$ ]]
     [[ "$approved_fingerprint" =~ ^[0-9a-f]{64}$ ]]
+    [[ "$approved_unavailable_count" =~ ^(0|[1-9][0-9]*)$ ]]
+    [[ "$approved_unavailable_fingerprint" =~ ^[0-9a-f]{64}$ ]]
     test "$observed_count" = "$approved_count"
     test "$observed_fingerprint" = "$approved_fingerprint"
-    if [[ "$approved_count" != 0 ]]; then
+    test "$observed_unavailable_count" = "$approved_unavailable_count"
+    test "$observed_unavailable_fingerprint" = "$approved_unavailable_fingerprint"
+    test "$(stage_value "$summary" history_import_summary \
+      "${platform}_unavailable_message_threads")" = "$approved_unavailable_count"
+
+    expected_unavailable="$((expected_unavailable + approved_unavailable_count))"
+    platform_structural=0
+    if [[ "$platform" = instagram ]]; then
+      platform_structural="$expected_ambiguous"
+    fi
+    test "$(stage_value "$summary" history_import_summary \
+      "${platform}_structural_unrecoverable_threads")" = "$platform_structural"
+    platform_classified="$(stage_value "$summary" history_import_summary \
+      "${platform}_classified_omitted_threads")"
+    test "$platform_classified" -eq \
+      "$((platform_structural + approved_unavailable_count))"
+    platform_failed="$(stage_value "$summary" history_import_summary \
+      "${platform}_failed_threads")"
+    test "$platform_failed" = 0
+    platform_listed="$(stage_value "$summary" history_import_summary \
+      "${platform}_listed_threads")"
+    platform_cursor_exhausted="$(stage_value "$summary" history_import_summary \
+      "${platform}_message_cursor_exhausted_threads")"
+    test "$platform_listed" -eq \
+      "$((platform_cursor_exhausted + platform_classified + platform_failed))"
+    if [[ "$approved_count" != 0 || "$approved_unavailable_count" != 0 ]]; then
       expected_degraded=true
     fi
   done
+
+  expected_classified="$((expected_ambiguous + expected_unavailable))"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$expected_unavailable"
+  test "$(stage_value "$summary" history_import_summary classified_omitted_threads)" = \
+    "$expected_classified"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary listed_threads)" -eq \
+    "$(( $(stage_value "$summary" history_import_summary message_cursor_exhausted_threads) + \
+         expected_classified ))"
+  if [[ "$expected_classified" != 0 ]]; then
+    expected_degraded=true
+  fi
 
   attachments_unavailable="$(
     stage_value "$summary" history_import_summary attachments_unavailable
@@ -1147,12 +1266,24 @@ accepted_history_dry_run() {
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = not_applicable
   test "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0
+  test "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0
   test "$(stage_value "$summary" history_import_summary exit_failures)" = 0
   test "$(stage_value "$summary" history_import_summary ambiguous_participants)" = \
     "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
-  test "$(stage_value "$summary" history_import_summary failed_threads)" = \
+  test "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = \
     "$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+  test "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = \
+    "$EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS"
+  test "$(stage_value "$summary" history_import_summary classified_omitted_threads)" -eq \
+    "$(( $(manifest_value "$UNRECOVERABLE_SIDECAR" count) + \
+         EXPECTED_INSTAGRAM_UNAVAILABLE_MESSAGE_THREADS ))"
+  test "$(stage_value "$summary" history_import_summary failed_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary listed_threads)" -eq \
+    "$(( $(stage_value "$summary" history_import_summary message_cursor_exhausted_threads) + \
+         $(stage_value "$summary" history_import_summary classified_omitted_threads) ))"
   test "$(stage_value "$summary" history_import_summary ambiguous_senders)" = 0
+  test "$(stage_value "$summary" history_import_summary partially_paginated_threads)" = 0
+  test "$(stage_value "$summary" history_import_summary uncategorized_threads)" = 0
   normalize_history_summary "$summary" >"$normalized"
   chmod 0400 "$log" "$summary" "$normalized"
 }
@@ -1290,8 +1421,8 @@ clone_profile_run() {
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$CLONE_DATABASE" \
     -e PLATFORMS=messenger,instagram \
     -e DRY_RUN="$dry_run" \
-    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v1.tsv \
-    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v1.tsv.sha256 \
+    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv \
+    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256 \
     -e UMI_FBIG_PROFILE_TARGETS_PATH=/run/fbig/targets/fbig-profile-targets-v1.tsv \
     -e UMI_FBIG_PROFILE_STATE_PATH=/run/fbig/state/fbig-profile-state-v1.tsv \
     -e UMI_FBIG_PROFILE_STATE_CHECKSUM_PATH=/run/fbig/state/fbig-profile-state-v1.tsv.sha256 \
@@ -1590,8 +1721,8 @@ clone_compose run --rm --no-deps -T \
   rails bundle exec rails runner '
     require "digest"
     history = Umi::Fbig::HistoryApprovalManifest.load(
-      manifest_path: "/run/fbig/history/fbig-approval-v1.tsv",
-      checksum_path: "/run/fbig/history/fbig-approval-v1.tsv.sha256"
+      manifest_path: "/run/fbig/history/fbig-approval-v2.tsv",
+      checksum_path: "/run/fbig/history/fbig-approval-v2.tsv.sha256"
     )
     profile = Umi::Fbig::ProfileApprovalManifest.load(
       manifest_path: "/run/fbig/profile/fbig-profile-approval-v1.tsv",

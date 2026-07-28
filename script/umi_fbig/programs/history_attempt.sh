@@ -24,6 +24,10 @@ readonly HISTORY_APPROVAL_FIELDS=(
   restored_storage_manifest_sha256 account_id inbox_id facebook_page_id
   instagram_business_id since before outbound_policy profile_mode
   messenger_count messenger_fingerprint instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
   placeholder_targets_sha256 source_dry_log_sha256 source_dry_summary_sha256
   approved_by approved_at
 )
@@ -41,12 +45,18 @@ readonly ACCEPTANCE_FIELDS=(
   postlaunch_descriptor_sha256 invocation_id exit_status started_at
   finished_at sealed_at
 )
+readonly UNRECOVERABLE_SIDECAR_FIELDS=(
+  schema_version repository_commit image_digest account_id inbox_id
+  instagram_business_id before platform count fingerprint
+  inspector_script_sha256 approved_by approved_at
+)
 readonly RESULT_FIELDS=(
   schema_version label operation platforms require_zero_writes program_sha256
   binding_sha256 candidate_commit candidate_image production_database inbox_id
   history_approval_sha256 acceptance_sha256 pre_history_backup_sha256
   dry_pair_sha256 attempt_identity_sha256 compose_override_sha256
   attachment_reconcile_start_sha256 prestate_sha256
+  unrecoverable_before_sha256 unrecoverable_after_sha256
   attachment_reconcile_final_sha256 poststate_sha256 release_schema_sha256
   finalizer_release_schema_sha256 run_log_sha256 run_summary_sha256
   exit_status_artifact_sha256 comparison_log_sha256 delta_sha256 exit_status
@@ -169,6 +179,8 @@ require_root_directory "$AUDIT_ROOT"
 
 verify_checksum "$HISTORY_APPROVAL" "$HISTORY_APPROVAL_CHECKSUM"
 require_ordered_manifest "$HISTORY_APPROVAL" "${HISTORY_APPROVAL_FIELDS[@]}"
+[[ "$(manifest_value "$HISTORY_APPROVAL" schema_version)" = 2 ]] ||
+  die "unsupported history approval schema"
 [[ "$(sha256_file "$HISTORY_APPROVAL")" = "$HISTORY_APPROVAL_SHA256" ]] ||
   die "history approval SHA mismatch"
 [[ "$(manifest_value "$HISTORY_APPROVAL" repository_commit)" = "$CANDIDATE_COMMIT" ]] ||
@@ -197,6 +209,33 @@ require_ordered_manifest "$ACCEPTANCE_MANIFEST" "${ACCEPTANCE_FIELDS[@]}"
 [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" exit_status)" = 0 ]] ||
   die "terminal acceptance did not succeed"
 
+UNRECOVERABLE_SIDECAR="$(dirname "$HISTORY_APPROVAL")/fbig-unrecoverable-envelope-v1.tsv"
+UNRECOVERABLE_SIDECAR_CHECKSUM="${UNRECOVERABLE_SIDECAR}.sha256"
+UNRECOVERABLE_INSPECTOR="$(dirname "$(dirname "$HISTORY_APPROVAL")")/fbig-unrecoverable-envelope-inspector.rb"
+readonly UNRECOVERABLE_SIDECAR UNRECOVERABLE_SIDECAR_CHECKSUM UNRECOVERABLE_INSPECTOR
+verify_checksum "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM"
+require_ordered_manifest "$UNRECOVERABLE_SIDECAR" "${UNRECOVERABLE_SIDECAR_FIELDS[@]}"
+require_root_artifact "$UNRECOVERABLE_INSPECTOR"
+[[ "$(sha256_file "$UNRECOVERABLE_SIDECAR")" = \
+  "$(manifest_value "$ACCEPTANCE_MANIFEST" unrecoverable_sidecar_sha256)" ]] ||
+  die "unrecoverable sidecar SHA mismatch"
+[[ "$(manifest_value "$UNRECOVERABLE_SIDECAR" repository_commit)" = "$CANDIDATE_COMMIT" &&
+  "$(manifest_value "$UNRECOVERABLE_SIDECAR" image_digest)" = "$CANDIDATE_IMAGE" &&
+  "$(manifest_value "$UNRECOVERABLE_SIDECAR" inbox_id)" = "$INBOX_ID" &&
+  "$(manifest_value "$UNRECOVERABLE_SIDECAR" before)" = \
+    "$(manifest_value "$HISTORY_APPROVAL" before)" &&
+  "$(manifest_value "$UNRECOVERABLE_SIDECAR" platform)" = instagram &&
+  "$(manifest_value "$UNRECOVERABLE_SIDECAR" inspector_script_sha256)" = \
+    "$(sha256_file "$UNRECOVERABLE_INSPECTOR")" ]] ||
+  die "unrecoverable sidecar binding mismatch"
+EXPECTED_STRUCTURAL_THREADS=0
+if [[ "$PLATFORMS" = instagram ]]; then
+  EXPECTED_STRUCTURAL_THREADS="$(manifest_value "$UNRECOVERABLE_SIDECAR" count)"
+fi
+[[ "$EXPECTED_STRUCTURAL_THREADS" =~ ^[0-9]+$ ]] ||
+  die "invalid approved structural-omission count"
+readonly EXPECTED_STRUCTURAL_THREADS
+
 if [[ "$PRE_HISTORY_BACKUP_MANIFEST" = none ]]; then
   [[ "$PRE_HISTORY_BACKUP_CHECKSUM" = none && "$PRE_HISTORY_BACKUP_SHA256" = none ]] ||
     die "partial pre-history backup binding"
@@ -208,6 +247,59 @@ else
   [[ "$(sha256_file "$PRE_HISTORY_BACKUP_MANIFEST")" = "$PRE_HISTORY_BACKUP_SHA256" ]] ||
     die "pre-history backup SHA mismatch"
 fi
+
+validate_history_terminal_summary() {
+  local summary="$1"
+  local expected_dry_run="$2"
+  local expected_write_complete="$3"
+  local unavailable_count
+  local structural_count
+  local classified_count
+  local failed_count
+  local listed_count
+  local cursor_exhausted_count
+
+  unavailable_count="$(
+    manifest_value "$HISTORY_APPROVAL" \
+      "${PLATFORMS}_unavailable_message_thread_count"
+  )"
+  structural_count="$EXPECTED_STRUCTURAL_THREADS"
+  classified_count="$(
+    stage_value "$summary" history_import_summary classified_omitted_threads
+  )"
+  failed_count="$(stage_value "$summary" history_import_summary failed_threads)"
+  listed_count="$(stage_value "$summary" history_import_summary listed_threads)"
+  cursor_exhausted_count="$(
+    stage_value "$summary" history_import_summary message_cursor_exhausted_threads
+  )"
+
+  [[ "$(stage_value "$summary" history_import_summary platforms)" = "$PLATFORMS" &&
+    "$(stage_value "$summary" history_import_summary dry_run)" = "$expected_dry_run" &&
+    "$(stage_value "$summary" history_import_summary scan_complete)" = true &&
+    "$(stage_value "$summary" history_import_summary write_complete)" = "$expected_write_complete" &&
+    "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0 &&
+    "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0 &&
+    "$(stage_value "$summary" history_import_summary exit_failures)" = 0 &&
+    "$(stage_value "$summary" history_import_summary partially_paginated_threads)" = 0 &&
+    "$(stage_value "$summary" history_import_summary uncategorized_threads)" = 0 &&
+    "$(stage_value "$summary" history_import_summary ambiguous_participants)" = "$structural_count" &&
+    "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = "$structural_count" &&
+    "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = "$unavailable_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_unavailable_message_threads")" = "$unavailable_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_unavailable_message_thread_count")" = "$unavailable_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_unavailable_message_thread_fingerprint")" = \
+      "$(manifest_value "$HISTORY_APPROVAL" "${PLATFORMS}_unavailable_message_thread_fingerprint")" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_structural_unrecoverable_threads")" = "$structural_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_classified_omitted_threads")" = "$classified_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_failed_threads")" = "$failed_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_listed_threads")" = "$listed_count" &&
+    "$(stage_value "$summary" history_import_summary "${PLATFORMS}_message_cursor_exhausted_threads")" = "$cursor_exhausted_count" ]] ||
+    die "history terminal summary platform accounting mismatch"
+  [[ "$classified_count" -eq "$((structural_count + unavailable_count))" &&
+    "$failed_count" -eq 0 &&
+    "$listed_count" -eq "$((cursor_exhausted_count + classified_count + failed_count))" ]] ||
+    die "history terminal summary violates thread conservation"
+}
 
 validate_authorizing_dry_result() {
   local result="$1"
@@ -249,11 +341,7 @@ validate_authorizing_dry_result() {
   verify_checksum "$summary" "${summary}.sha256"
   [[ "$(manifest_value "$result" run_summary_sha256)" = "$(sha256_file "$summary")" ]] ||
     die "authorizing dry-result summary mismatch"
-  [[ "$(stage_value "$summary" history_import_summary platforms)" = "$PLATFORMS" &&
-    "$(stage_value "$summary" history_import_summary scan_complete)" = true &&
-    "$(stage_value "$summary" history_import_summary write_complete)" = not_applicable &&
-    "$(stage_value "$summary" history_import_summary exit_failures)" = 0 ]] ||
-    die "authorizing dry-result summary is not successful"
+  validate_history_terminal_summary "$summary" true not_applicable
 }
 
 dry_pair_sha=none
@@ -299,6 +387,8 @@ readonly ATTACHMENT_RECONCILE_START="$IN_PROGRESS_DIRECTORY/attachment-reconcile
 readonly ATTACHMENT_RECONCILE_FINAL="$IN_PROGRESS_DIRECTORY/attachment-reconcile-final.log"
 readonly PRESTATE="$IN_PROGRESS_DIRECTORY/fbig-history-production-prestate-v1.tsv"
 readonly POSTSTATE="$IN_PROGRESS_DIRECTORY/fbig-history-production-poststate-v1.tsv"
+readonly UNRECOVERABLE_BEFORE="$IN_PROGRESS_DIRECTORY/unrecoverable-before.tsv"
+readonly UNRECOVERABLE_AFTER="$IN_PROGRESS_DIRECTORY/unrecoverable-after.tsv"
 readonly RELEASE_SCHEMA="$IN_PROGRESS_DIRECTORY/release-schema.log"
 readonly FINALIZER_RELEASE_SCHEMA="$IN_PROGRESS_DIRECTORY/finalizer-release-schema.log"
 readonly RUN_LOG="$IN_PROGRESS_DIRECTORY/history-run.log"
@@ -478,6 +568,35 @@ attachment_reconcile() {
   publish_artifact "$temporary" "$log"
 }
 
+inspect_unrecoverable_envelopes() {
+  local output="$1"
+  local suffix="$2"
+  local temporary="$IN_PROGRESS_DIRECTORY/.unrecoverable-${suffix}.$$.tmp"
+
+  [[ "$PLATFORMS" = instagram ]] ||
+    die "unrecoverable-envelope inspection is Instagram-only"
+  if [[ -e "$output" ]]; then
+    verify_checksum "$output" "${output}.sha256"
+  else
+    (
+      cd "$STACK_DIR"
+      "${compose[@]}" run --rm --no-deps -T \
+        --name "${CONTAINER_NAME}-unrecoverable-${suffix}" \
+        -e UMI_FBIG_INSPECT_INBOX_ID="$INBOX_ID" \
+        -e UMI_FBIG_INSPECT_EXPECTED_DATABASE="$PRODUCTION_DATABASE" \
+        -e UMI_FBIG_INSPECT_BEFORE="$(manifest_value "$UNRECOVERABLE_SIDECAR" before)" \
+        "$RAILS_SERVICE" bundle exec rails runner - <"$UNRECOVERABLE_INSPECTOR"
+    ) | grep '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection ' >"$temporary"
+    publish_artifact "$temporary" "$output"
+  fi
+  [[ "$(grep -c '^\[UMI-FBIG\] stage=unrecoverable_envelope_inspection ' "$output")" -eq 1 &&
+    "$(stage_value "$output" unrecoverable_envelope_inspection count)" = \
+      "$EXPECTED_STRUCTURAL_THREADS" &&
+    "$(stage_value "$output" unrecoverable_envelope_inspection fingerprint)" = \
+      "$(manifest_value "$UNRECOVERABLE_SIDECAR" fingerprint)" ]] ||
+    die "production unrecoverable-envelope inspection differs from acceptance"
+}
+
 write_attempt_identity() {
   local temporary="$IN_PROGRESS_DIRECTORY/.attempt-identity.$$.tmp"
   local boot_id
@@ -513,8 +632,8 @@ run_importer() {
     --name "$CONTAINER_NAME"
     --volume "$(dirname "$HISTORY_APPROVAL"):/run/fbig/history:ro"
     -e UMI_FBIG_HISTORY_APPROVAL_MODE=approved
-    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v1.tsv
-    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v1.tsv.sha256
+    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv
+    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$PRODUCTION_DATABASE"
     -e UMI_FBIG_RUNTIME_REPOSITORY_COMMIT="$CANDIDATE_COMMIT"
     -e UMI_FBIG_RUNTIME_IMAGE_DIGEST="$CANDIDATE_IMAGE"
@@ -659,7 +778,9 @@ validate_history_result() {
   for entry in \
     'release_schema:release-schema.log' \
     'run_summary:history-summary.tsv' \
-    'exit_status_artifact:history-exit-status.tsv'; do
+    'exit_status_artifact:history-exit-status.tsv' \
+    'unrecoverable_before:unrecoverable-before.tsv' \
+    'unrecoverable_after:unrecoverable-after.tsv'; do
     field="${entry%%:*}"
     filename="${entry#*:}"
     expected_sha="$(manifest_value "$manifest" "${field}_sha256")"
@@ -673,6 +794,15 @@ validate_history_result() {
         die "history result optional artifact mismatch: $field"
     fi
   done
+  if [[ "$PLATFORMS" = instagram ]]; then
+    [[ "$(manifest_value "$manifest" unrecoverable_before_sha256)" != none &&
+      "$(manifest_value "$manifest" unrecoverable_after_sha256)" != none ]] ||
+      die "Instagram history result lacks unrecoverable-envelope evidence"
+  else
+    [[ "$(manifest_value "$manifest" unrecoverable_before_sha256)" = none &&
+      "$(manifest_value "$manifest" unrecoverable_after_sha256)" = none ]] ||
+      die "Messenger history result contains Instagram-only envelope evidence"
+  fi
   finalizer_proof="$(dirname "$manifest")/finalizer-release-schema.log"
   [[ "$(grep -c '^\[UMI-FBIG\] stage=production_release_schema_verified$' "$finalizer_proof")" -eq 1 ]] ||
     die "history result lacks terminal release/schema proof"
@@ -723,6 +853,14 @@ finalize_attempt() {
   fi
   verify_checksum "$PRESTATE" "${PRESTATE}.sha256"
 
+  if [[ "$PLATFORMS" = instagram ]]; then
+    if [[ ! -e "${UNRECOVERABLE_BEFORE}.sha256" ]]; then
+      [[ ! -e "$RUN_LOG" && ! -e "$EXIT_STATUS_ARTIFACT" && "$container_running" = false ]] ||
+        die "importer evidence exists without a sealed pre-import envelope inspection"
+    fi
+    inspect_unrecoverable_envelopes "$UNRECOVERABLE_BEFORE" before
+  fi
+
   if [[ ! -e "${FINALIZER_RELEASE_SCHEMA}.sha256" ]]; then
     if [[ -e "$FINALIZER_RELEASE_SCHEMA" ]]; then
       seal_in_place "$FINALIZER_RELEASE_SCHEMA"
@@ -762,6 +900,17 @@ finalize_attempt() {
   fi
   [[ "$exit_status" != 0 || "$summary_sha" != none ]] ||
     die "successful importer exit is missing its terminal summary"
+  if [[ "$exit_status" = 0 ]]; then
+    if [[ "$OPERATION" = dry ]]; then
+      validate_history_terminal_summary "$RUN_SUMMARY" true not_applicable
+    else
+      validate_history_terminal_summary "$RUN_SUMMARY" false true
+    fi
+  fi
+
+  if [[ "$PLATFORMS" = instagram ]]; then
+    inspect_unrecoverable_envelopes "$UNRECOVERABLE_AFTER" after
+  fi
 
   if [[ ! -e "${ATTACHMENT_RECONCILE_FINAL}.sha256" ]]; then
     [[ ! -e "${POSTSTATE}.sha256" ]] ||
@@ -845,6 +994,13 @@ finalize_attempt() {
     printf 'attachment_reconcile_start_sha256\t%s\n' \
       "$(sha256_file "$ATTACHMENT_RECONCILE_START")"
     printf 'prestate_sha256\t%s\n' "$(sha256_file "$PRESTATE")"
+    if [[ "$PLATFORMS" = instagram ]]; then
+      printf 'unrecoverable_before_sha256\t%s\n' "$(sha256_file "$UNRECOVERABLE_BEFORE")"
+      printf 'unrecoverable_after_sha256\t%s\n' "$(sha256_file "$UNRECOVERABLE_AFTER")"
+    else
+      printf 'unrecoverable_before_sha256\tnone\n'
+      printf 'unrecoverable_after_sha256\tnone\n'
+    fi
     printf 'attachment_reconcile_final_sha256\t%s\n' \
       "$(sha256_file "$ATTACHMENT_RECONCILE_FINAL")"
     printf 'poststate_sha256\t%s\n' "$(sha256_file "$POSTSTATE")"
@@ -925,6 +1081,9 @@ if [[ "$ACTION" = start ]]; then
   state_capture \
     fbig-history-production-prestate-v1.tsv \
     "$IN_PROGRESS_DIRECTORY/prestate-capture.log" pre
+  if [[ "$PLATFORMS" = instagram ]]; then
+    inspect_unrecoverable_envelopes "$UNRECOVERABLE_BEFORE" before
+  fi
   run_importer
   finalize_attempt true
 else

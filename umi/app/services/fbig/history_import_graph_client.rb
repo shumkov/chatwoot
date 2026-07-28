@@ -13,6 +13,27 @@ class Umi::Fbig::HistoryImportGraphClient
   class AuthenticationError < StandardError; end
   class LeaseLostError < StandardError; end
 
+  class MessageConnectionUnavailableError < StandardError
+    attr_reader :http_status, :error_code, :error_subcode, :error_type
+
+    def initialize(http_status:, error_code:, error_subcode:, error_type:)
+      @http_status = http_status
+      @error_code = error_code
+      @error_subcode = error_subcode
+      @error_type = error_type
+      super('message connection unavailable')
+    end
+
+    def to_h
+      {
+        http_status: http_status,
+        error_code: error_code,
+        error_subcode: error_subcode,
+        error_type: error_type
+      }
+    end
+  end
+
   class ProfileError < StandardError
     attr_reader :reason
 
@@ -41,6 +62,7 @@ class Umi::Fbig::HistoryImportGraphClient
   }.freeze
   PROFILE_UNAVAILABLE_CODES = [10, 230, 9010].freeze
   PROFILE_UNAVAILABLE_SUBCODES = [33, 2_018_218].freeze
+  MESSAGE_CONNECTION_UNAVAILABLE_SUBCODE = 2_207_085
   RATE_LIMIT_CODES = [4, 17, 32, 613, 80_004].freeze
   MAX_ATTEMPTS = 3
   MAX_BACKOFF_SECONDS = 30
@@ -82,10 +104,8 @@ class Umi::Fbig::HistoryImportGraphClient
     paginate(first_page, kind: :conversation, max_pages: @max_conversation_pages, on_page: on_page, &)
   end
 
-  def messages(thread_id, on_page: nil)
-    first_page = request(kind: :message) do
-      api.get_connections(thread_id, 'messages', { fields: MESSAGE_FIELDS, limit: 50 })
-    end
+  def messages(platform, thread_id, on_page: nil)
+    first_page = initial_message_page(platform, thread_id)
     items = []
     pages = paginate(first_page, kind: :message, max_pages: @max_message_pages, on_page: on_page) { |message| items << message }
     PageResult.new(items: items, pages: pages)
@@ -121,6 +141,29 @@ class Umi::Fbig::HistoryImportGraphClient
   end
 
   private
+
+  def initial_message_page(platform, thread_id)
+    request(kind: :message) do
+      api.get_connections(thread_id, 'messages', { fields: MESSAGE_FIELDS, limit: 50 })
+    end
+  rescue Koala::Facebook::ClientError => e
+    raise unless message_connection_unavailable?(platform, e)
+
+    raise MessageConnectionUnavailableError.new(
+      http_status: e.http_status.to_i,
+      error_code: e.fb_error_code.to_i,
+      error_subcode: e.fb_error_subcode.to_i,
+      error_type: e.fb_error_type.to_s
+    )
+  end
+
+  def message_connection_unavailable?(platform, error)
+    platform == 'instagram' &&
+      error.http_status.to_i == 400 &&
+      error.fb_error_code.to_i == -1 &&
+      error.fb_error_subcode.to_i == MESSAGE_CONNECTION_UNAVAILABLE_SUBCODE &&
+      error.fb_error_type == 'OAuthException'
+  end
 
   def normalize_profile(response, requested_id, fields)
     raise ProfileError, :missing_id unless response.is_a?(Hash) && response['id'].present?

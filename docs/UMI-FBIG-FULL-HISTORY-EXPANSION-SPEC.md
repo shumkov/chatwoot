@@ -161,8 +161,9 @@ schema, repository commit, image digest, account, inbox, Instagram business
 id, frozen `before` cutoff, platform, expected count, fingerprint, and
 inspector-script SHA-256. The accepted probe log records the sidecar checksum
 before it is locked; `HistoryApprovalManifest#source_dry_log_sha256` therefore
-chains the sidecar into the existing checksummed 25-field approval without
-changing its runtime schema. Clone and production derive the expected value
+chains the structural sidecar into the checksummed 29-field approval; the
+separate unavailable-message acceptance uses explicit manifest fields. Clone
+and production derive the expected structural value
 only from that validated sidecar and inspect only listings/details before the
 frozen cutoff.
 
@@ -170,8 +171,9 @@ The same read-only inspection runs immediately before and after every
 Instagram-inclusive probe/dry/apply/recovery stage. Both observations must
 match the sealed fingerprint, which closes the gap between a separate
 pre-stage observation and the envelope the importer actually omits. Each
-stage also requires `ambiguous_participants == failed_threads == 1` and zero
-ambiguous senders; Messenger-only scans require zero ambiguity. The accepted
+stage also requires `ambiguous_participants == structural_unrecoverable_threads
+== 1`, `failed_threads == 0`, and zero ambiguous senders; Messenger-only scans
+require zero ambiguity. The accepted
 unaccepted probe and two accepted dry runs must have byte-identical normalized
 summaries. Any identity/content/count drift or any other failed thread aborts
 and requires a new investigation. The final production check repeats the
@@ -419,16 +421,17 @@ Both require `UMI_FBIG_HISTORY_EXPECTED_DATABASE`, `INBOX_ID`, `DRY_RUN`, and
   approval-manifest/checksum paths, `ACK_EXPAND_EXISTING`, and any direct
   accepted-set input. Omitted `BEFORE` generates the safe frozen cutoff; an
   explicitly supplied cutoff must meet the same grammar/age rule. The task
-  supplies the canonical zero accepted set internally and is expected to exit
-  nonzero only for observed exact contentless-set mismatches.
+  supplies both canonical zero accepted sets internally and is expected to exit
+  nonzero only for observed exact contentless-set and release-bound
+  unavailable-message-set mismatches.
 - `approved` requires absolute
-  `UMI_FBIG_APPROVAL_MANIFEST_PATH=.../fbig-approval-v1.tsv` and
-  `UMI_FBIG_APPROVAL_CHECKSUM_PATH=.../fbig-approval-v1.tsv.sha256`.
+  `UMI_FBIG_APPROVAL_MANIFEST_PATH=.../fbig-approval-v2.tsv` and
+  `UMI_FBIG_APPROVAL_CHECKSUM_PATH=.../fbig-approval-v2.tsv.sha256`.
   `PLATFORMS` is the only manifest projection control and must be
   `messenger`, `instagram`, or canonical `messenger,instagram`.
   The task derives commit/image, account/inbox/Page/Instagram identities,
-  `SINCE`, `BEFORE`, outbound policy, deferred profile mode, and the selected
-  accepted count/fingerprint projection only from the validated manifest.
+  `SINCE`, `BEFORE`, outbound policy, deferred profile mode, and both selected
+  accepted count/fingerprint projections only from the validated manifest.
   It rejects manually supplied manifest-bound scope, profile-mode, or
   accepted-set values; apply additionally requires the explicit
   `ACK_EXPAND_EXISTING=true`.
@@ -437,27 +440,35 @@ The durable approval artifact stores one combined two-platform manifest.
 Approved task construction projects it in memory to exactly the selected
 platform entries. Messenger-only commands receive only `messenger`;
 Instagram-only commands receive only `instagram`; combined dry runs receive
-both in selected-platform order. The rake task never exposes
-`UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS` as an accepted-run override. Any
+both in selected-platform order for both acceptance maps. The rake task never
+exposes `UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS` or an unavailable-message
+equivalent as an accepted-run override. Any
 mode/path/checksum/ownership/parser/projection error fails before
 writer-lock acquisition, Meta access, or writes.
 
-During a platform scan, collect the structurally contentless mids in memory.
-Compare its exact count and fingerprint with the accepted value only after
-cursor exhaustion and before marker normalization:
+During a platform scan, collect the structurally contentless mids and accepted
+release-bound unavailable-message threads in separate in-memory sets. Compare
+each exact count and fingerprint with its accepted value only after cursor
+exhaustion and before marker normalization:
 
 - exact match: count the omissions, set `degraded=true`, keep those mids absent
   for future exact reruns, and allow otherwise complete history to normalize;
-- missing or mismatched acceptance: increment one explicit
-  contentless-acceptance-mismatch history exit counter and leave that platform
-  incomplete. Apply additionally sets `write_complete=false` and does not
-  normalize; dry run retains `write_complete=not_applicable`.
+- missing or mismatched acceptance: increment the corresponding explicit
+  contentless-acceptance-mismatch or
+  unavailable-message-thread-acceptance-mismatch history exit counter and
+  leave that platform incomplete. Apply additionally sets
+  `write_complete=false` and does not normalize; dry run retains
+  `write_complete=not_applicable`.
 
 The comparison happens after per-thread commits because buffering an entire
 platform would make the importer unsafe and unbounded. A late mismatch retains
 already committed messages, contacts, and archives, blocks that platform's
 marker normalization, and in apply mode aborts scanning any later selected
-platform. Dry run continues across selected platforms so the first no-write
+platform. This is deliberately fail-closed after possible bounded partial
+writes: configuration errors still fail before writes, and the classified
+omitted thread itself never receives rows, but an observed-set mismatch found
+after cursor exhaustion can retain valid rows already committed for earlier
+threads. Dry run continues across selected platforms so the first no-write
 probe can report every exact set. Recovery is
 append-only with the same frozen cutoff. A recovery clone taken after a partial
 production attempt does not reassert the original total row counts. It must
@@ -493,19 +504,26 @@ nonzero is expected, it temporarily disables `errexit` only around the
 `rake | tee` pipeline, immediately snapshots the complete `PIPESTATUS` array,
 restores strict mode immediately, requires exactly two statuses with producer
 status exactly `1` and `tee` status exactly `0`, and requires exactly one
-complete terminal summary. It verifies
-that the only history exit failures are the reported contentless-set mismatches
-and obtains both per-platform fingerprints. Unaccepted-probe mode requires
+complete terminal summary. It verifies that the only history exit failures are
+the sum of the reported contentless-set and unavailable-message-set mismatch
+counters:
+
+`exit_failures = contentless_acceptance_mismatches +
+unavailable_message_thread_acceptance_mismatches`.
+
+Every other exit-failure cause must be zero. The operator obtains both
+per-platform count/fingerprint pairs for both sets.
+Unaccepted-probe mode requires
 explicit `PROFILE_MODE=defer`, and every profile/avatar request, outcome, byte,
 or change counter must remain zero. Any Graph, pagination, identity,
 attachment, or other history exit failure rejects the probe.
 
 The operator then creates the immutable fixed basename
-`fbig-approval-v1.tsv` with noclobber. It is a strict UTF-8, LF-terminated,
-tab-separated v1 data record—not a shell file—with exactly 25 lines in this
+`fbig-approval-v2.tsv` with noclobber. It is a strict UTF-8, LF-terminated,
+tab-separated v2 data record—not a shell file—with exactly 29 lines in this
 fixed `name<TAB>value` order:
 
-1. `schema_version` (`1`);
+1. `schema_version` (`2`);
 2. `repository_commit` (40 lowercase hexadecimal characters);
 3. `image_digest` (the exact
    `ghcr.io/shumkov/chatwoot@sha256:<64 lowercase hexadecimal characters>`
@@ -527,22 +545,31 @@ fixed `name<TAB>value` order:
 18. `messenger_fingerprint`;
 19. `instagram_count`;
 20. `instagram_fingerprint`;
-21. `placeholder_targets_sha256`;
-22. `source_dry_log_sha256`;
-23. `source_dry_summary_sha256`;
-24. `approved_by`; and
-25. `approved_at` (canonical ISO-8601 UTC).
+21. `messenger_unavailable_message_thread_count`;
+22. `messenger_unavailable_message_thread_fingerprint`;
+23. `instagram_unavailable_message_thread_count`;
+24. `instagram_unavailable_message_thread_fingerprint`;
+25. `placeholder_targets_sha256`;
+26. `source_dry_log_sha256`;
+27. `source_dry_summary_sha256`;
+28. `approved_by`; and
+29. `approved_at` (canonical ISO-8601 UTC).
 
 The parser requires the exact line count, order, names, one tab per line, final
 LF, and valid UTF-8. It rejects missing, duplicate, reordered, or unknown
 fields; CR, NUL, embedded LF/tab, invalid encoding, or trailing bytes; and
 never sources, evaluates, interpolates, or executes the file. Counts and
-fingerprints use the acceptance grammar above; identity fields are positive
+fingerprints use the acceptance grammar above. Messenger unavailable-message
+values must be the canonical zero count and Messenger empty-set fingerprint;
+classification remains Instagram-only. Approved task projection selects both
+the contentless and unavailable-message entries for exactly the requested
+platforms. Schema v1 is rejected rather than inferred or upgraded in memory.
+Identity fields are positive
 canonical decimal integers; the six checksum fields are 64 lowercase
 hexadecimal characters; `clone_database_name` matches
 `[a-z_][a-z0-9_]*`; and `approved_by` is nonblank and at most 255 UTF-8 bytes.
 
-A fixed `fbig-approval-v1.tsv.sha256` checksum file contains exactly one GNU
+A fixed `fbig-approval-v2.tsv.sha256` checksum file contains exactly one GNU
 `sha256sum`-style line:
 `<64 lowercase hex><two spaces><manifest basename><LF>`. The audit directory is
 root-owned mode `0700`; manifest and checksum are regular root-owned files mode
@@ -1875,26 +1902,28 @@ apply:
    Immediately snapshot the entire `PIPESTATUS` array, restore `errexit`
    immediately, then require exactly two statuses with rake status `1` and
    `tee` status `0` plus exactly one complete terminal summary. Reject it
-   unless the only history exit failures are exact contentless-set mismatches
-   and every profile/avatar counter is zero.
-5. Review the per-platform count/fingerprint values and create the immutable,
+   unless the only history exit failures are exactly the sum of the
+   contentless-set and unavailable-message-set mismatch counters and every
+   profile/avatar counter is zero.
+5. Review both per-platform count/fingerprint pairs and create the immutable,
    checksummed, release/clone/scope-bound approval manifest. Then run two fresh
    `UMI_FBIG_HISTORY_APPROVAL_MODE=approved` clone dry scans from the mounted
    manifest/checksum and selected-platform projections, require zero exit,
    compare counts/fingerprints, and prove whole clone database/storage
    immutability across both. No accepted-set/scope value is copied into an
    environment override.
-6. Apply Messenger first as the smaller 73-thread canary, loading only the
+6. Apply Messenger first as the smaller 74-thread canary, loading only the
    manifest's Messenger projection and deferred-profile mode.
 7. Verify baseline stability, invariants, and side-effect absence; run exact
-   Messenger recovery passes until one pass writes nothing except explicitly
-   accepted contentless omissions.
+   Messenger recovery passes until one pass performs zero product writes and
+   reports only explicitly accepted contentless omissions.
 8. Apply Instagram with the same cutoff and only the manifest's Instagram
    projection and deferred-profile mode.
 9. Verify all history, contact, placeholder, and observed-username invariants;
-   run exact two-platform recovery passes until one pass writes nothing except
-   explicitly accepted contentless omissions. Only that final pass is history
-   idempotency proof.
+   run exact two-platform recovery passes until one pass performs zero product
+   writes and reports only explicitly accepted contentless and release-bound
+   unavailable-message omissions. Only that final pass is history idempotency
+   proof.
 10. Create the strict PII-free source profile-state snapshot/checksum. After a
     Meta quota cooldown, run the profile task dry on the clone with an explicit
     rate-limit wait budget. Require no rate-limit, authentication, identity,
@@ -1989,7 +2018,8 @@ apply:
     continuity evidence. A final live-database reconciliation must bind the
     exact protected terminal acceptance, approvals, backup, per-platform apply summaries,
     terminal history/profile zero-write evidence, release/schema proof, and
-    exact unrecoverable envelope before completion is reported.
+    exact classified structural and release-bound unavailable-message
+    omissions before completion is reported.
 19. Generate each production history, profile, delivery-checkpoint,
     delivery-audit, and final-audit phase as a complete standalone script.
     Publish the profile maintenance wrapper and storage artifact helper through
@@ -2139,11 +2169,16 @@ apply:
     - `candidate_incoming + outbound_pre_presence_import =
       imported_messages + late_already_present +
       <platform>_contentless_details`;
-    - `imported_messages = imported_incoming + imported_outgoing`; and
-    - `content_unavailable = <platform>_contentless_details`, with zero non-accepted
-      detail/API, pagination, cap, authentication, retry, sender, identity,
-      storage, or thread failure except the one exact separately fingerprinted
-      unrecoverable Instagram envelope.
+    - `imported_messages = imported_incoming + imported_outgoing`;
+    - `content_unavailable = <platform>_contentless_details`;
+    - `classified_omitted_threads = structural_unrecoverable_threads +
+      unavailable_message_threads`; and
+    - `listed_threads = message_cursor_exhausted_threads +
+      classified_omitted_threads + failed_threads`, with every listed thread in
+      exactly one terminal category, zero duplicate/uncategorized/partially
+      paginated threads, `failed_threads=0`, and zero non-accepted detail/API,
+      pagination, cap, authentication, retry, sender, identity, or storage
+      failure.
 
     The importer adds `in_scope_mids_scanned` as an explicit counter incremented
     only after the `since`/`before` filter; `mids_scanned` remains the raw
@@ -2151,8 +2186,9 @@ apply:
     `out_of_scope_mids`. These mutually exclusive equations classify every in-scope candidate as
     already present (including previously imported), policy-skipped,
     concurrently/late present, currently imported, or exact accepted
-    contentless. The unrecoverable envelope is reported outside candidate and
-    conversation totals. Actual history writes come only from the summed
+    contentless. The structural envelope and accepted release-bound unreadable
+    message connections are reported outside candidate and conversation
+    totals. Actual history writes come only from the summed
     per-platform pre/post DB deltas in the ordered attempt-result chain.
     Actual profile repairs/fills/avatar outcomes come from summed writeful
     profile results; stable-target coverage/outcomes and remaining placeholders
@@ -2232,6 +2268,197 @@ that all Meta-exposed history was exhaustively scanned and every eligible,
 recoverable message was already present or imported; it lists exact classified
 omissions and never claims that every historical event or every exposed
 profile datum was migrated.
+
+## Clone finding: listed Instagram threads with unreadable message connections
+
+The exact-image clone probe on commit
+`562cffcdfd6982cb4907845ae82674dd6928fb49` exhausted 16 conversation pages
+and scanned 751 threads: 74 Messenger and 677 Instagram. Two otherwise
+well-formed Instagram threads were listed with a single external participant,
+but their initial
+`/<conversation-id>/messages` request returned the same sanitized response:
+HTTP 400, Graph code `-1`, subcode `2207085`, type `OAuthException`. A
+separate read-only classifier repeated both requests three times against the
+same image, token, clone database, and API version; all six requests failed
+with that exact shape before returning any message page. The failed acceptance
+and diagnostic artifacts are retained under
+`candidate-562cffcdf-pr28`.
+
+Meta's published Conversations API describes listing conversations and their
+messages, plus general limitations, but does not document subcode `2207085`.
+The implementation therefore must not claim a universal meaning for that
+subcode or permanent unavailability. It classifies only the observed response
+shape as an accepted release-bound unavailable message connection for this
+migration. Readability or response-shape drift always requires a new probe and
+approval.
+
+### Chosen treatment
+
+Add a narrow `MessageConnectionUnavailableError` boundary to
+`HistoryImportGraphClient#messages`. It applies only when all of these are
+true:
+
+- platform is Instagram;
+- the initial messages request fails before any collection or message page is
+  returned;
+- the response is HTTP 400, code `-1`, subcode `2207085`, and type
+  `OAuthException`.
+
+The platform must be passed explicitly to `#messages`; the client must not
+infer it from the conversation id. The same error on Messenger, after any
+message page, with any other status/code/subcode/type, or from another Graph
+operation remains an ordinary failure that makes the scan incomplete.
+
+Classification eligibility begins in `HistoryImportService`, after the normal
+listing and identity validators have accepted the thread and exactly one
+external participant. A missing, duplicate, malformed, ambiguous, business-only,
+or otherwise invalid participant shape follows the existing structural or
+blocking path and can never be converted by this response classifier. The
+service also reads the existing importer-archive presence before making the
+messages request.
+
+For an eligible exact response, the importer writes no Contact, ContactInbox,
+Conversation, Message, attachment, marker, or profile row for that thread. It
+records `thread_omitted reason=message_connection_unavailable`, increments
+`unavailable_message_threads` and `classified_omitted_threads`, marks the
+result degraded, and continues scanning. It does not increment
+`failed_threads`. This preserves the no-empty-conversation invariant: the
+thread is a separately classified omission, not an empty archive.
+
+The fingerprint is exactly
+`Umi::Fbig::TypedValueDigest.hexdigest(value)`, using that class's type tags,
+unsigned 64-bit big-endian framing, and lexicographically encoded hash-key
+ordering. `value` is the following string-keyed typed value:
+
+```ruby
+{
+  'domain' => 'umi-fbig-unavailable-message-threads-v1',
+  'platform' => platform,
+  'threads' => records
+}
+```
+
+Each `records` element has exactly these keys and value types:
+
+```ruby
+{
+  'thread_id' => thread_id,                         # UTF-8 String
+  'external_participant_id' => participant_id,     # UTF-8 String
+  'archive_present' => archive_present,             # true or false
+  'http_status' => 400,                             # Integer
+  'error_code' => -1,                               # Integer
+  'error_subcode' => 2_207_085,                     # Integer
+  'error_type' => 'OAuthException'                  # UTF-8 String
+}
+```
+
+Validate both identifiers as nonempty valid UTF-8, reject duplicate thread ids
+instead of deduplicating, and sort records by the exact UTF-8 bytes of
+`thread_id` before hashing. No response message, trace id, request id, timestamp,
+or other volatile field enters the record. Count is `records.length`; the
+platform-specific empty fingerprint hashes the wrapper with `threads: []`.
+Tests pin empty and two-record golden vectors, order invariance, platform
+separation, exact field types, invalid encoding, and duplicate rejection.
+Summaries expose only count and fingerprint, never ids.
+
+Unaccepted-probe mode compares both observed sets with their platform-specific
+empty sets. For the current evidence it increments one
+`unavailable_message_thread_acceptance_mismatches` counter for Instagram and
+continues to exhaustion; Messenger must remain at its canonical zero count and
+empty fingerprint. The history approval v2 binds all four fixed fields:
+Messenger unavailable count/fingerprint and Instagram unavailable
+count/fingerprint. Selected-platform projection includes the matching
+contentless and unavailable-message pair. Approved Instagram scans must
+reproduce the two-record set exactly. Because classification is
+Instagram-only, a corresponding Messenger error remains a normal blocking
+failure rather than an accepted-set mismatch.
+
+The existing structural unrecoverable-envelope sidecar remains independently
+bound to the one business-only ambiguous envelope. It is not broadened to
+cover message-connection errors. Clone and production gates instead require:
+
+- `structural_unrecoverable_threads` and `ambiguous_participants` equal the
+  structural sidecar count;
+- `unavailable_message_threads` equals the approved unavailable-message count;
+- `classified_omitted_threads = structural_unrecoverable_threads +
+  unavailable_message_threads`;
+- `listed_threads = message_cursor_exhausted_threads +
+  classified_omitted_threads + failed_threads`;
+- every listed thread enters exactly one of those terminal categories, with
+  zero duplicate classifications, zero uncategorized threads, zero
+  partially-paginated threads, and `failed_threads=0` in an accepted run;
+- unavailable-message acceptance mismatches are one in the unaccepted probe
+  and zero in every approved dry/apply/recovery/idempotency run;
+- the observed unavailable-message fingerprint equals the approval;
+- `scan_complete=true`, zero retry/auth/platform/lock failures, and the
+  existing exact contentless acceptance contract.
+
+The current sealed coverage expectation is Messenger `listed_threads=74` and
+Instagram `listed_threads=677`, with 748 combined cursor-exhausted threads, one
+structural omission, two release-bound unavailable-message omissions, and zero
+failed threads. The source dry-summary checksum binds those per-platform
+counters; two approved dry runs must reproduce them. A legitimate listing
+change is drift to investigate and reapprove, not a number to force.
+
+If either thread becomes readable, a third thread acquires the same response,
+the participant/archive identity changes, or Meta changes the error shape, the
+count or fingerprint changes. A dry run fails with zero writes. In apply mode,
+the omitted thread still receives zero rows and the mismatch blocks marker
+normalization and later platforms, but valid earlier per-thread commits can
+remain because comparison occurs at cursor exhaustion. The attempt then uses
+the existing checksummed partial-write recovery contract and a fresh clone
+probe/approval; production never edits an approval in place. The two accepted
+production dry scans immediately preceding apply minimize this race window but
+cannot claim to eliminate Meta-side drift.
+
+### Alternatives rejected
+
+- **Skip every Instagram `ClientError`.** This could silently discard messages
+  for permission, contract, or malformed-request bugs and would make “all
+  exposed history” unprovable.
+- **Treat subcode `2207085` as globally permanent.** Meta does not publish that
+  semantic, and the same code after a partially readable pagination sequence
+  could discard already exposed messages.
+- **Create empty conversations for the listed threads.** There are no readable
+  messages to justify a conversation or contact, and the migration explicitly
+  forbids empty archives.
+- **Accept only an operator-maintained count.** A count of two cannot detect
+  replacement by different threads; the typed fingerprint binds the exact
+  pseudonymous set and error shape.
+- **Retry the full acceptance without a code change.** Six identical direct
+  requests across three passes ruled out the transient-error hypothesis; a
+  rerun would spend hours and fail at the same deterministic boundary.
+
+### Verification
+
+Test first and demonstrate red to green:
+
+1. `history_import_graph_client_spec.rb`: the exact initial Instagram response
+   raises `MessageConnectionUnavailableError` with sanitized shape; a changed
+   subcode, Messenger request, and the same response from a later page remain
+   blocking.
+2. `history_import_service_spec.rb`: two exact unavailable threads are omitted
+   without rows, produce a stable count/fingerprint, keep the scan complete,
+   and make an unaccepted probe fail only through the explicit acceptance
+   mismatch. An approved matching set succeeds. Count, identity, participant,
+   archive-presence, or error-shape drift blocks terminal normalization; the
+   classified thread receives zero rows, and a writeful late mismatch exercises
+   the documented bounded partial-write recovery path.
+3. `history_approval_manifest_spec.rb` and rake specs: schema and strict field
+   order bind both platform count/fingerprint pairs, enforce canonical
+   Messenger empty values and selected-platform projection, and reject missing,
+   extra, malformed, or mismatched values.
+4. Program/runbook specs: clone and production summaries enforce the structural
+   ambiguity plus unavailable-message sum, the listed-thread conservation
+   equation, zero partial/unclassified failures, separate reporting, and no
+   generic failed threads.
+5. Repeat a fresh coordinated clone acceptance on a new id and exact rebuilt
+   digest. It must reproduce or explicitly reject drift from the sealed
+   74-Messenger/677-Instagram listing counts, conserve every listed thread,
+   report one structural ambiguity and two approved release-bound unreadable
+   message connections, complete the history/profile
+   dry/apply/idempotency sequence, and seal a terminal acceptance manifest
+   before merge or deployment.
 
 Profile approval is never edited in place. If an attempt exits before sealing
 prestate, its attempt artifact must have prestate, poststate, and staging
