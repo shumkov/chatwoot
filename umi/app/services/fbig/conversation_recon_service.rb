@@ -19,6 +19,8 @@
 #              caps_hit=… [missing_lines_capped=true] [error=…]
 # The summary is emitted for every platform on every run, including failures.
 class Umi::Fbig::ConversationReconService
+  attr_reader :window_start, :grace_end
+
   # The 48 h window is structurally coupled to the daily cron cadence: every
   # period is covered by two consecutive runs, so one failed run leaves no
   # gap. Change them together or not at all.
@@ -41,10 +43,11 @@ class Umi::Fbig::ConversationReconService
   MULTIPART_SUSPECT_RANGE = 90.seconds
   PLATFORMS = %w[messenger instagram].freeze
 
-  def initialize(channel)
+  def initialize(channel, window_start: nil, grace_end: nil, now: Time.current)
     @channel = channel
-    @window_start = WINDOW_HOURS.hours.ago
-    @grace_end = RECENT_GRACE_MINUTES.minutes.ago
+    @window_start = window_start || (now - WINDOW_HOURS.hours)
+    @grace_end = grace_end || (now - RECENT_GRACE_MINUTES.minutes)
+    raise ArgumentError, 'reconciliation window must be nonempty' unless @window_start < @grace_end
   end
 
   def perform

@@ -93,8 +93,12 @@ RSpec.describe Umi::Fbig::HistoryProfileBackfillService do
     expect(result.stats).to include(
       stable_instagram_targets: 2,
       lookup_targets: 3,
+      instagram_lookup_targets: 3,
+      instagram_targets_success: 2,
       profile_requests: 3,
       profile_successes: 3,
+      instagram_placeholders_remaining: 0,
+      instagram_placeholders_remaining_fingerprint: Digest::SHA256.hexdigest(''),
       seed_targets_complete: 1,
       seed_targets_repaired: 1,
       scalar_changes_applied: 3,
@@ -361,8 +365,21 @@ RSpec.describe Umi::Fbig::HistoryProfileBackfillService do
       seed_targets: 2,
       seed_targets_complete: 2,
       seed_targets_preserved: 1,
-      seed_targets_blank_name: 1
+      seed_targets_blank_name: 1,
+      instagram_placeholders_remaining: 1,
+      instagram_placeholders_blank_name: 1,
+      instagram_placeholders_unavailable: 0,
+      instagram_placeholders_unclassified: 0
     )
+    identity = Digest::SHA256.hexdigest(
+      [blank_contact_inbox.id, blank_contact.id, blank_contact_inbox.source_id].join(':')
+    )
+    fingerprint = Digest::SHA256.hexdigest(identity)
+    expect(result.stats.values_at(
+             :instagram_placeholders_remaining_fingerprint,
+             :instagram_placeholders_classified_fingerprint,
+             :instagram_placeholders_blank_name_fingerprint
+           )).to all(eq(fingerprint))
   end
 
   it 'attaches an avatar to the current contact after a ContactInbox relink during download' do

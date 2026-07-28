@@ -47,6 +47,160 @@ describe Umi::Fbig::HistoryImportAttachmentService do
     expect(attachment.file.content_type).to eq('image/png')
   end
 
+  it 'marks staged production blobs durably and clears the intent only after association' do
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/signed-image' } }] } }
+    intent = described_class::Intent.new(
+      run_id: SecureRandom.uuid,
+      account_id: message.account_id,
+      inbox_id: message.inbox_id,
+      platform: 'instagram',
+      thread_id: 'thread-private',
+      mid: 'mid-private'
+    )
+
+    staged = service.stage(detail, intent: intent)
+    blob = staged.attachments.sole.blob.reload
+    expect(blob.metadata.fetch(described_class::INTENT_KEY)).to include(
+      'schema_version' => 1,
+      'run_id' => intent.run_id,
+      'inbox_id' => message.inbox_id,
+      'platform' => 'instagram'
+    )
+
+    service.persist!(
+      staged,
+      message_id: message.id,
+      account_id: message.account_id,
+      created_at: Time.current
+    )
+
+    expect(blob.reload.metadata).not_to have_key(described_class::INTENT_KEY)
+  end
+
+  it 'reconciles a hard-kill orphan from its durable staging intent' do
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/signed-image' } }] } }
+    intent = described_class::Intent.new(
+      run_id: SecureRandom.uuid,
+      account_id: message.account_id,
+      inbox_id: message.inbox_id,
+      platform: 'messenger',
+      thread_id: 'thread-private',
+      mid: 'mid-private'
+    )
+    staged = service.stage(detail, intent: intent)
+    blob_id = staged.attachments.sole.blob.id
+
+    result = described_class.reconcile!(inbox: message.inbox)
+
+    expect(result).to eq(purged: 1, attached: 0)
+    expect(ActiveStorage::Blob).not_to exist(blob_id)
+  end
+
+  it 'retries safely when reconciliation stops after deleting storage but before deleting the blob row' do
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/signed-image' } }] } }
+    intent = described_class::Intent.new(
+      run_id: SecureRandom.uuid,
+      account_id: message.account_id,
+      inbox_id: message.inbox_id,
+      platform: 'messenger',
+      thread_id: 'thread-private',
+      mid: 'mid-private'
+    )
+    staged = service.stage(detail, intent: intent)
+    blob = staged.attachments.sole.blob
+    blob_id = blob.id
+    blob_key = blob.key
+    destroy_calls = 0
+    allow(ActiveStorage::Blob).to receive(:find_each).and_yield(blob)
+    allow(blob).to receive(:destroy!).and_wrap_original do |original, *arguments|
+      destroy_calls += 1
+      raise StandardError, 'hard stop' if destroy_calls == 1
+
+      original.call(*arguments)
+    end
+
+    expect do
+      described_class.reconcile!(inbox: message.inbox)
+    end.to raise_error(described_class::CleanupError, 'StandardError')
+    expect(ActiveStorage::Blob).to exist(blob_id)
+    expect(blob.service).not_to exist(blob_key)
+
+    result = described_class.reconcile!(inbox: message.inbox)
+
+    expect(result).to eq(purged: 1, attached: 0)
+    expect(ActiveStorage::Blob).not_to exist(blob_id)
+    expect(blob.service).not_to exist(blob_key)
+  end
+
+  it 'clears an intent left after its exact historical attachment committed' do
+    message.update!(
+      source_id: 'mid-private',
+      additional_attributes: {
+        'umi_history_import' => true,
+        'umi_history_platform' => 'messenger',
+        'umi_history_thread_id' => 'thread-private'
+      }
+    )
+    image_file.write(File.binread(Rails.root.join('spec/assets/avatar.png')))
+    image_file.rewind
+    allow(SafeFetch).to receive(:fetch).and_yield(image_result)
+    detail = { 'attachments' => { 'data' => [{ 'image_data' => { 'url' => 'https://cdn.example/signed-image' } }] } }
+    intent = described_class::Intent.new(
+      run_id: SecureRandom.uuid,
+      account_id: message.account_id,
+      inbox_id: message.inbox_id,
+      platform: 'messenger',
+      thread_id: 'thread-private',
+      mid: message.source_id
+    )
+    staged = service.stage(detail, intent: intent)
+    blob = staged.attachments.sole.blob
+    marker = blob.metadata.fetch(described_class::INTENT_KEY)
+    service.persist!(
+      staged,
+      message_id: message.id,
+      account_id: message.account_id,
+      created_at: Time.current
+    )
+    blob.reload.update!(metadata: blob.metadata.merge(described_class::INTENT_KEY => marker))
+
+    result = described_class.reconcile!(inbox: message.inbox)
+
+    expect(result).to eq(purged: 0, attached: 1)
+    expect(blob.reload.metadata).not_to have_key(described_class::INTENT_KEY)
+  end
+
+  it 'fails closed on an invalid staging marker even when it names another inbox' do
+    blob = ActiveStorage::Blob.create_and_upload!(
+      io: StringIO.new('staged'),
+      filename: 'staged.txt',
+      content_type: 'text/plain',
+      metadata: {
+        described_class::INTENT_KEY => {
+          'schema_version' => 1,
+          'account_id' => message.account_id + 1,
+          'inbox_id' => message.inbox_id + 1
+        }
+      }
+    )
+
+    expect do
+      described_class.reconcile!(inbox: message.inbox)
+    end.to raise_error(described_class::CleanupError, 'invalid staged attachment marker')
+    expect(blob.reload).to be_present
+  ensure
+    blob&.purge
+  end
+
   it 'records permanently unavailable files without creating blobs' do
     allow(SafeFetch).to receive(:fetch).and_raise(SafeFetch::UnsafeUrlError)
     detail = { 'attachments' => { 'data' => [{ 'file_url' => 'https://cdn.example/private' }] } }

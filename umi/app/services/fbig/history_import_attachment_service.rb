@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
+require 'digest'
+
 # rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 # rubocop:disable Rails/SkipsModelValidations
 class Umi::Fbig::HistoryImportAttachmentService
   Descriptor = Data.define(:file_type, :url)
   Plan = Data.define(:descriptors, :omissions)
+  Intent = Data.define(:run_id, :account_id, :inbox_id, :platform, :thread_id, :mid)
   StagedAttachment = Data.define(:blob, :file_type, :extension)
   StageResult = Data.define(:attachments, :omissions, :bytes_used) do
     def initialize(attachments:, omissions:, bytes_used: nil)
@@ -34,6 +37,8 @@ class Umi::Fbig::HistoryImportAttachmentService
   end
 
   MAX_ATTACHMENTS = 15
+  INTENT_KEY = 'umi_fbig_history_attachment'
+  RUN_ID_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/
   FETCH_OPTIONS = {
     image: {
       allowed_content_type_prefixes: ['image/'],
@@ -61,18 +66,27 @@ class Umi::Fbig::HistoryImportAttachmentService
     Plan.new(descriptors: descriptors.first(MAX_ATTACHMENTS), omissions: omissions)
   end
 
-  def stage(detail_or_plan, remaining_budget_bytes: nil)
+  def stage(detail_or_plan, remaining_budget_bytes: nil, intent: nil)
     raise UnsafeConfigurationError if SafeFetch.allow_private_network?
 
+    validate_intent!(intent) if intent
     attachment_plan = detail_or_plan.is_a?(Plan) ? detail_or_plan : plan(detail_or_plan)
     omissions = attachment_plan.omissions.dup
     staged = []
     bytes_used = 0
-    attachment_plan.descriptors.each do |descriptor|
+    attachment_plan.descriptors.each_with_index do |descriptor, position|
       budget_limit = attachment_budget_limit(remaining_budget_bytes, bytes_used)
       raise BudgetExceeded, bytes_used if budget_limit&.zero?
 
-      bytes_used += stage_one(descriptor, staged, omissions, budget_limit, bytes_used)
+      bytes_used += stage_one(
+        descriptor,
+        staged,
+        omissions,
+        budget_limit,
+        bytes_used,
+        intent,
+        position
+      )
       raise BudgetExceeded, bytes_used if remaining_budget_bytes && bytes_used > remaining_budget_bytes
     end
     StageResult.new(attachments: staged, omissions: omissions, bytes_used: bytes_used)
@@ -111,9 +125,41 @@ class Umi::Fbig::HistoryImportAttachmentService
                                               blob_id: staged.blob.id,
                                               created_at: created_at
                                             }])
+      clear_intent!(staged.blob)
     end
 
     stage_result.attachments.size
+  end
+
+  def self.reconcile!(inbox:)
+    counts = { purged: 0, attached: 0 }
+    ActiveStorage::Blob.find_each do |blob|
+      marker = blob.metadata[INTENT_KEY]
+      next if marker.nil?
+
+      validate_marker!(marker)
+      next unless marker.is_a?(Hash) &&
+                  marker['account_id'] == inbox.account_id &&
+                  marker['inbox_id'] == inbox.id
+
+      attachments = ActiveStorage::Attachment.where(blob_id: blob.id).to_a
+      if attachments.empty?
+        blob.delete
+        blob.destroy!
+        counts[:purged] += 1
+        next
+      end
+      raise CleanupError, 'staged blob has ambiguous associations' unless attachments.one?
+
+      validate_attached_marker!(attachments.sole, marker, inbox)
+      clear_blob_intent!(blob)
+      counts[:attached] += 1
+    end
+    counts.freeze
+  rescue CleanupError
+    raise
+  rescue StandardError => e
+    raise CleanupError, e.class.name
   end
 
   def cleanup_unattached!(stage_result)
@@ -178,7 +224,8 @@ class Umi::Fbig::HistoryImportAttachmentService
     end
   end
 
-  def stage_one(descriptor, staged, omissions, budget_limit, bytes_used)
+  # rubocop:disable Metrics/ParameterLists
+  def stage_one(descriptor, staged, omissions, budget_limit, bytes_used, intent, position)
     options = FETCH_OPTIONS.fetch(descriptor.file_type)
     max_bytes = [budget_limit, default_max_bytes].compact.min
     options = options.merge(max_bytes: max_bytes) if max_bytes
@@ -195,7 +242,8 @@ class Umi::Fbig::HistoryImportAttachmentService
         io: result.tempfile,
         filename: filename,
         content_type: result.content_type,
-        identify: false
+        identify: false,
+        metadata: intent ? { INTENT_KEY => intent_marker(intent, position) } : {}
       )
       blob.save!
       staged << StagedAttachment.new(
@@ -237,6 +285,80 @@ class Umi::Fbig::HistoryImportAttachmentService
     raise
   rescue StandardError => e
     raise TransientError.new(e.class.name, bytes_used: bytes_used + downloaded_bytes)
+  end
+  # rubocop:enable Metrics/ParameterLists
+
+  def validate_intent!(intent)
+    valid = intent.is_a?(Intent) &&
+            intent.run_id.to_s.match?(RUN_ID_PATTERN) &&
+            intent.account_id.to_i.positive? &&
+            intent.inbox_id.to_i.positive? &&
+            intent.platform.in?(%w[messenger instagram]) &&
+            intent.thread_id.to_s.present? &&
+            intent.mid.to_s.present?
+    raise UnsafeConfigurationError unless valid
+  end
+
+  def intent_marker(intent, position)
+    {
+      'schema_version' => 1,
+      'run_id' => intent.run_id,
+      'account_id' => intent.account_id,
+      'inbox_id' => intent.inbox_id,
+      'platform' => intent.platform,
+      'thread_id_sha256' => Digest::SHA256.hexdigest(intent.thread_id.to_s),
+      'mid_sha256' => Digest::SHA256.hexdigest(intent.mid.to_s),
+      'position' => position
+    }
+  end
+
+  def clear_intent!(blob)
+    self.class.send(:clear_blob_intent!, blob)
+  end
+
+  class << self
+    private
+
+    def validate_marker!(marker)
+      valid = marker.keys.to_set == %w[
+        schema_version run_id account_id inbox_id platform
+        thread_id_sha256 mid_sha256 position
+      ].to_set &&
+              marker['schema_version'] == 1 &&
+              marker['run_id'].to_s.match?(RUN_ID_PATTERN) &&
+              marker['account_id'].to_i.positive? &&
+              marker['inbox_id'].to_i.positive? &&
+              marker['platform'].in?(%w[messenger instagram]) &&
+              marker['thread_id_sha256'].to_s.match?(/\A[0-9a-f]{64}\z/) &&
+              marker['mid_sha256'].to_s.match?(/\A[0-9a-f]{64}\z/) &&
+              marker['position'].is_a?(Integer) &&
+              marker['position'].between?(0, MAX_ATTACHMENTS - 1)
+      raise CleanupError, 'invalid staged attachment marker' unless valid
+    end
+
+    def validate_attached_marker!(storage_attachment, marker, inbox)
+      valid_storage = storage_attachment.name == 'file' &&
+                      storage_attachment.record_type == 'Attachment'
+      attachment = Attachment.find_by(id: storage_attachment.record_id)
+      message = attachment&.message
+      valid = valid_storage &&
+              attachment&.meta&.fetch('umi_history_import', false) == true &&
+              message&.inbox_id == inbox.id &&
+              message&.account_id == inbox.account_id &&
+              message.additional_attributes['umi_history_import'] == true &&
+              message.additional_attributes['umi_history_platform'] == marker['platform'] &&
+              Digest::SHA256.hexdigest(
+                message.additional_attributes['umi_history_thread_id'].to_s
+              ) == marker['thread_id_sha256'] &&
+              Digest::SHA256.hexdigest(message.source_id.to_s) == marker['mid_sha256']
+      raise CleanupError, 'staged attachment association is invalid' unless valid
+    end
+
+    def clear_blob_intent!(blob)
+      metadata = blob.metadata.deep_dup
+      metadata.delete(INTENT_KEY)
+      ActiveStorage::Blob.where(id: blob.id).update_all(metadata: metadata)
+    end
   end
 
   def sanitized_filename(filename)

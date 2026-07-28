@@ -153,6 +153,9 @@ describe Umi::Fbig::HistoryImportService do
 
     expect([Contact.count, ContactInbox.count, Conversation.count, Message.count, ActiveStorage::Blob.count]).to eq(counts_before)
     expect(result.stats).to include(
+      mids_scanned: 2,
+      in_scope_mids_scanned: 2,
+      out_of_scope_mids: 0,
       candidate_incoming: 1,
       candidate_outbound: 1,
       details_fetched: 2,
@@ -161,6 +164,36 @@ describe Umi::Fbig::HistoryImportService do
     )
     expect(result.attachments_downloadable).to eq('unknown')
     expect(result.write_complete).to be_nil
+  end
+
+  it 'separates raw listings from the strict pre-cutoff conservation set' do
+    cutoff_and_later = [
+      { 'id' => 'mid-at-cutoff', 'created_time' => before_time.iso8601, 'from' => { 'id' => 'person-1' } },
+      { 'id' => 'mid-after-cutoff', 'created_time' => (before_time + 1.second).iso8601, 'from' => { 'id' => 'person-1' } }
+    ]
+    allow(graph_client).to receive(:messages).and_return(
+      Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: listings + cutoff_and_later, pages: 1)
+    )
+
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['messenger'],
+      outbound_policy: nil,
+      graph_client: graph_client
+    ).perform
+
+    expect(result.stats).to include(
+      mids_scanned: 4,
+      in_scope_mids_scanned: 2,
+      out_of_scope_mids: 2,
+      candidate_incoming: 1,
+      candidate_outbound: 1
+    )
+    expect(graph_client).not_to have_received(:detail).with('mid-at-cutoff')
+    expect(graph_client).not_to have_received(:detail).with('mid-after-cutoff')
   end
 
   it 'uses platform-scoped native presence for the pre-presence outbound policy' do
@@ -724,7 +757,264 @@ describe Umi::Fbig::HistoryImportService do
     result = service.perform
 
     expect([Contact.count, Conversation.count, Message.count]).to eq(counts_before)
-    expect(result.stats[:ambiguous_participants]).to eq(1)
+    expect(result.stats).to include(
+      listed_threads: 1,
+      message_cursor_exhausted_threads: 0,
+      structural_unrecoverable_threads: 1,
+      classified_omitted_threads: 1,
+      ambiguous_participants: 1,
+      failed_threads: 0
+    )
+    expect(graph_client).not_to have_received(:messages)
+    expect(result).to be_success
+    expect(result.degraded).to be(true)
+  end
+
+  it 'accepts exact release-bound unavailable Instagram message connections without creating empty rows' do
+    unavailable_threads = %w[instagram-thread-2 instagram-thread-1].map do |thread_id|
+      {
+        'id' => thread_id,
+        'participants' => {
+          'data' => [
+            { 'id' => 'instagram-1', 'name' => 'Business' },
+            { 'id' => "person-#{thread_id.last}", 'name' => 'Historical Person' }
+          ]
+        }
+      }
+    end
+    allow(graph_client).to receive(:each_thread) do |_platform, **, &block|
+      unavailable_threads.each(&block)
+      1
+    end
+    allow(graph_client).to receive(:messages) do |platform, _thread_id, **|
+      expect(platform).to eq('instagram')
+      raise Umi::Fbig::HistoryImportGraphClient::MessageConnectionUnavailableError.new(
+        http_status: 400,
+        error_code: -1,
+        error_subcode: 2_207_085,
+        error_type: 'OAuthException'
+      )
+    end
+    records = unavailable_threads.map do |unavailable_thread|
+      {
+        'thread_id' => unavailable_thread.fetch('id'),
+        'external_participant_id' => unavailable_thread.dig('participants', 'data', 1, 'id'),
+        'archive_present' => false,
+        'http_status' => 400,
+        'error_code' => -1,
+        'error_subcode' => 2_207_085,
+        'error_type' => 'OAuthException'
+      }
+    end
+    accepted = {
+      'instagram' => Umi::Fbig::UnavailableMessageThreadFingerprint.build(
+        platform: 'instagram',
+        records: records
+      )
+    }
+
+    counts_before = [Contact.count, ContactInbox.count, Conversation.count, Message.count]
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: false,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      max_download_bytes: max_download_bytes,
+      accepted_unavailable_message_threads: accepted,
+      profile_mode: 'defer'
+    ).perform
+
+    expect([Contact.count, ContactInbox.count, Conversation.count, Message.count]).to eq(counts_before)
+    expect(result.stats).to include(
+      listed_threads: 2,
+      instagram_listed_threads: 2,
+      message_cursor_exhausted_threads: 0,
+      instagram_message_cursor_exhausted_threads: 0,
+      unavailable_message_threads: 2,
+      instagram_unavailable_message_threads: 2,
+      classified_omitted_threads: 2,
+      instagram_classified_omitted_threads: 2,
+      failed_threads: 0,
+      unavailable_message_thread_acceptance_mismatches: 0,
+      instagram_unavailable_message_thread_count: 2,
+      instagram_unavailable_message_thread_fingerprint: accepted.fetch('instagram').fingerprint,
+      exit_failures: 0
+    )
+    expect(result.scan_complete).to be(true)
+    expect(result).to be_success
+    expect(result.degraded).to be(true)
+  end
+
+  it 'reports an unaccepted unavailable-message set without creating rows' do
+    instagram_thread = {
+      'id' => 'instagram-thread-1',
+      'participants' => {
+        'data' => [
+          { 'id' => 'instagram-1', 'name' => 'Business' },
+          { 'id' => 'person-1', 'name' => 'Historical Person' }
+        ]
+      }
+    }
+    allow(graph_client).to receive(:each_thread) do |_platform, **, &block|
+      block.call(instagram_thread)
+      1
+    end
+    allow(graph_client).to receive(:messages)
+      .and_raise(
+        Umi::Fbig::HistoryImportGraphClient::MessageConnectionUnavailableError.new(
+          http_status: 400,
+          error_code: -1,
+          error_subcode: 2_207_085,
+          error_type: 'OAuthException'
+        )
+      )
+
+    counts_before = [Contact.count, ContactInbox.count, Conversation.count, Message.count]
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      profile_mode: 'defer'
+    ).perform
+
+    expect([Contact.count, ContactInbox.count, Conversation.count, Message.count]).to eq(counts_before)
+    expect(result.stats).to include(
+      unavailable_message_threads: 1,
+      classified_omitted_threads: 1,
+      failed_threads: 0,
+      unavailable_message_thread_acceptance_mismatches: 1,
+      exit_failures: 1
+    )
+    expect(result.scan_complete).to be(true)
+    expect(result).not_to be_success
+  end
+
+  it 'blocks later platforms and marker normalization when an apply unavailable-message set drifts' do
+    instagram_thread = {
+      'id' => 'instagram-thread-1',
+      'participants' => {
+        'data' => [
+          { 'id' => 'instagram-1', 'name' => 'Business' },
+          { 'id' => 'person-1', 'name' => 'Historical Person' }
+        ]
+      }
+    }
+    allow(graph_client).to receive(:each_thread) do |platform, **, &block|
+      raise "unexpected platform scan: #{platform}" unless platform == 'instagram'
+
+      block.call(instagram_thread)
+      1
+    end
+    allow(graph_client).to receive(:messages)
+      .and_raise(
+        Umi::Fbig::HistoryImportGraphClient::MessageConnectionUnavailableError.new(
+          http_status: 400,
+          error_code: -1,
+          error_subcode: 2_207_085,
+          error_type: 'OAuthException'
+        )
+      )
+
+    counts_before = [Contact.count, ContactInbox.count, Conversation.count, Message.count]
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: false,
+      platforms: %w[instagram messenger],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      max_download_bytes: max_download_bytes,
+      profile_mode: 'defer'
+    ).perform
+
+    expect([Contact.count, ContactInbox.count, Conversation.count, Message.count]).to eq(counts_before)
+    expect(graph_client).to have_received(:each_thread).once
+    expect(result.stats).to include(
+      unavailable_message_threads: 1,
+      classified_omitted_threads: 1,
+      unavailable_message_thread_acceptance_mismatches: 1,
+      marker_normalizations: 0,
+      platforms_history_complete: 0,
+      exit_failures: 1
+    )
+    expect(result.scan_complete).to be(true)
+    expect(result.write_complete).to be(false)
+    expect(result).not_to be_success
+  end
+
+  it 'preserves an existing archive when its accepted Instagram message connection becomes unavailable' do
+    thread['participants']['data'][0]['id'] = 'instagram-1'
+    listings.last['from']['id'] = 'instagram-1'
+    details['mid-in']['to']['data'][0]['id'] = 'instagram-1'
+    details['mid-out']['from']['id'] = 'instagram-1'
+    described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: false,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      max_download_bytes: max_download_bytes,
+      profile_mode: 'defer'
+    ).perform
+    counts_before = [Contact.count, ContactInbox.count, Conversation.count, Message.count]
+    accepted = {
+      'instagram' => Umi::Fbig::UnavailableMessageThreadFingerprint.build(
+        platform: 'instagram',
+        records: [
+          {
+            'thread_id' => 'thread-1',
+            'external_participant_id' => 'person-1',
+            'archive_present' => true,
+            'http_status' => 400,
+            'error_code' => -1,
+            'error_subcode' => 2_207_085,
+            'error_type' => 'OAuthException'
+          }
+        ]
+      )
+    }
+    allow(graph_client).to receive(:messages)
+      .and_raise(
+        Umi::Fbig::HistoryImportGraphClient::MessageConnectionUnavailableError.new(
+          http_status: 400,
+          error_code: -1,
+          error_subcode: 2_207_085,
+          error_type: 'OAuthException'
+        )
+      )
+
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: false,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      max_download_bytes: max_download_bytes,
+      accepted_unavailable_message_threads: accepted,
+      profile_mode: 'defer'
+    ).perform
+
+    expect([Contact.count, ContactInbox.count, Conversation.count, Message.count]).to eq(counts_before)
+    expect(result.stats).to include(
+      unavailable_message_threads: 1,
+      classified_omitted_threads: 1,
+      unavailable_message_thread_acceptance_mismatches: 0,
+      instagram_unavailable_message_thread_fingerprint: accepted.fetch('instagram').fingerprint,
+      platforms_history_complete: 1,
+      exit_failures: 0
+    )
     expect(result).to be_success
     expect(result.degraded).to be(true)
   end
@@ -1109,7 +1399,7 @@ describe Umi::Fbig::HistoryImportService do
       block.call(second_thread)
       1
     end
-    allow(graph_client).to receive(:messages) do |thread_id, **|
+    allow(graph_client).to receive(:messages) do |_platform, thread_id, **|
       items = thread_id == 'thread-2' ? [second_listing] : [listings.first]
       Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: items, pages: 1)
     end
@@ -1184,7 +1474,7 @@ describe Umi::Fbig::HistoryImportService do
       block.call(second_thread)
       1
     end
-    allow(graph_client).to receive(:messages) do |thread_id, **|
+    allow(graph_client).to receive(:messages) do |_platform, thread_id, **|
       items = thread_id == 'thread-2' ? [second_listing] : [listings.first]
       Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: items, pages: 1)
     end
@@ -1427,7 +1717,7 @@ describe Umi::Fbig::HistoryImportService do
       block.call(platform == 'instagram' ? instagram_thread : thread)
       1
     end
-    allow(graph_client).to receive(:messages) do |thread_id, **|
+    allow(graph_client).to receive(:messages) do |_platform, thread_id, **|
       items = thread_id == 'instagram-thread-1' ? instagram_listings : listings
       Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: items, pages: 1)
     end
@@ -1555,7 +1845,7 @@ describe Umi::Fbig::HistoryImportService do
       block.call(platform == 'instagram' ? instagram_thread : thread)
       1
     end
-    allow(graph_client).to receive(:messages) do |thread_id, **|
+    allow(graph_client).to receive(:messages) do |_platform, thread_id, **|
       platform_listings = thread_id == 'instagram-thread-1' ? instagram_listings : listings
       Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: platform_listings, pages: 1)
     end
@@ -1731,7 +2021,7 @@ describe Umi::Fbig::HistoryImportService do
     expect(profile_service).not_to have_received(:attach_avatar)
   end
 
-  it 'counts every queued avatar URL skipped by incomplete history' do
+  it 'skips every queued avatar before a contentless mismatch aborts remaining platforms' do
     shared_contact = create(:contact, account: account, name: 'Existing Person')
     create(:contact_inbox, contact: shared_contact, inbox: inbox, source_id: 'person-1')
     create(:contact_inbox, contact: shared_contact, inbox: inbox, source_id: 'instagram-person-1')
@@ -1743,7 +2033,7 @@ describe Umi::Fbig::HistoryImportService do
       block.call(platform == 'instagram' ? instagram_thread : thread)
       1
     end
-    allow(graph_client).to receive(:messages) do |thread_id, **|
+    allow(graph_client).to receive(:messages) do |_platform, thread_id, **|
       items = thread_id == 'instagram-thread-1' ? [] : [listings.first]
       Umi::Fbig::HistoryImportGraphClient::PageResult.new(items: items, pages: 1)
     end
@@ -1770,7 +2060,11 @@ describe Umi::Fbig::HistoryImportService do
     ).perform
 
     expect(result).not_to be_success
-    expect(result.stats).to include(avatars_offered: 2, avatars_skipped_history_incomplete: 2)
+    expect(result.stats).to include(
+      avatars_offered: 1,
+      avatars_skipped_history_incomplete: 1,
+      contentless_acceptance_mismatches: 1
+    )
   end
 
   it 'imports a thread whose downloaded attachment exactly fills the remaining budget' do
@@ -1814,7 +2108,9 @@ describe Umi::Fbig::HistoryImportService do
   it 'accounts bytes consumed by a transient attachment-stage failure before rethrowing it' do
     attachment_service = instance_double(Umi::Fbig::HistoryImportAttachmentService)
     error = Umi::Fbig::HistoryImportAttachmentService::TransientError.new('transport failed', bytes_used: 7)
-    item = described_class::PreparedMessage.new(candidate: nil, detail: {}, attachment_plan: :plan, stage_result: nil)
+    listing = described_class::NormalizedListing.new(payload: { 'id' => 'mid-1' }, created_at: before_time)
+    candidate = described_class::Candidate.new(listing: listing, direction: :incoming)
+    item = described_class::PreparedMessage.new(candidate: candidate, detail: {}, attachment_plan: :plan, stage_result: nil)
     service = described_class.new(
       inbox,
       since: nil,
@@ -1842,7 +2138,9 @@ describe Umi::Fbig::HistoryImportService do
       bytes_used: 8,
       budget_exhausted: true
     )
-    item = described_class::PreparedMessage.new(candidate: nil, detail: {}, attachment_plan: :plan, stage_result: nil)
+    listing = described_class::NormalizedListing.new(payload: { 'id' => 'mid-1' }, created_at: before_time)
+    candidate = described_class::Candidate.new(listing: listing, direction: :incoming)
+    item = described_class::PreparedMessage.new(candidate: candidate, detail: {}, attachment_plan: :plan, stage_result: nil)
     service = described_class.new(
       inbox,
       since: nil,
@@ -1966,6 +2264,40 @@ describe Umi::Fbig::HistoryImportService do
       contentless_acceptance_mismatches: 0
     )
     expect(result.stats.values_at(:profile_requests, :profile_changes_applied, :avatars_offered, :avatar_bytes)).to all(be_zero)
+  end
+
+  it 'accepts an exact listed message whose detail is permanently unavailable' do
+    accepted = {
+      'messenger' => Umi::Fbig::ContentlessFingerprint.build(platform: 'messenger', mids: ['mid-in'])
+    }
+    allow(graph_client).to receive(:detail) do |mid|
+      mid == 'mid-in' ? nil : details.fetch(mid)
+    end
+    service = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: false,
+      platforms: ['messenger'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      max_download_bytes: max_download_bytes,
+      accepted_contentless: accepted,
+      profile_mode: 'defer'
+    )
+
+    result = service.perform
+
+    expect(result).to be_success
+    expect(Message.exists?(source_id: 'mid-in')).to be(false)
+    expect(Message.exists?(source_id: 'mid-out')).to be(true)
+    expect(result.stats).to include(
+      content_unavailable: 1,
+      messenger_contentless_details: 1,
+      messenger_contentless_fingerprint: accepted.fetch('messenger').fingerprint,
+      contentless_acceptance_mismatches: 0,
+      exit_failures: 0
+    )
   end
 
   it 'retains committed rows but blocks marker normalization when the accepted contentless fingerprint drifts' do

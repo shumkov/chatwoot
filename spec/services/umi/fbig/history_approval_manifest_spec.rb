@@ -6,7 +6,7 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
 
   let(:fields) do
     {
-      'schema_version' => '1',
+      'schema_version' => '2',
       'repository_commit' => 'a' * 40,
       'image_digest' => "ghcr.io/shumkov/chatwoot@sha256:#{'b' * 64}",
       'clone_backup_id' => '20260724T190000Z-0123456789abcdef',
@@ -26,6 +26,10 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
       'messenger_fingerprint' => 'f' * 64,
       'instagram_count' => '0',
       'instagram_fingerprint' => '1' * 64,
+      'messenger_unavailable_message_thread_count' => '0',
+      'messenger_unavailable_message_thread_fingerprint' => '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa',
+      'instagram_unavailable_message_thread_count' => '2',
+      'instagram_unavailable_message_thread_fingerprint' => '3cd76b2a651ef9eab0883e3d7969b3257df34336dd44a2e7e3b05dc6c763042b',
       'placeholder_targets_sha256' => '2' * 64,
       'source_dry_log_sha256' => '3' * 64,
       'source_dry_summary_sha256' => '4' * 64,
@@ -37,7 +41,7 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
     described_class::FIELD_NAMES.map { |name| "#{name}\t#{fields.fetch(name)}\n" }.join
   end
 
-  it 'parses the exact fixed-order v1 record and projects accepted contentless sets' do
+  it 'parses the exact fixed-order v2 record and projects both accepted omission sets' do
     result = parse
 
     expect(result.account_id).to eq(1)
@@ -46,10 +50,20 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
       'instagram' => Umi::Fbig::ContentlessFingerprint::Result.new(count: 0, fingerprint: '1' * 64),
       'messenger' => Umi::Fbig::ContentlessFingerprint::Result.new(count: 2, fingerprint: 'f' * 64)
     )
+    expect(result.accepted_unavailable_message_threads(%w[instagram messenger])).to eq(
+      'instagram' => Umi::Fbig::UnavailableMessageThreadFingerprint::Result.new(
+        count: 2,
+        fingerprint: '3cd76b2a651ef9eab0883e3d7969b3257df34336dd44a2e7e3b05dc6c763042b'
+      ),
+      'messenger' => Umi::Fbig::UnavailableMessageThreadFingerprint::Result.new(
+        count: 0,
+        fingerprint: '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa'
+      )
+    )
   end
 
   it 'rejects reordered, malformed, or non-canonical records' do
-    reordered = manifest.lines.values_at(1, 0, *(2...25)).join
+    reordered = manifest.lines.values_at(1, 0, *(2...29)).join
     crlf = manifest.gsub("\n", "\r\n")
     extra_tab = manifest.sub("approved_by\toperator@example.com", "approved_by\toperator\textra")
     noncanonical_count = manifest.sub("messenger_count\t2", "messenger_count\t02")
@@ -61,7 +75,7 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
 
   it 'rejects values outside the manifest contract' do
     invalid_fields = {
-      'schema_version' => '2',
+      'schema_version' => '1',
       'repository_commit' => 'A' * 40,
       'image_digest' => "ghcr.io/shumkov/chatwoot:umi-latest@sha256:#{'b' * 64}",
       'clone_backup_id' => '20260724T190000+0000',
@@ -73,6 +87,7 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
       'profile_mode' => 'inline',
       'messenger_count' => '2147483648',
       'messenger_fingerprint' => 'F' * 64,
+      'messenger_unavailable_message_thread_count' => '1',
       'approved_by' => '',
       'approved_at' => '2026-07-24T20:00:00+00:00'
     }
@@ -85,12 +100,12 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
 
   it 'loads only a checksummed fixed-basename artifact from a locked directory' do
     Dir.mktmpdir do |directory|
-      manifest_path = File.join(directory, 'fbig-approval-v1.tsv')
+      manifest_path = File.join(directory, 'fbig-approval-v2.tsv')
       checksum_path = "#{manifest_path}.sha256"
       File.binwrite(manifest_path, manifest)
       File.binwrite(
         checksum_path,
-        "#{Digest::SHA256.hexdigest(manifest)}  fbig-approval-v1.tsv\n"
+        "#{Digest::SHA256.hexdigest(manifest)}  fbig-approval-v2.tsv\n"
       )
       File.chmod(0o700, directory)
       File.chmod(0o400, manifest_path)

@@ -82,6 +82,41 @@ describe Umi::Fbig::ConversationReconService do
         .with(a_string_matching(/stage=reconcile_summary platform=messenger threads=1 mids=0 missing=0/))
     end
 
+    it 'uses an inclusive explicit lower bound for post-cutoff checkpoints' do
+      cutoff = Time.zone.parse('2026-07-25 19:00:00 UTC')
+      grace_end = cutoff + 2.hours
+      checkpoint = described_class.new(
+        channel,
+        window_start: cutoff,
+        grace_end: grace_end
+      )
+      allow(Rails.logger).to receive(:warn).and_call_original
+      stub_threads('messenger', [thread_item('t-1', grace_end)])
+      stub_messages('t-1', [
+                      message_item('mid-before-cutoff', cutoff - 1.second),
+                      message_item('mid-at-cutoff', cutoff),
+                      message_item('mid-after-cutoff', cutoff + 1.second)
+                    ])
+
+      checkpoint.perform
+
+      expect(checkpoint.window_start).to eq(cutoff)
+      expect(checkpoint.grace_end).to eq(grace_end)
+      expect(Rails.logger).to have_received(:warn)
+        .with(a_string_matching(/stage=reconcile_summary platform=messenger threads=1 mids=2 missing=2/))
+      expect(Rails.logger).not_to have_received(:warn)
+        .with(a_string_matching(/mid=mid-before-cutoff/))
+    end
+
+    it 'rejects an empty reconciliation interval before Meta access' do
+      cutoff = Time.zone.parse('2026-07-25 19:00:00 UTC')
+
+      expect do
+        described_class.new(channel, window_start: cutoff, grace_end: cutoff)
+      end.to raise_error(ArgumentError, 'reconciliation window must be nonempty')
+      expect(api).not_to have_received(:get_connections)
+    end
+
     it 'does not stop the thread scan on a single out-of-window straggler' do
       stub_threads('messenger', [
                      thread_item('t-new', 1.hour.ago),
