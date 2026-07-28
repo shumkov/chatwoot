@@ -202,11 +202,79 @@ stage_value() {
   ' "$path"
 }
 
+verify_seed_target_conservation() {
+  local log="$1"
+  local summary="$2"
+  local platforms
+  local expected
+  local seed_targets
+  local seed_targets_complete
+  local seed_targets_success
+  local seed_targets_unavailable
+  local seed_targets_blocking
+  local seed_targets_repaired
+  local seed_targets_preserved
+  local seed_targets_blank_name
+  local seed_targets_blocked
+  local value
+
+  platforms="$(stage_value "$log" history_profiles_start platforms)"
+  expected="$(stage_value "$log" history_profiles_start seed_targets_expected)"
+  [[ "$expected" =~ ^[0-9]+$ ]]
+  if [[ ",$platforms," = *,instagram,* ]]; then
+    test "$expected" -gt 0
+  else
+    test "$platforms" = messenger
+    test "$expected" = 0
+  fi
+
+  seed_targets="$(stage_value "$summary" history_profiles_summary seed_targets)"
+  seed_targets_complete="$(
+    stage_value "$summary" history_profiles_summary seed_targets_complete
+  )"
+  seed_targets_success="$(
+    stage_value "$summary" history_profiles_summary seed_targets_success
+  )"
+  seed_targets_unavailable="$(
+    stage_value "$summary" history_profiles_summary seed_targets_unavailable
+  )"
+  seed_targets_blocking="$(
+    stage_value "$summary" history_profiles_summary seed_targets_blocking
+  )"
+  seed_targets_repaired="$(
+    stage_value "$summary" history_profiles_summary seed_targets_repaired
+  )"
+  seed_targets_preserved="$(
+    stage_value "$summary" history_profiles_summary seed_targets_preserved
+  )"
+  seed_targets_blank_name="$(
+    stage_value "$summary" history_profiles_summary seed_targets_blank_name
+  )"
+  seed_targets_blocked="$(
+    stage_value "$summary" history_profiles_summary seed_targets_blocked
+  )"
+  for value in \
+    "$seed_targets" "$seed_targets_complete" "$seed_targets_success" \
+    "$seed_targets_unavailable" "$seed_targets_blocking" \
+    "$seed_targets_repaired" "$seed_targets_preserved" \
+    "$seed_targets_blank_name" "$seed_targets_blocked"; do
+    [[ "$value" =~ ^[0-9]+$ ]]
+  done
+
+  test "$seed_targets" = "$expected"
+  test "$seed_targets_complete" = "$expected"
+  test "$expected" -eq \
+    "$((seed_targets_success + seed_targets_unavailable + seed_targets_blocking))"
+  test "$expected" -eq \
+    "$((seed_targets_repaired + seed_targets_preserved + seed_targets_blank_name + seed_targets_unavailable + seed_targets_blocked))"
+  test "$seed_targets_blocking" = "$seed_targets_blocked"
+}
+
 ```
 
 The immutable input artifacts are:
 
-- `fbig-profile-targets-v1.tsv`: exactly six sorted
+- `fbig-profile-targets-v1.tsv`: one to 10,000 sorted
   `contact_inbox_id<TAB>contact_id<TAB>source_id` rows;
 - `fbig-approval-v2.tsv` plus `.sha256`: the exact 29-field
   `HistoryApprovalManifest::FIELD_NAMES` order;
@@ -232,7 +300,7 @@ must bind:
 - both exact unavailable-message thread count/fingerprints;
 - the strict unrecoverable-envelope sidecar checksum through the source probe
   log hash;
-- the six-row target SHA; and
+- the snapshot-bound target SHA; and
 - the acceptance probe log and summary hashes.
 
 The initial profile approval must bind that history approval, the same merged
@@ -510,10 +578,11 @@ clone_compose run --rm --no-deps -T rails bundle exec rails runner '
 '
 ```
 
-Create the strict six-row Instagram placeholder target file from the restored
-clone before history can add contacts. The query uses noclobber and fails unless
-the persisted production snapshot contains exactly the six exact legacy
-placeholder names:
+Create the strict bounded Instagram placeholder target file from the restored
+clone before history can add contacts. The query uses noclobber, selects every
+exact generated placeholder with canonical Instagram-only conversation
+evidence, fails on ambiguous cross-platform evidence, and derives the positive
+row count from the strict parser:
 
 ```bash
 clone_compose run --rm --no-deps -T \
@@ -526,12 +595,21 @@ clone_compose run --rm --no-deps -T \
     actual_database = ActiveRecord::Base.connection.select_value("SELECT current_database()")
     abort("clone database mismatch") unless actual_database == expected_database
     inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_TARGET_INBOX_ID"), 10))
-    rows = inbox.contact_inboxes.includes(:contact).select do |contact_inbox|
+    candidate_ids = inbox.contact_inboxes.includes(:contact).select do |contact_inbox|
       source_id = contact_inbox.source_id.to_s
       source_id.match?(/\A[1-9][0-9]*\z/) &&
         contact_inbox.contact&.name == "Instagram user #{source_id.last(4)}"
-    end.sort_by(&:id)
-    abort("expected exactly six Instagram placeholder targets") unless rows.size == 6
+    end.map(&:id)
+    candidates = inbox.contact_inboxes
+                      .includes(:contact, :conversations)
+                      .where(id: candidate_ids)
+                      .to_a
+    classified = candidates.group_by do |contact_inbox|
+      Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox)
+    end
+    abort("ambiguous Instagram placeholder target") if classified[:ambiguous].present?
+    rows = classified.fetch(:instagram, []).sort_by(&:id)
+    abort("no Instagram placeholder targets") if rows.empty?
     bytes = rows.map do |contact_inbox|
       [contact_inbox.id, contact_inbox.contact_id, contact_inbox.source_id].join("\t")
     end.join("\n") + "\n"
@@ -542,6 +620,12 @@ clone_compose run --rm --no-deps -T \
   '
 test "$(stat -c '%u:%a:%h' "$TARGET_DIR/fbig-profile-targets-v1.tsv")" = "0:400:1"
 ```
+
+The profile service reruns the same canonical platform classifier immediately
+before each Meta profile lookup and again under every scalar/avatar write lock.
+Final audit independently validates each indexed result's checksummed attempt
+manifest and binds the exact run-log and summary hashes before checking seed
+conservation.
 
 Capture the exact original importer baseline before any history scan can write.
 The program emits only internal IDs, counts, file sizes, and SHA-256 hashes. It
@@ -1331,7 +1415,7 @@ clone_compose run --rm --no-deps -T \
             manifest.since == "all" &&
             manifest.outbound_policy == "pre_presence" &&
             manifest.profile_mode == "defer" &&
-            targets.size == 6
+            targets.any?
     abort("history approval does not bind the accepted clone") unless
       provenance_valid && scope_valid && valid
     puts "[UMI-FBIG] stage=history_approval_validated sha256=#{manifest.sha256}"
@@ -1845,7 +1929,7 @@ Conversation, Message, or Attachment product row.
 
 The final clone profile pass must have zero scalar/avatar writes and one
 terminal success, unavailable, or blocking outcome for every stable target and
-all six seeds. Blocking outcomes are not approval. Preserve and hash the three
+every sealed seed. Blocking outcomes are not approval. Preserve and hash the three
 logs, terminal summaries, source state, attempt evidence, and stable-target
 counts/fingerprints.
 
@@ -1931,6 +2015,7 @@ verify_profile_attempt() {
     )
   done
 
+  verify_seed_target_conservation "$log" "$summary"
   while IFS=$'\t' read -r key expected; do
     test "$(stage_value "$log" history_profiles_start "$key")" = "$expected"
   done < <(
@@ -1954,10 +2039,7 @@ verify_profile_attempt() {
       profile_errors 0 \
       avatar_failures 0 \
       messenger_targets_blocking 0 \
-      instagram_targets_blocking 0 \
-      seed_targets 6 \
-      seed_targets_complete 6 \
-      seed_targets_blocking 0
+      instagram_targets_blocking 0
   )
   test "$(stage_value "$summary" history_profiles_summary prestate_sha256)" = \
     "$expected_prestate_sha256"
@@ -2163,7 +2245,7 @@ clone_compose run --rm --no-deps -T \
       profile.max_avatar_download_bytes ==
         Integer(ENV.fetch("UMI_FBIG_EXPECTED_MAX_DOWNLOAD_BYTES"), 10) &&
       profile.platforms == %w[messenger instagram] &&
-      targets.size == 6
+      targets.any?
     abort("profile approval identity or evidence mismatch") unless
       evidence_valid && scope_valid && identity_valid
 
@@ -4237,6 +4319,8 @@ Record per platform:
 - attachments offered/downloaded/unavailable and bytes consumed;
 - stable profile targets, successes, permanent unavailability, and blocking
   failures;
+- the strict-parser-derived sealed Instagram seed count and its per-result
+  conservation;
 - exact placeholder-name repairs, username/optional-field fills, avatars
   offered/preserved/attached/unavailable, and avatar bytes; and
 - the final zero-write history and profile summaries.

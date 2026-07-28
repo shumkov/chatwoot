@@ -98,11 +98,16 @@ class Umi::Fbig::ProfileTaskConfiguration
       raise ConfigurationError, 'predecessor profile state does not match the inbox'
     end
 
+    contact_inboxes_by_id = ContactInbox
+                            .includes(:contact, :conversations)
+                            .where(id: options.seed_targets.map(&:contact_inbox_id))
+                            .index_by(&:id)
     options.seed_targets.each do |row|
-      contact_inbox = ContactInbox.find_by(id: row.contact_inbox_id)
+      contact_inbox = contact_inboxes_by_id[row.contact_inbox_id]
       valid_target = contact_inbox&.inbox_id == inbox.id &&
                      contact_inbox.source_id.to_s == row.source_id &&
-                     contact_inbox.contact&.account_id == inbox.account_id
+                     contact_inbox.contact&.account_id == inbox.account_id &&
+                     Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox) == :instagram
       raise ConfigurationError, 'profile target mapping does not match the inbox' unless valid_target
     end
     if options.profile_approval

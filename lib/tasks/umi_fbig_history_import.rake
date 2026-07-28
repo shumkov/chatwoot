@@ -110,6 +110,7 @@ namespace :umi do
         "inbox_id=#{inbox.id}",
         "dry_run=#{options.dry_run}",
         "platforms=#{options.platforms.join(',')}",
+        "seed_targets_expected=#{options.seed_targets.size}",
         "history_manifest_sha256=#{options.history_manifest.sha256}",
         "profile_approval_sha256=#{options.profile_approval&.sha256 || 'none'}",
         "pre_attempt_backup_sha256=#{options.pre_attempt_backup&.sha256 || 'none'}",

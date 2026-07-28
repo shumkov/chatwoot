@@ -6,18 +6,25 @@ require 'pathname'
 # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 class Umi::Fbig::ProfileTargetManifest
   Row = Data.define(:contact_inbox_id, :contact_id, :source_id)
+  MAX_ROWS = 10_000
+  MAX_LINE_BYTES = 256
+  MAX_BYTES = MAX_ROWS * MAX_LINE_BYTES
 
   class InvalidManifest < StandardError; end
 
   def self.parse(bytes)
+    raise InvalidManifest if bytes.to_s.bytesize > MAX_BYTES
+
     text = bytes.to_s.dup.force_encoding(Encoding::UTF_8)
     raise InvalidManifest unless text.valid_encoding? && text.end_with?("\n")
     raise InvalidManifest if text.include?("\r") || text.include?("\0")
 
-    lines = text.lines(chomp: true)
-    raise InvalidManifest unless lines.size == 6
+    raw_lines = text.lines
+    raise InvalidManifest if raw_lines.empty? || raw_lines.size > MAX_ROWS
+    raise InvalidManifest if raw_lines.any? { |line| line.bytesize > MAX_LINE_BYTES }
 
-    rows = lines.map do |line|
+    rows = raw_lines.map do |raw_line|
+      line = raw_line.chomp
       values = line.split("\t", -1)
       raise InvalidManifest unless values.size == 3 && values.all? { |value| value.match?(/\A[1-9][0-9]*\z/) }
 
@@ -60,8 +67,10 @@ class Umi::Fbig::ProfileTargetManifest
                    (opened_stat.mode & 0o777) == 0o400
       raise InvalidManifest unless valid_file
 
-      bytes = file.read
+      bytes = file.read(MAX_BYTES + 1)
     end
+    raise InvalidManifest if bytes.bytesize > MAX_BYTES
+
     path_stat = File.lstat(pathname)
     raise InvalidManifest if path_stat.symlink?
     raise InvalidManifest unless path_stat.dev == opened_stat.dev && path_stat.ino == opened_stat.ino

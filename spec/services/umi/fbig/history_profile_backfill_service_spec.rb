@@ -18,6 +18,7 @@ RSpec.describe Umi::Fbig::HistoryProfileBackfillService do
 
   before do
     allow(Facebook::Messenger::Subscriptions).to receive(:subscribe).and_return(true)
+    allow(Umi::Fbig::ContactInboxPlatformEvidence).to receive(:classify).and_return(:instagram)
   end
 
   after do
@@ -204,6 +205,96 @@ RSpec.describe Umi::Fbig::HistoryProfileBackfillService do
     expect(graph_client).not_to have_received(:profile)
   end
 
+  it 'rejects a sealed seed without canonical Instagram-only evidence before Graph access' do
+    seed_contact = create(:contact, account: account, name: 'Instagram user 303')
+    seed_contact_inbox = create(:contact_inbox, contact: seed_contact, inbox: inbox, source_id: '303')
+    seed = Umi::Fbig::ProfileTargetManifest::Row.new(
+      contact_inbox_id: seed_contact_inbox.id,
+      contact_id: seed_contact.id,
+      source_id: '303'
+    )
+    allow(Umi::Fbig::ContactInboxPlatformEvidence).to receive(:classify)
+      .with(seed_contact_inbox).and_return(:messenger)
+    allow(graph_client).to receive(:each_thread)
+
+    expect do
+      described_class.new(
+        inbox,
+        dry_run: true,
+        platforms: ['instagram'],
+        history_configuration: history_configuration,
+        seed_targets: [seed],
+        graph_client: graph_client,
+        max_rate_limit_wait_seconds: 2_000
+      ).perform
+    end.to raise_error(described_class::StructuralError, /invalid Instagram seed/)
+
+    expect(graph_client).not_to have_received(:each_thread)
+  end
+
+  it 'does not request or update a sealed Instagram seed after its platform evidence drifts before lookup' do
+    seed_contact = create(:contact, account: account, name: 'Instagram user 303')
+    seed_contact_inbox = create(:contact_inbox, contact: seed_contact, inbox: inbox, source_id: '303')
+    seed = Umi::Fbig::ProfileTargetManifest::Row.new(
+      contact_inbox_id: seed_contact_inbox.id,
+      contact_id: seed_contact.id,
+      source_id: '303'
+    )
+    allow(Umi::Fbig::ContactInboxPlatformEvidence).to receive(:classify)
+      .with(seed_contact_inbox).and_return(:instagram, :messenger)
+    allow(graph_client).to receive(:each_thread).and_return(1)
+    allow(graph_client).to receive(:profile)
+
+    result = described_class.new(
+      inbox,
+      dry_run: false,
+      platforms: ['instagram'],
+      history_configuration: history_configuration,
+      seed_targets: [seed],
+      graph_client: graph_client,
+      max_download_bytes: 15.megabytes,
+      max_rate_limit_wait_seconds: 2_000
+    ).perform
+
+    expect(result).not_to be_success
+    expect(graph_client).not_to have_received(:profile)
+    expect(seed_contact.reload.name).to eq('Instagram user 303')
+  end
+
+  it 'does not update a sealed Instagram seed after its platform evidence drifts under the write lock' do
+    seed_contact = create(:contact, account: account, name: 'Instagram user 303')
+    seed_contact_inbox = create(:contact_inbox, contact: seed_contact, inbox: inbox, source_id: '303')
+    seed = Umi::Fbig::ProfileTargetManifest::Row.new(
+      contact_inbox_id: seed_contact_inbox.id,
+      contact_id: seed_contact.id,
+      source_id: '303'
+    )
+    allow(Umi::Fbig::ContactInboxPlatformEvidence).to receive(:classify)
+      .with(seed_contact_inbox).and_return(:instagram, :instagram, :instagram, :messenger)
+    allow(graph_client).to receive(:each_thread).and_return(1)
+    allow(graph_client).to receive(:profile).and_return(
+      Umi::Fbig::HistoryImportGraphClient::ProfileResult.new(
+        attributes: { 'id' => '303', 'name' => 'Profile 303' },
+        unavailable_reason: nil
+      )
+    )
+
+    result = described_class.new(
+      inbox,
+      dry_run: false,
+      platforms: ['instagram'],
+      history_configuration: history_configuration,
+      seed_targets: [seed],
+      graph_client: graph_client,
+      max_download_bytes: 15.megabytes,
+      max_rate_limit_wait_seconds: 2_000
+    ).perform
+
+    expect(result).not_to be_success
+    expect(graph_client).to have_received(:profile).once
+    expect(seed_contact.reload.name).to eq('Instagram user 303')
+  end
+
   it 'skips one ambiguous participant while continuing to profile valid and stable targets' do
     seed_contact = create(:contact, account: account, name: 'Instagram user 303')
     seed_contact_inbox = create(:contact_inbox, contact: seed_contact, inbox: inbox, source_id: '303')
@@ -263,6 +354,41 @@ RSpec.describe Umi::Fbig::HistoryProfileBackfillService do
       profile_successes: 2,
       exit_failures: 0
     )
+  end
+
+  it 'blocks a current Instagram participant mapped to Messenger platform evidence' do
+    contact = create(:contact, account: account, name: 'Instagram user 202')
+    contact_inbox = create(:contact_inbox, contact: contact, inbox: inbox, source_id: '202')
+    thread = {
+      'id' => 'thread-current',
+      'participants' => {
+        'data' => [
+          { 'id' => '2000', 'name' => 'Business' },
+          { 'id' => '202', 'name' => 'Current Participant' }
+        ]
+      }
+    }
+    allow(Umi::Fbig::ContactInboxPlatformEvidence).to receive(:classify)
+      .with(contact_inbox).and_return(:messenger)
+    allow(graph_client).to receive(:each_thread) do |_platform, **, &block|
+      block.call(thread)
+      1
+    end
+    allow(graph_client).to receive(:profile)
+
+    result = described_class.new(
+      inbox,
+      dry_run: true,
+      platforms: ['instagram'],
+      history_configuration: history_configuration,
+      seed_targets: [],
+      graph_client: graph_client,
+      max_rate_limit_wait_seconds: 2_000
+    ).perform
+
+    expect(result).not_to be_success
+    expect(result.stats).to include(profile_requests: 0, exit_failures: 1)
+    expect(graph_client).not_to have_received(:profile)
   end
 
   it 'stops all later profile requests after a blocking profile contract failure' do

@@ -718,13 +718,16 @@ validate_history_terminal_summary() {
 }
 
 validate_profile_terminal_summary() {
-  local summary="$1"
+  local log="$1"
+  local summary="$2"
   local counter
   local remaining
   local unavailable
   local blank_name
 
   require_root_artifact "$summary"
+  require_root_artifact "$log"
+  verify_seed_target_conservation "$log" "$summary"
   test "$(stage_value "$summary" history_profiles_summary scan_complete)" = true
   test "$(stage_value "$summary" history_profiles_summary write_complete)" = true
   for counter in \
@@ -1073,7 +1076,8 @@ finalize_acceptance() {
 
   validate_history_terminal_summary "$messenger_summary" messenger
   validate_history_terminal_summary "$instagram_summary" instagram
-  validate_profile_terminal_summary "$profile_summary"
+  validate_profile_terminal_summary \
+    "$profile_directory/clone-profile.log" "$profile_summary"
   verify_checksum \
     "$profile_directory/fbig-profile-clone-prestate-v1.tsv" \
     "$profile_directory/fbig-profile-clone-prestate-v1.tsv.sha256"

@@ -182,11 +182,16 @@ class Umi::Fbig::HistoryProfileBackfillService
       )
     end
 
+    contact_inboxes_by_id = ContactInbox
+                            .includes(:contact, :conversations)
+                            .where(id: @seed_targets.map(&:contact_inbox_id))
+                            .index_by(&:id)
     @seed_targets.each do |row|
-      contact_inbox = ContactInbox.find_by(id: row.contact_inbox_id)
+      contact_inbox = contact_inboxes_by_id[row.contact_inbox_id]
       valid = contact_inbox&.inbox_id == @inbox.id &&
               contact_inbox.source_id.to_s == row.source_id.to_s &&
-              contact_inbox.contact&.account_id == @account.id
+              contact_inbox.contact&.account_id == @account.id &&
+              Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox) == :instagram
       raise StructuralError, "invalid Instagram seed #{row.contact_inbox_id}" unless valid
 
       add_target!(
@@ -223,6 +228,10 @@ class Umi::Fbig::HistoryProfileBackfillService
           @stats[:participants_without_contact] += 1
           next
         end
+        unless Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox) == platform.to_sym
+          raise StructuralError, 'profile participant mapping has conflicting platform evidence'
+        end
+
         add_target!(
           platform: platform,
           source_id: participant.fetch('id'),
@@ -317,6 +326,7 @@ class Umi::Fbig::HistoryProfileBackfillService
   end
 
   def process_target!(target)
+    current_target!(target, lock: false)
     @stats[:profile_requests] += 1
     profile_result = graph_client.profile(target.platform, target.source_id)
     if profile_result.respond_to?(:unavailable_reason) && profile_result.unavailable_reason.present?
@@ -399,7 +409,9 @@ class Umi::Fbig::HistoryProfileBackfillService
   def current_target!(target, lock:, contact_inbox: nil)
     contact_inbox ||= ContactInbox.find(target.contact_inbox_id)
     contact_inbox.lock! if lock
-    valid = contact_inbox.inbox_id == @inbox.id && contact_inbox.source_id.to_s == target.source_id
+    valid = contact_inbox.inbox_id == @inbox.id &&
+            contact_inbox.source_id.to_s == target.source_id &&
+            Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox) == target.platform.to_sym
     raise StructuralError unless valid
 
     contact = Contact.find(contact_inbox.contact_id)
@@ -411,7 +423,9 @@ class Umi::Fbig::HistoryProfileBackfillService
   def with_current_contact(target)
     ContactInbox.transaction do
       contact_inbox = ContactInbox.lock.find(target.contact_inbox_id)
-      valid = contact_inbox.inbox_id == @inbox.id && contact_inbox.source_id.to_s == target.source_id
+      valid = contact_inbox.inbox_id == @inbox.id &&
+              contact_inbox.source_id.to_s == target.source_id &&
+              Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox) == target.platform.to_sym
       raise StructuralError unless valid
 
       contact = Contact.lock.find(contact_inbox.contact_id)

@@ -265,6 +265,74 @@ stage_value() {
   ' "$path" || die "missing or ambiguous $stage.$key: $path"
 }
 
+verify_seed_target_conservation() {
+  local log="$1"
+  local summary="$2"
+  local platforms
+  local expected
+  local seed_targets
+  local seed_targets_complete
+  local seed_targets_success
+  local seed_targets_unavailable
+  local seed_targets_blocking
+  local seed_targets_repaired
+  local seed_targets_preserved
+  local seed_targets_blank_name
+  local seed_targets_blocked
+  local value
+
+  platforms="$(stage_value "$log" history_profiles_start platforms)"
+  expected="$(stage_value "$log" history_profiles_start seed_targets_expected)"
+  [[ "$expected" =~ ^[0-9]+$ ]]
+  if [[ ",$platforms," = *,instagram,* ]]; then
+    test "$expected" -gt 0
+  else
+    test "$platforms" = messenger
+    test "$expected" = 0
+  fi
+
+  seed_targets="$(stage_value "$summary" history_profiles_summary seed_targets)"
+  seed_targets_complete="$(
+    stage_value "$summary" history_profiles_summary seed_targets_complete
+  )"
+  seed_targets_success="$(
+    stage_value "$summary" history_profiles_summary seed_targets_success
+  )"
+  seed_targets_unavailable="$(
+    stage_value "$summary" history_profiles_summary seed_targets_unavailable
+  )"
+  seed_targets_blocking="$(
+    stage_value "$summary" history_profiles_summary seed_targets_blocking
+  )"
+  seed_targets_repaired="$(
+    stage_value "$summary" history_profiles_summary seed_targets_repaired
+  )"
+  seed_targets_preserved="$(
+    stage_value "$summary" history_profiles_summary seed_targets_preserved
+  )"
+  seed_targets_blank_name="$(
+    stage_value "$summary" history_profiles_summary seed_targets_blank_name
+  )"
+  seed_targets_blocked="$(
+    stage_value "$summary" history_profiles_summary seed_targets_blocked
+  )"
+  for value in \
+    "$seed_targets" "$seed_targets_complete" "$seed_targets_success" \
+    "$seed_targets_unavailable" "$seed_targets_blocking" \
+    "$seed_targets_repaired" "$seed_targets_preserved" \
+    "$seed_targets_blank_name" "$seed_targets_blocked"; do
+    [[ "$value" =~ ^[0-9]+$ ]]
+  done
+
+  test "$seed_targets" = "$expected"
+  test "$seed_targets_complete" = "$expected"
+  test "$expected" -eq \
+    "$((seed_targets_success + seed_targets_unavailable + seed_targets_blocking))"
+  test "$expected" -eq \
+    "$((seed_targets_repaired + seed_targets_preserved + seed_targets_blank_name + seed_targets_unavailable + seed_targets_blocked))"
+  test "$seed_targets_blocking" = "$seed_targets_blocked"
+}
+
 fsync_path() {
   python3 - "$1" <<'PY'
 import os

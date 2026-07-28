@@ -24,7 +24,8 @@ rejects any different configuration before it calls Meta. Existing contacts
 also return from the importer without profile enrichment. When Instagram
 profile lookup failed during the partial import, the importer used the same
 fallback as the live channel, `Instagram user <last four source-id digits>`.
-Six production contacts currently have that exact generated placeholder.
+Six production contacts had that exact generated placeholder on 2026-07-24;
+the fresh 2026-07-28 coordinated snapshot contains seven.
 
 ## Production evidence
 
@@ -581,20 +582,131 @@ dedicated Ruby data parser.
 The `placeholder_targets_sha256` covers the fixed basename
 `fbig-profile-targets-v1.tsv`, a second root-owned mode `0400` regular file in
 the same `0700` audit directory. It is strict UTF-8 TSV with
-exactly six LF-terminated rows, sorted by numeric ContactInbox id, each
+one or more LF-terminated rows, sorted by numeric ContactInbox id, each
 `contact_inbox_id<TAB>contact_id<TAB>instagram_source_id`. Every value is a
 positive canonical decimal integer; each ContactInbox id and source id is
 unique; there are exactly two tabs per row; and the parser applies the same
 encoding, control-character, file-type, ownership, mode, link-count, and
 non-execution rules as the approval manifest. The baseline query creates this
-file with noclobber from the six exact target-inbox contacts whose persisted
-name equals `Instagram user #{source_id.last(4)}`. Clone and production
-Instagram profile consumers verify its checksum and require every row still to
-map the recorded ContactInbox, source id, account, inbox, and Instagram
-platform before any Meta request or write. The recorded `contact_id` is
-provenance, not a live equality requirement: a legitimate ContactInbox relink
-resolves and enriches the current Contact under the write-time locks below.
-The write-time exact-name comparison still preserves a concurrent agent edit.
+file with noclobber from every exact target-inbox contact whose persisted name
+equals `Instagram user #{source_id.last(4)}` and whose ContactInbox has
+canonical Instagram-only evidence.
+
+A Facebook Page inbox contains both Messenger and Instagram ContactInboxes and
+the ContactInbox row itself has no platform column.
+`Umi::Fbig::ContactInboxPlatformEvidence` is therefore authoritative in seed
+sealing, every seed consumer, current
+extra-placeholder reconciliation, and final live audit. For every conversation
+linked to the ContactInbox in the target inbox, it derives:
+
+- Instagram evidence from
+  `additional_attributes.type=instagram_direct_message` or an exact UMI
+  archive marker whose schema, platform, thread id, configuration shape, and
+  deterministic identifier prove `platform=instagram`;
+- Messenger evidence from a non-Instagram native conversation or an exact UMI
+  archive marker proving `platform=messenger`; and
+- ambiguous evidence when the linked set contains both platform signals or
+  when a single exact archive marker conflicts with its conversation type.
+
+Only Instagram evidence with no Messenger evidence is eligible. Messenger-only,
+ambiguous, or evidence-free exact-name rows are excluded from sealing; an
+ambiguous row fails the sealing stage rather than being silently skipped.
+Every consumer recomputes the same classification and rejects any sealed row
+that is no longer Instagram-only. This prevents a Messenger/manual contact
+whose name happens to equal the generated string from receiving an Instagram
+Graph request or contaminating remaining-placeholder totals.
+
+Clone and production Instagram profile consumers verify the sidecar checksum
+and require every row still to map the recorded ContactInbox, source id,
+account, inbox, and canonical Instagram-only evidence before any Meta request
+or write. The recorded `contact_id` is provenance, not a live equality
+requirement: a legitimate ContactInbox relink resolves and enriches the current
+Contact under the write-time locks below. The write-time exact-name comparison
+still preserves a concurrent agent edit.
+
+The row count is snapshot-bound, not hardcoded, but remains strictly bounded.
+The parser accepts at most 10,000 rows, at most 256 bytes per LF-terminated
+row, and at most 2,560,000 bytes for the whole file. It reads at most
+2,560,001 bytes before rejecting an oversized file, so a corrupt sidecar
+cannot cause an unbounded read or an unbounded number of Meta requests. The
+first production-shaped
+snapshot contained six exact generated placeholders, but the fresh coordinated
+snapshot on 2026-07-28 contained seven because normal Instagram delivery had
+created another exact placeholder. A fixed count therefore rejects valid new
+contacts and would require an unsafe code release for every future contact.
+The sealed file SHA remains the release-bound fingerprint; profile consumers
+derive its positive row count after the strict parser succeeds and require
+every successful Instagram-selected clone or production profile result to
+conserve that count exactly:
+
+```text
+parsed_count
+= seed_targets
+= seed_targets_complete
+= seed_targets_success + seed_targets_unavailable + seed_targets_blocking
+= seed_targets_repaired + seed_targets_preserved + seed_targets_blank_name
+  + seed_targets_unavailable + seed_targets_blocked
+```
+
+`seed_targets_blocking` must also equal `seed_targets_blocked`. The
+`parsed_count` comes only from the checksum-verifying Ruby parser, never
+`wc`, `awk`, or an environment value. Each result is validated independently;
+counters from retries or separate runs are never accumulated for this
+conservation check. A Messenger-only result does not open the sidecar and must
+report canonical zero for every seed counter. A zero-row Instagram sidecar
+fails loud for this one-time migration because it would contradict the already
+observed snapshot and could indicate a broken scope or placeholder predicate.
+
+Alternatives rejected:
+
+- changing the constant from six to seven only moves the next failure;
+- accepting an operator-supplied count makes mutable input, rather than the
+  coordinated snapshot, authoritative; and
+- discovering targets only from current Meta conversation pages can omit old
+  contacts whose thread or profile is no longer exposed, which is exactly why
+  the immutable seed sidecar exists.
+
+Failure and verification requirements:
+
+- reordered, duplicate, malformed, noncanonical, or empty target files fail;
+- files over 2,560,000 bytes, rows over 256 bytes including their terminating
+  LF, and sets over 10,000 rows fail before Meta access; tests cover zero, the
+  exact maximum, maximum plus one, an oversized row, and an oversized file;
+- a changed target checksum, nonpositive parsed count, or live
+  ContactInbox/source/scope/Instagram-evidence mismatch fails before Meta
+  access or profile writes;
+- an already-renamed or concurrently renamed sealed target remains valid and
+  reports `seed_targets_preserved`; a deleted target or changed
+  ContactInbox/source/account/inbox/platform mapping is blocking;
+- every successful Instagram-selected result satisfies all seed-count
+  conservation equations above, while every successful Messenger-only result
+  reports canonical zero seed counters; clone acceptance, production wrappers,
+  acceptance control, and final audit validate every indexed result from the
+  strict parser-derived count. Final audit also binds and reports that count as
+  `profile_seed_targets_sealed`;
+- a new live exact placeholder created after the coordinated snapshot is
+  admitted only when the shared classifier proves Instagram-only evidence and
+  current conversation discovery (or an independently importer-owned stable
+  target) gives it an exact terminal outcome. Final audit applies that same
+  classifier and requires every remaining Instagram-only exact placeholder,
+  sealed or new, to be classified as unavailable or blank-name with matching
+  fingerprints. Messenger/evidence-free lookalikes do not enter this total;
+  ambiguous evidence is blocking. A missed or otherwise unclassified extra
+  keeps writers stopped and requires paired recovery followed by a fresh
+  coordinated clone and approval;
+- a nonzero apply remains governed by the existing paired recovery contract;
+- the production regression fixture contains seven exact generated
+  placeholders and proves the old fixed-six program fails before the change;
+- parser and generated-program tests cover at least two different positive
+  target counts so a replacement fixed constant cannot pass. They pin the
+  parser, target-sealing program, history/profile approval identity gates, and
+  clone-summary validators that previously embedded six; and
+- classifier tests cover native Instagram, exact Instagram archive, native
+  Messenger, exact Messenger archive, no evidence, cross-platform linked
+  conversations, and a marker/type conflict. Generated-program tests prove
+  the shared predicate governs sealing and final reconciliation; and
+- the existing six original importer Attachment/blob baseline remains fixed
+  and is unrelated to this dynamic placeholder target count.
 
 The commit/image, account/inbox/Page/Instagram identities, all-history cutoff,
 policy, deferred-profile mode, and accepted-set fields are live history
@@ -674,8 +786,9 @@ ContactInboxes is a structural failure.
 
 For each platform, the canonical stable-target audit set contains unique
 `[platform, source_id]` pairs from those exact importer-owned history
-ContactInboxes; the Instagram set additionally includes all six legacy
-placeholder seeds. Sort each set by canonical decimal source-id bytes. Feed
+ContactInboxes; the Instagram set additionally includes every seed in the
+snapshot-bound placeholder target file. Sort each set by canonical decimal
+source-id bytes. Feed
 SHA-256 the length-prefixed platform followed by every length-prefixed source
 id, using unsigned 64-bit big-endian lengths and no delimiter. Report each
 platform's positive count and lowercase fingerprint without logging the pairs.
@@ -686,8 +799,8 @@ access, or writes.
 
 The complete lookup target set is the union of current Meta-returned
 participants with exact existing ContactInbox mappings and the stable local
-targets. When `instagram` is selected, the stable set includes all six rows in
-the immutable placeholder-target file. Seeded rows remain eligible even when
+targets. When `instagram` is selected, the stable set includes every row in the
+immutable placeholder-target file. Seeded rows remain eligible even when
 Meta no longer lists their conversation and never create a local row. Every
 conversation with no single external participant is counted as ambiguous and
 skipped independently; it does not prevent later current or stable targets
@@ -699,7 +812,7 @@ data, classified unavailable, or blocking error. Every legacy placeholder seed
 additionally reports whether the exact placeholder was repaired, preserved
 after an agent edit/already repaired, returned a blank name, was classified
 unavailable, or blocked. Completion is invalid unless every stable target and
-all six seed-specific outcomes are present. Blank profile data and classified
+all sealed seed-specific outcomes are present. Blank profile data and classified
 unavailability remain explicit degradation rather than silently declaring
 enrichment complete. A Messenger-only run neither requires/opens the target
 file nor issues any Instagram seed request.
@@ -1105,8 +1218,9 @@ backup hash, all three state/staging hashes, and the one terminal-summary hash
 to be present 64-hex values. This artifact binds the immediate
 recovery point, same-production pre/post states, and complete staged-key
 disposition to the exact immutable run log and extracted single
-terminal-summary file (or explicit absence). Recovery verifies those files
-against the attempt hashes before using counters.
+terminal-summary file (or explicit absence). Recovery and final audit verify
+the checksummed attempt manifest against every indexed result, then verify the
+exact run-log and terminal-summary hashes before using counters.
 
 An exit-zero attempt may resume writers only after staging cleanup and the
 pre/post comparison are clean. A failed comparison never resumes writers
@@ -1546,9 +1660,11 @@ failure. Those failures never modify history markers.
   exact-key intent makes the blob/object discoverable; purge and verify it
   absent before staging manifest or poststate sealing. A missing/malformed
   intent or failed purge blocks service resumption.
-- **ContactInbox relink/source drift:** re-resolve under lock before scalar and
-  avatar writes; enrich a valid current Contact, but on identity drift write
-  nothing, purge any staged blob, and exit nonzero.
+- **ContactInbox relink/source/platform drift:** re-resolve and rerun the
+  canonical platform classifier immediately before each Meta profile lookup
+  and again under the scalar/avatar write locks; enrich a valid current
+  Contact, but on identity or platform-evidence drift write nothing, purge any
+  staged blob, and exit nonzero.
 - **Multiple selected identities merged into one Contact:** do not mix profile
   data; count a structural ambiguity, write nothing for those identities, and
   exit nonzero for operator review.
@@ -1648,8 +1764,8 @@ clone stages from the same host restart.
 Rejected because it expands the migration beyond Meta-returned identities and
 could issue profile requests for unrelated/manual contacts. Existing contacts
 are enriched only when encountered in the profile conversation scan, linked by
-an exact importer-owned history archive, or named in the immutable six-row
-importer-placeholder target file.
+an exact importer-owned history archive, or named in the immutable
+snapshot-bound importer-placeholder target file.
 
 ### Import every absent outbound mid with `OUTBOUND_POLICY=all`
 
@@ -1742,19 +1858,21 @@ After implementation, focused specs must prove:
   contact without a prepared message;
 - the profile task scans conversation pages only, never message/detail pages,
   unions current exact-mapped participants with every exact importer-owned
-  history ContactInbox and the six legacy seeds, directly looks up stable local
-  targets omitted by the later Meta scan, deduplicates exact
+  history ContactInbox and every sealed placeholder seed, directly looks up
+  stable local targets omitted by the later Meta scan, deduplicates exact
   platform/participant ids, enriches only an existing exact target-inbox
   ContactInbox, and never creates contacts, conversations, messages, or
   historical attachments;
-- the strict six-row placeholder target file is checksummed and release-bound,
+- the strict snapshot-bound placeholder target file is checksummed and
+  release-bound,
   rejects schema/identity/file-integrity drift before Meta or writes, unions
   omitted native-only targets with Meta-returned participants, deduplicates an
   overlapping target, and requires one repair/preservation/blank-name/
   classified-unavailable/blocking outcome for every seed before completion;
 - a seed's recorded Contact id remains provenance across a legitimate pre-run
-  ContactInbox relink; stable inbox/source/platform identity is still required
-  and the current Contact is resolved under lock;
+  ContactInbox relink; stable inbox/source/platform identity is still required,
+  the canonical platform classifier is rerun before every Meta lookup and
+  under each write lock, and the current Contact is resolved under lock;
 - stable-target fingerprint vectors pin platform/source-id separation, length
   framing, per-platform sort/projection, deduplication, and mapping conflicts;
   every stable target requires one terminal outcome, and production rejects
@@ -1820,7 +1938,7 @@ After implementation, focused specs must prove:
 - a Messenger-only profile dry projection rejects a supplied Instagram target
   path, neither opens the target sidecar nor makes an Instagram seed request;
   a one-platform apply/recovery projection is rejected, while every
-  Instagram-selected run requires all six terminal seed outcomes;
+  Instagram-selected run requires one terminal outcome for every sealed seed;
 - one cached logical profile lookup per unique platform/participant (including
   unavailable results), separate logical-lookup/HTTP-attempt counters, a
   four-attempt total ceiling across mixed rate/network/5xx failures, correct
@@ -1891,8 +2009,9 @@ apply:
    ID-bound PII-free hashes. Pin the pre-existing live conversation IDs and
    their stable identity/linkage hashes. Normalize only the documented mutable
    archive history bounds/configuration and compare the same ID sets after
-   every apply/recovery. Create the strict six-row placeholder-target file from
-   the exact target-inbox ContactInbox/Contact/source mappings and bind its
+   every apply/recovery. Create the strict positive-row placeholder-target file
+   from every exact target-inbox ContactInbox/Contact/source mapping in the
+   coordinated snapshot, derive its count from the parsed file, and bind its
    checksum into the approval manifest.
 3. Verify zero duplicate `Contact/avatar` Active Storage keys before the
    concurrent unique-index migration.
@@ -1940,10 +2059,11 @@ apply:
 12. Rerun the clone profile task until one pass performs zero scalar/avatar
     writes and has zero transient/unclassified failures; classified permanent
     unavailability and successful blank-name seed outcomes remain counted
-    degradation, and all six seed outcomes remain present.
+    degradation, and every sealed seed outcome remains present.
 13. Hash the exact clone profile dry/apply/idempotency logs and terminal
     summaries and create the immutable 31-line profile approval plus checksum.
-    Verify it roots the accepted history scope and six-row target checksum,
+    Verify it roots the accepted history scope and snapshot-bound target
+    checksum/count,
     binds the source state, exact per-platform stable target
     counts/fingerprints,
     clone-reviewed profile release/settings, and distinct clone/production

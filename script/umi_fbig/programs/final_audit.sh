@@ -68,6 +68,12 @@ readonly PROFILE_RESULT_FIELDS=(
   wrapper_exit_status_sha256 platforms dry_run zero_write_observed
   termination started_at finished_at sealed_at
 )
+readonly PROFILE_ATTEMPT_FIELDS=(
+  schema_version profile_approval_sha256 image_digest
+  production_database_name platforms dry_run pre_attempt_backup_sha256
+  prestate_sha256 poststate_sha256 avatar_staging_sha256 run_log_sha256
+  run_summary_sha256 exit_status started_at finished_at
+)
 readonly PROFILE_AUDIT_FIELDS=(
   schema_version label program_sha256 binding_sha256 candidate_commit
   candidate_image acceptance_sha256 attempt_result_sha256
@@ -119,6 +125,7 @@ readonly LIVE_COUNT_FIELDS=(
   duplicate_contact_avatars history_attachment_intents
   unclassified_importer_messages seed_only_targets
   importer_only_targets seed_and_importer_targets unclassified_profile_targets
+  instagram_seed_targets_sealed
   instagram_placeholders_remaining
   instagram_placeholders_remaining_fingerprint
 )
@@ -186,6 +193,7 @@ readonly PLATFORM_COUNT_FIELDS=(
   instagram_total_importer_attachments instagram_stable_profile_targets
   instagram_profile_targets_success
   instagram_profile_targets_unavailable instagram_profile_targets_blocking
+  profile_seed_targets_sealed
   profile_scalar_changes_applied profile_name_changes_applied
   profile_username_changes_applied profile_optional_changes_applied
   profile_avatars_offered profile_avatars_preserved profile_avatars_attached
@@ -350,6 +358,7 @@ readonly RESULT_MANIFEST="$RESULT_DIRECTORY/fbig-production-migration-audit-v1.t
 readonly PLATFORM_COUNTS="$RESULT_DIRECTORY/fbig-production-platform-counts-v1.tsv"
 readonly LIVE_COUNTS="$RESULT_DIRECTORY/fbig-production-live-counts-v1.tsv"
 readonly RELEASE_SCHEMA="$RESULT_DIRECTORY/production-release-schema.tsv"
+readonly PROFILE_ATTEMPT_ROOT='/opt/umi/fbig-profile-attempts'
 
 validate_history_result() {
   local result="$1"
@@ -410,6 +419,10 @@ validate_history_result() {
 validate_profile_result() {
   local result="$1"
   local checksum="$2"
+  local attempt_directory
+  local attempt_manifest
+  local run_log
+  local summary
 
   verify_checksum "$result" "$checksum"
   require_ordered_manifest "$result" "${PROFILE_RESULT_FIELDS[@]}"
@@ -424,6 +437,37 @@ validate_profile_result() {
     "$PROFILE_WRAPPER_SHA256"
   test "$(manifest_value "$result" storage_helper_sha256)" = \
     "$STORAGE_HELPER_SHA256"
+  attempt_directory="$(manifest_value "$result" attempt_directory)"
+  test "$attempt_directory" = "$(realpath -e -- "$attempt_directory")"
+  test "$(dirname "$attempt_directory")" = "$PROFILE_ATTEMPT_ROOT"
+  test ! -L "$attempt_directory"
+  require_root_directory "$PROFILE_ATTEMPT_ROOT"
+  require_root_directory "$attempt_directory"
+  attempt_manifest="$attempt_directory/fbig-profile-production-attempt-v1.tsv"
+  run_log="$attempt_directory/fbig-profile-production-run.log"
+  summary="$attempt_directory/fbig-profile-production-run-summary.tsv"
+  verify_checksum "$attempt_manifest" "${attempt_manifest}.sha256"
+  require_ordered_manifest "$attempt_manifest" "${PROFILE_ATTEMPT_FIELDS[@]}"
+  test "$(manifest_value "$result" attempt_manifest_sha256)" = \
+    "$(sha256_file "$attempt_manifest")"
+  test "$(manifest_value "$attempt_manifest" schema_version)" = 1
+  test "$(manifest_value "$attempt_manifest" profile_approval_sha256)" = \
+    "$PROFILE_APPROVAL_SHA256"
+  test "$(manifest_value "$attempt_manifest" image_digest)" = "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$attempt_manifest" production_database_name)" = \
+    "$PRODUCTION_DATABASE"
+  test "$(manifest_value "$attempt_manifest" platforms)" = \
+    "$(manifest_value "$result" platforms)"
+  test "$(manifest_value "$attempt_manifest" dry_run)" = \
+    "$(manifest_value "$result" dry_run)"
+  test "$(manifest_value "$attempt_manifest" exit_status)" = 0
+  require_root_artifact "$run_log"
+  require_root_artifact "$summary"
+  test "$(manifest_value "$attempt_manifest" run_log_sha256)" = \
+    "$(sha256_file "$run_log")"
+  test "$(manifest_value "$attempt_manifest" run_summary_sha256)" = \
+    "$(sha256_file "$summary")"
+  verify_seed_target_conservation "$run_log" "$summary"
 }
 
 validate_profile_audit() {
@@ -1095,6 +1139,7 @@ values["unclassified_importer_messages"] = messages.where.not(
   %w[messenger instagram]
 ).count
 seed_ids = targets.map(&:contact_inbox_id).to_set
+values["instagram_seed_targets_sealed"] = targets.size
 importer_ids = archives.where(
   "conversations.additional_attributes -> 'umi_history_import' ->> 'platform' = 'instagram'"
 ).distinct.pluck(:contact_inbox_id).to_set
@@ -1106,11 +1151,19 @@ values["unclassified_profile_targets"] =
   union_ids.size - values.values_at(
     "seed_only_targets", "importer_only_targets", "seed_and_importer_targets"
   ).sum
-contact_inboxes = inbox.contact_inboxes.includes(:contact)
-placeholders = contact_inboxes.select do |contact_inbox|
-  contact_inbox.contact.name ==
-    "Instagram user #{contact_inbox.source_id.to_s.last(4)}"
+placeholder_candidate_ids = inbox.contact_inboxes.includes(:contact).select do |contact_inbox|
+  contact_inbox.contact.name == "Instagram user #{contact_inbox.source_id.to_s.last(4)}"
+end.map(&:id)
+placeholder_candidates = inbox.contact_inboxes
+                              .includes(:contact, :conversations)
+                              .where(id: placeholder_candidate_ids)
+                              .to_a
+classified_placeholders = placeholder_candidates.group_by do |contact_inbox|
+  Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox)
 end
+abort("ambiguous Instagram placeholder evidence") if
+  classified_placeholders[:ambiguous].present?
+placeholders = classified_placeholders.fetch(:instagram, [])
 values["instagram_placeholders_remaining"] = placeholders.size
 placeholder_fingerprints = placeholders.map do |contact_inbox|
   Digest::SHA256.hexdigest(
@@ -1143,7 +1196,8 @@ order = [
   "history_attachment_intents",
   "unclassified_importer_messages", "seed_only_targets",
   "importer_only_targets", "seed_and_importer_targets",
-  "unclassified_profile_targets", "instagram_placeholders_remaining",
+  "unclassified_profile_targets", "instagram_seed_targets_sealed",
+  "instagram_placeholders_remaining",
   "instagram_placeholders_remaining_fingerprint"
 ]
 order.each { |key| puts "#{key}\t#{values.fetch(key)}" }
@@ -1163,6 +1217,12 @@ done
 terminal_profile_summary="$(
   manifest_value "$FINAL_PROFILE_RESULT" attempt_directory
 )/fbig-profile-production-run-summary.tsv"
+terminal_profile_log="$(
+  manifest_value "$FINAL_PROFILE_RESULT" attempt_directory
+)/fbig-profile-production-run.log"
+test "$(manifest_value "$LIVE_COUNTS_TEMP" instagram_seed_targets_sealed)" = "$(
+  stage_value "$terminal_profile_log" history_profiles_start seed_targets_expected
+)"
 placeholders_remaining="$(
   manifest_value "$LIVE_COUNTS_TEMP" instagram_placeholders_remaining
 )"
@@ -1315,6 +1375,8 @@ PLATFORM_COUNTS_TEMP="$STAGING_DIRECTORY/fbig-production-platform-counts-v1.tsv"
     test "$stable_profile_targets" = \
       "$((profile_success + profile_unavailable + profile_blocking))"
   done
+  printf 'profile_seed_targets_sealed\t%s\n' \
+    "$(manifest_value "$LIVE_COUNTS_TEMP" instagram_seed_targets_sealed)"
   for field in "${profile_sum_fields[@]}"; do
     printf 'profile_%s\t%s\n' "$field" "${PROFILE_TOTALS["$field"]}"
   done
