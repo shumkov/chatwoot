@@ -157,7 +157,6 @@ describe Umi::Fbig::ConversationReconService do
     end
 
     before do
-      stub_const("#{described_class}::MAX_MESSAGE_PAGES", 2)
       stub_threads('instagram', [])
       stub_threads('messenger', [thread_item('t-1', 1.hour.ago)])
     end
@@ -175,7 +174,7 @@ describe Umi::Fbig::ConversationReconService do
 
     it 'counts a caps_hit when the page budget runs out with pages unread' do
       allow(Rails.logger).to receive(:warn).and_call_original
-      stub_messages('t-1', chained_pages(3))
+      stub_messages('t-1', chained_pages(described_class::MAX_MESSAGE_PAGES + 1))
 
       service.perform
 
@@ -185,7 +184,7 @@ describe Umi::Fbig::ConversationReconService do
 
     it 'does not count a caps_hit when the collection ends exactly at the budget' do
       allow(Rails.logger).to receive(:warn).and_call_original
-      stub_messages('t-1', chained_pages(2))
+      stub_messages('t-1', chained_pages(described_class::MAX_MESSAGE_PAGES))
 
       service.perform
 

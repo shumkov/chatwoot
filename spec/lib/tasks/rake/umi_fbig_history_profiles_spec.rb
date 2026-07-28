@@ -29,6 +29,63 @@ RSpec.describe 'UMI FB/IG profile rake tasks' do
 
       expect(Inbox).not_to have_received(:find)
     end
+
+    # rubocop:disable RSpec/ExampleLength
+    it 'logs the strict-parser seed count for downstream conservation checks' do
+      history = instance_double(
+        Umi::Fbig::HistoryApprovalManifest,
+        sha256: 'a' * 64,
+        since: 'all',
+        values: { 'before' => '2026-07-28T15:39:00Z' },
+        outbound_policy: 'pre_presence'
+      )
+      seed_targets = Array.new(7) { Object.new }
+      options = Umi::Fbig::ProfileTaskConfiguration::Options.new(
+        approval_mode: 'clone_evidence',
+        clone_phase: 'dry',
+        dry_run: true,
+        platforms: %w[messenger instagram],
+        actual_database: 'chatwoot_fbig_clone',
+        production_database_name: 'chatwoot_production',
+        repository_commit: 'b' * 40,
+        image_digest: "ghcr.io/shumkov/chatwoot@sha256:#{'c' * 64}",
+        graph_delay_ms: 250,
+        max_conversation_pages: 10_000,
+        max_rate_limit_wait_seconds: 3_600,
+        max_download_bytes: 100.megabytes,
+        history_manifest: history,
+        profile_approval: nil,
+        pre_attempt_backup: nil,
+        seed_targets: seed_targets,
+        source_state: nil,
+        predecessor_state: nil,
+        attempt_directory: '/tmp/fbig-profile-attempt',
+        avatar_intent_directory: '/tmp/fbig-profile-attempt/avatar-intents'
+      )
+      inbox = instance_double(Inbox, id: 2)
+      intent_store = instance_double(Umi::Fbig::AvatarIntentStore)
+      run_evidence = instance_double(Umi::Fbig::ProfileRunEvidence)
+      service = instance_double(Umi::Fbig::HistoryProfileBackfillService)
+      result = Umi::Fbig::HistoryProfileBackfillService::Result.new(
+        stats: { exit_failures: 0 },
+        scan_complete: true,
+        write_complete: nil,
+        degraded: false,
+        dry_run: true,
+        evidence: nil
+      )
+      allow(Umi::Fbig::ProfileTaskConfiguration).to receive(:build).and_return(options)
+      allow(Umi::Fbig::ProfileTaskConfiguration).to receive(:validate_scope!).and_return(true)
+      allow(Inbox).to receive(:find).with(2).and_return(inbox)
+      allow(Umi::Fbig::AvatarIntentStore).to receive(:new).and_return(intent_store)
+      allow(Umi::Fbig::ProfileRunEvidence).to receive(:new).and_return(run_evidence)
+      allow(Umi::Fbig::HistoryProfileBackfillService).to receive(:new).and_return(service)
+      allow(service).to receive(:perform).and_return(result)
+
+      expect { task.invoke(2) }
+        .to output(/stage=history_profiles_start.*seed_targets_expected=7/).to_stdout
+    end
+    # rubocop:enable RSpec/ExampleLength
   end
 
   describe 'umi:fbig:history_profile_state' do

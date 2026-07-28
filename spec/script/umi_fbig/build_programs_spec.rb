@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'digest'
+require 'fileutils'
 require 'open3'
 require 'tmpdir'
 
@@ -55,6 +56,232 @@ RSpec.describe 'UMI FB/IG production program builder' do
       expect(syntax_status).to be_success, syntax_stderr
     end
   end
+
+  it 'removes every fixed-six placeholder gate from the generated acceptance program' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+      acceptance = File.binread(File.join(directory, 'fbig-acceptance.sh'))
+
+      expect(acceptance).not_to include(
+        'expected exactly six Instagram placeholder targets',
+        'targets.size == 6',
+        'seed_targets 6'
+      )
+      expect(acceptance).to include(
+        'Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox)',
+        'abort("no Instagram placeholder targets") if rows.empty?',
+        'seed_targets_expected',
+        'verify_seed_target_conservation "$log" "$summary"'
+      )
+    end
+  end
+
+  it 'validates dynamic seed conservation in clone, control, production, and final-audit programs' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+
+      %w[
+        fbig-acceptance.sh fbig-acceptance-control.sh
+        fbig-profile-attempt.sh fbig-final-audit.sh
+      ].each do |name|
+        expect(File.binread(File.join(directory, name))).to include(
+          'verify_seed_target_conservation'
+        )
+      end
+      expect(File.binread(File.join(directory, 'fbig-final-audit.sh'))).to include(
+        'Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox)'
+      )
+    end
+  end
+
+  # rubocop:disable RSpec/ExampleLength
+  it 'rejects a profile log or summary substituted after its attempt manifest was sealed' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+
+      final_audit = File.binread(File.join(directory, 'fbig-final-audit.sh'))
+      validator = final_audit.match(/^validate_profile_result\(\) \{.*?^\}/m)[0]
+      attempt_root = File.join(directory, 'profile-attempts')
+      attempt_directory = File.join(attempt_root, 'sealed-attempt')
+      FileUtils.mkdir_p(attempt_directory)
+      run_log = File.join(attempt_directory, 'fbig-profile-production-run.log')
+      summary = File.join(attempt_directory, 'fbig-profile-production-run-summary.tsv')
+      sealed_log = "[UMI-FBIG] stage=history_profiles_start seed_targets_expected=1\n"
+      sealed_summary = "[UMI-FBIG] stage=history_profiles_summary seed_targets=1\n"
+      File.binwrite(run_log, sealed_log)
+      File.binwrite(summary, sealed_summary)
+
+      attempt_manifest = File.join(attempt_directory, 'fbig-profile-production-attempt-v1.tsv')
+      attempt_rows = {
+        schema_version: 1,
+        profile_approval_sha256: 'p' * 64,
+        image_digest: "ghcr.io/shumkov/chatwoot@sha256:#{'i' * 64}",
+        production_database_name: 'chatwoot_production',
+        platforms: 'instagram',
+        dry_run: 'false',
+        pre_attempt_backup_sha256: 'b' * 64,
+        prestate_sha256: 's' * 64,
+        poststate_sha256: 't' * 64,
+        avatar_staging_sha256: 'a' * 64,
+        run_log_sha256: Digest::SHA256.file(run_log).hexdigest,
+        run_summary_sha256: Digest::SHA256.file(summary).hexdigest,
+        exit_status: 0,
+        started_at: '2026-07-29T00:00:00Z',
+        finished_at: '2026-07-29T00:01:00Z'
+      }
+      File.write(attempt_manifest, "#{attempt_rows.map { |key, value| "#{key}\t#{value}" }.join("\n")}\n")
+
+      result = File.join(directory, 'profile-result.tsv')
+      result_rows = {
+        candidate_commit: 'c' * 40,
+        candidate_image: attempt_rows[:image_digest],
+        production_database: attempt_rows[:production_database_name],
+        inbox_id: 1,
+        acceptance_sha256: 'a' * 64,
+        profile_approval_sha256: attempt_rows[:profile_approval_sha256],
+        profile_wrapper_sha256: 'w' * 64,
+        storage_helper_sha256: 'h' * 64,
+        attempt_directory: attempt_directory,
+        attempt_manifest_sha256: Digest::SHA256.file(attempt_manifest).hexdigest,
+        platforms: attempt_rows[:platforms],
+        dry_run: attempt_rows[:dry_run]
+      }
+      File.write(result, "#{result_rows.map { |key, value| "#{key}\t#{value}" }.join("\n")}\n")
+
+      shell = <<~BASH
+        set -Eeuo pipefail
+        sha256_file() { sha256sum --binary "$1" | awk '{ print $1 }'; }
+        manifest_value() { awk -F '\\t' -v key="$2" '$1 == key { print $2; exit }' "$1"; }
+        verify_checksum() { :; }
+        require_ordered_manifest() { :; }
+        require_root_directory() { :; }
+        require_root_artifact() { :; }
+        verify_seed_target_conservation() { :; }
+        realpath() { printf '%s\n' "$3"; }
+        CANDIDATE_COMMIT=#{result_rows[:candidate_commit]}
+        CANDIDATE_IMAGE=#{result_rows[:candidate_image]}
+        PRODUCTION_DATABASE=#{result_rows[:production_database]}
+        INBOX_ID=#{result_rows[:inbox_id]}
+        ACCEPTANCE_SHA256=#{result_rows[:acceptance_sha256]}
+        PROFILE_APPROVAL_SHA256=#{result_rows[:profile_approval_sha256]}
+        PROFILE_WRAPPER_SHA256=#{result_rows[:profile_wrapper_sha256]}
+        STORAGE_HELPER_SHA256=#{result_rows[:storage_helper_sha256]}
+        PROFILE_ATTEMPT_ROOT="$2"
+        PROFILE_RESULT_FIELDS=(schema_version)
+        PROFILE_ATTEMPT_FIELDS=(schema_version)
+        #{validator}
+        validate_profile_result "$1" "$1.sha256"
+      BASH
+
+      [run_log, summary].each do |artifact|
+        File.binwrite(run_log, sealed_log)
+        File.binwrite(summary, sealed_summary)
+        _stdout, run_stderr, run_status = Open3.capture3(
+          'bash', '-c', shell, 'bash', result, attempt_root
+        )
+        expect(run_status).to be_success, run_stderr
+
+        File.binwrite(artifact, "substituted #{File.basename(artifact)}\n")
+        _stdout, _run_stderr, run_status = Open3.capture3(
+          'bash', '-c', shell, 'bash', result, attempt_root
+        )
+        expect(run_status).not_to be_success
+      end
+    end
+  end
+  # rubocop:enable RSpec/ExampleLength
+
+  # rubocop:disable RSpec/ExampleLength
+  it 'accepts two and seven seed rows but rejects a non-conserving result' do
+    common = File.join(repository_root, 'script/umi_fbig/programs/common.sh')
+
+    Dir.mktmpdir do |directory|
+      [2, 7].each do |count|
+        log = File.join(directory, "profile-#{count}.log")
+        summary = File.join(directory, "profile-#{count}.summary")
+        File.write(
+          log,
+          "[UMI-FBIG] stage=history_profiles_start platforms=messenger,instagram seed_targets_expected=#{count}\n"
+        )
+        fields = [
+          '[UMI-FBIG]',
+          'stage=history_profiles_summary',
+          "seed_targets=#{count}",
+          "seed_targets_complete=#{count}",
+          "seed_targets_success=#{count}",
+          'seed_targets_unavailable=0',
+          'seed_targets_blocking=0',
+          "seed_targets_repaired=#{count}",
+          'seed_targets_preserved=0',
+          'seed_targets_blank_name=0',
+          'seed_targets_blocked=0'
+        ]
+        File.write(summary, "#{fields.join(' ')}\n")
+
+        _stdout, stderr, status = Open3.capture3(
+          'bash',
+          '-c',
+          'source "$1"; verify_seed_target_conservation "$2" "$3"',
+          'seed-conservation',
+          common,
+          log,
+          summary
+        )
+        expect(status).to be_success, stderr
+      end
+
+      messenger_log = File.join(directory, 'profile-messenger.log')
+      messenger_summary = File.join(directory, 'profile-messenger.summary')
+      File.write(
+        messenger_log,
+        "[UMI-FBIG] stage=history_profiles_start platforms=messenger seed_targets_expected=0\n"
+      )
+      fields = [
+        '[UMI-FBIG]',
+        'stage=history_profiles_summary',
+        'seed_targets=0',
+        'seed_targets_complete=0',
+        'seed_targets_success=0',
+        'seed_targets_unavailable=0',
+        'seed_targets_blocking=0',
+        'seed_targets_repaired=0',
+        'seed_targets_preserved=0',
+        'seed_targets_blank_name=0',
+        'seed_targets_blocked=0'
+      ]
+      File.write(messenger_summary, "#{fields.join(' ')}\n")
+      _stdout, stderr, status = Open3.capture3(
+        'bash',
+        '-c',
+        'source "$1"; verify_seed_target_conservation "$2" "$3"',
+        'seed-conservation',
+        common,
+        messenger_log,
+        messenger_summary
+      )
+      expect(status).to be_success, stderr
+
+      summary = File.join(directory, 'profile-7.summary')
+      File.write(
+        summary,
+        File.read(summary).sub('seed_targets_complete=7', 'seed_targets_complete=6')
+      )
+      _stdout, _stderr, status = Open3.capture3(
+        'bash',
+        '-c',
+        'source "$1"; verify_seed_target_conservation "$2" "$3"',
+        'seed-conservation',
+        common,
+        File.join(directory, 'profile-7.log'),
+        summary
+      )
+      expect(status).not_to be_success
+    end
+  end
+  # rubocop:enable RSpec/ExampleLength
 
   it 'emits PostgreSQL restrict keys containing only alphanumeric characters' do
     Dir.mktmpdir do |directory|
@@ -143,6 +370,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
         'instagram_contacts_created',
         'profile_name_changes_applied',
         'profile_avatars_attached',
+        'profile_seed_targets_sealed',
         'seed_only_targets',
         'importer_only_targets',
         'seed_and_importer_targets',

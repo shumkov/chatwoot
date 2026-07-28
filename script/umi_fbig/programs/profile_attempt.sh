@@ -508,6 +508,7 @@ finalize_attempt() {
   test "$(manifest_value "$completion" attempt_manifest_sha256)" = \
     "$(sha256_file "$attempt_manifest")"
   test "$(stage_value "$summary" history_profiles_summary scan_complete)" = true
+  verify_seed_target_conservation "$run_log" "$summary"
 
   if [[ "$DRY_RUN" = true ]]; then
     test "$(stage_value "$summary" history_profiles_summary write_complete)" = \

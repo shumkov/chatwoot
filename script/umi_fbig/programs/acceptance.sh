@@ -250,12 +250,21 @@ if [[ "$RESUME_AFTER_PROBE" == false ]]; then
     actual_database = ActiveRecord::Base.connection.select_value("SELECT current_database()")
     abort("clone database mismatch") unless actual_database == expected_database
     inbox = Inbox.find(Integer(ENV.fetch("UMI_FBIG_TARGET_INBOX_ID"), 10))
-    rows = inbox.contact_inboxes.includes(:contact).select do |contact_inbox|
+    candidate_ids = inbox.contact_inboxes.includes(:contact).select do |contact_inbox|
       source_id = contact_inbox.source_id.to_s
       source_id.match?(/\A[1-9][0-9]*\z/) &&
         contact_inbox.contact&.name == "Instagram user #{source_id.last(4)}"
-    end.sort_by(&:id)
-    abort("expected exactly six Instagram placeholder targets") unless rows.size == 6
+    end.map(&:id)
+    candidates = inbox.contact_inboxes
+                      .includes(:contact, :conversations)
+                      .where(id: candidate_ids)
+                      .to_a
+    classified = candidates.group_by do |contact_inbox|
+      Umi::Fbig::ContactInboxPlatformEvidence.classify(contact_inbox)
+    end
+    abort("ambiguous Instagram placeholder target") if classified[:ambiguous].present?
+    rows = classified.fetch(:instagram, []).sort_by(&:id)
+    abort("no Instagram placeholder targets") if rows.empty?
     bytes = rows.map do |contact_inbox|
       [contact_inbox.id, contact_inbox.contact_id, contact_inbox.source_id].join("\t")
     end.join("\n") + "\n"
@@ -1024,7 +1033,7 @@ clone_compose run --rm --no-deps -T \
             manifest.since == "all" &&
             manifest.outbound_policy == "pre_presence" &&
             manifest.profile_mode == "defer" &&
-            targets.size == 6
+            targets.any?
     abort("history approval does not bind the accepted clone") unless
       provenance_valid && scope_valid && valid
     puts "[UMI-FBIG] stage=history_approval_validated sha256=#{manifest.sha256}"
@@ -1540,6 +1549,7 @@ verify_profile_attempt() {
   cmp -s "$summary" <(
     grep '^\[UMI-FBIG\] stage=history_profiles_summary ' "$log"
   )
+  verify_seed_target_conservation "$log" "$summary"
 
   for stage in history_profiles_start history_profiles_summary; do
     while IFS=$'\t' read -r key expected; do
@@ -1583,10 +1593,7 @@ verify_profile_attempt() {
       profile_errors 0 \
       avatar_failures 0 \
       messenger_targets_blocking 0 \
-      instagram_targets_blocking 0 \
-      seed_targets 6 \
-      seed_targets_complete 6 \
-      seed_targets_blocking 0
+      instagram_targets_blocking 0
   )
   test "$(stage_value "$summary" history_profiles_summary prestate_sha256)" = \
     "$expected_prestate_sha256"
@@ -1784,7 +1791,7 @@ clone_compose run --rm --no-deps -T \
       profile.max_avatar_download_bytes ==
         Integer(ENV.fetch("UMI_FBIG_EXPECTED_MAX_DOWNLOAD_BYTES"), 10) &&
       profile.platforms == %w[messenger instagram] &&
-      targets.size == 6
+      targets.any?
     abort("profile approval identity or evidence mismatch") unless
       evidence_valid && scope_valid && identity_valid
 

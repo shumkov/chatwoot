@@ -289,6 +289,7 @@ RSpec.describe 'UMI FB/IG full-history runbook' do
       'instagram_profile_targets_success',
       'instagram_placeholders_remaining',
       'instagram_placeholders_remaining_fingerprint',
+      'profile_seed_targets_sealed',
       'profile_seed_targets_repaired',
       'profile_avatars_attached',
       'empty_importer_archives',

@@ -16,9 +16,49 @@ RSpec.describe Umi::Fbig::ProfileTaskConfiguration do
   let(:source_state) { instance_double(Umi::Fbig::ProfileStateSnapshot::Artifact) }
 
   before do
+    allow(Facebook::Messenger::Subscriptions).to receive(:subscribe).and_return(true)
     allow(Umi::Fbig::HistoryApprovalManifest).to receive(:load).and_return(history)
     allow(Umi::Fbig::ProfileStateSnapshot).to receive(:load).and_return(source_state)
     allow(Umi::Fbig::ProfileTargetManifest).to receive(:load).and_return([])
+  end
+
+  it 'rejects a sealed target without canonical Instagram-only evidence' do
+    account = create(:account)
+    channel = build(
+      :channel_facebook_page,
+      account: account,
+      inbox: nil,
+      page_id: '1000',
+      instagram_id: '2000'
+    )
+    inbox = create(:inbox, account: account, channel: channel)
+    contact = create(:contact, account: account)
+    contact_inbox = create(:contact_inbox, contact: contact, inbox: inbox, source_id: '303')
+    target = Umi::Fbig::ProfileTargetManifest::Row.new(
+      contact_inbox_id: contact_inbox.id,
+      contact_id: contact.id,
+      source_id: '303'
+    )
+    scoped_history = instance_double(
+      Umi::Fbig::HistoryApprovalManifest,
+      account_id: account.id,
+      inbox_id: inbox.id,
+      facebook_page_id: channel.page_id,
+      instagram_business_id: channel.instagram_id
+    )
+    options = instance_double(
+      Umi::Fbig::ProfileTaskConfiguration::Options,
+      history_manifest: scoped_history,
+      profile_approval: nil,
+      pre_attempt_backup: nil,
+      source_state: nil,
+      predecessor_state: nil,
+      seed_targets: [target]
+    )
+
+    expect do
+      described_class.validate_scope!(inbox, options)
+    end.to raise_error(described_class::ConfigurationError, /profile target mapping/)
   end
 
   it 'builds clone evidence only from explicit reviewed settings and isolated attempt paths' do
