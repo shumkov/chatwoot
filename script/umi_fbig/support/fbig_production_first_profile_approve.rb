@@ -181,6 +181,7 @@ begin
   previous_approval_sha = 'none'
   previous_result_path = nil
   previous_result = nil
+  previous_approval = nil
   history_index_bytes.lines(chomp: true).each_with_index do |line, index|
     sequence, result_path, result_sha, authorization_path, authorization_sha, approval_path, approval_sha, extra =
       line.split("\t", -1)
@@ -238,9 +239,7 @@ begin
     if node_approval.revision_platform == 'none'
       invalid! unless contentless_matches.values.all?
     else
-      invalid! unless
-        contentless_matches.fetch(node_approval.revision_platform) == false &&
-        contentless_matches.except(node_approval.revision_platform).values.all?
+      invalid! unless contentless_matches.except(node_approval.revision_platform).values.all?
     end
     invalid! if entries.key?(result_sha)
     if previous_authorization_sha == 'none'
@@ -265,9 +264,40 @@ begin
         File.join(File.dirname(previous_result_path), 'fbig-history-production-poststate-v1.tsv'),
         expected_uid
       )
-      initial_approval = Umi::Fbig::ProductionFirstHistoryApproval::PREDECESSOR_FIELDS.all? do |field|
-        node_approval.values.fetch(field) == 'none'
-      end
+      release_approval_valid = if node_approval.revision_platform == 'none'
+                                 Umi::Fbig::ProductionFirstHistoryApproval::PREDECESSOR_FIELDS.all? do |field|
+                                   node_approval.values.fetch(field) == 'none'
+                                 end
+                               else
+                                 predecessor_summary = stage_values(
+                                   predecessor_summary_bytes,
+                                   'history_import_summary'
+                                 )
+                                 revision_platform = node_approval.revision_platform
+                                 non_revision_contentless_preserved = PLATFORMS.excluding(revision_platform).all? do |platform|
+                                   CONTENTLESS_SUFFIXES.all? do |suffix|
+                                     node_approval.values.fetch("#{platform}_#{suffix}") ==
+                                       previous_approval.values.fetch("#{platform}_#{suffix}")
+                                   end
+                                 end
+                                 revision_platform == result.fetch('platforms') &&
+                                   revision_platform == previous_result.fetch('platforms') &&
+                                   contentless_matches.values.all? &&
+                                   non_revision_contentless_preserved &&
+                                   node_approval.predecessor_approval_sha256 == previous_approval_sha &&
+                                   node_approval.predecessor_attempt_result_sha256 == previous_result_sha &&
+                                   node_approval.predecessor_run_summary_sha256 ==
+                                     Digest::SHA256.hexdigest(predecessor_summary_bytes) &&
+                                   node_approval.predecessor_delta_sha256 ==
+                                     Digest::SHA256.hexdigest(predecessor_delta_bytes) &&
+                                   node_approval.values.fetch("#{revision_platform}_count") ==
+                                     predecessor_summary.fetch("#{revision_platform}_contentless_details") &&
+                                   node_approval.values.fetch("#{revision_platform}_fingerprint") ==
+                                     predecessor_summary.fetch("#{revision_platform}_contentless_fingerprint") &&
+                                   predecessor_summary.fetch('contentless_acceptance_mismatches') == '1' &&
+                                   previous_result.fetch('exit_status') == '1' &&
+                                   previous_result.fetch('termination') == 'normal'
+                               end
       invalid! unless
         node_authorization.predecessor_authorization_sha256 == previous_authorization_sha &&
         node_authorization.predecessor_history_result_sha256 == previous_result_sha &&
@@ -283,8 +313,7 @@ begin
         previous_result.fetch('deleted_rows') == '0' &&
         previous_result.fetch('unattributed_changes') == '0' &&
         previous_result.fetch('counter_mismatches') == 'none' &&
-        node_approval.revision_platform == 'none' &&
-        initial_approval
+        release_approval_valid
     elsif approval_sha != previous_approval_sha
       predecessor_summary_bytes = protected_bytes(
         File.join(File.dirname(previous_result_path), 'history-summary.tsv'),
@@ -297,6 +326,7 @@ begin
       predecessor_summary = stage_values(predecessor_summary_bytes, 'history_import_summary')
       invalid! unless
         node_approval.revision_platform != 'none' &&
+        contentless_matches.fetch(node_approval.revision_platform) == false &&
         result.fetch('platforms') == node_approval.revision_platform &&
         previous_result.fetch('platforms') == node_approval.revision_platform &&
         node_approval.predecessor_approval_sha256 == previous_approval_sha &&
@@ -343,6 +373,7 @@ begin
     previous_approval_sha = approval_sha
     previous_result_path = result_path
     previous_result = result
+    previous_approval = node_approval
   end
   invalid! unless
     entries.any? &&

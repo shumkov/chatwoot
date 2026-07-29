@@ -283,21 +283,8 @@ if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
   done
   revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"
   readonly revision_platform
-  for platform in messenger instagram; do
-    contentless_matches=true
-    for suffix in count fingerprint; do
-      [[ "$(manifest_value "$HISTORY_APPROVAL" "${platform}_${suffix}")" = \
-        "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" "${platform}_${suffix}")" ]] ||
-        contentless_matches=false
-    done
-    if [[ "$revision_platform" = none || "$platform" != "$revision_platform" ]]; then
-      [[ "$contentless_matches" = true ]] ||
-        die "production-first revision changed the unselected contentless projection"
-    else
-      [[ "$contentless_matches" = false ]] ||
-        die "production-first revision did not change its selected contentless projection"
-    fi
-  done
+  validate_production_first_contentless_relation \
+    "$PRODUCTION_FIRST_AUTHORIZATION" "$HISTORY_APPROVAL"
   [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" history_program_sha256)" = \
     "$(sha256_file "$PROGRAM_PATH")" ]] ||
     die "production-first authorization does not bind this history program"
@@ -764,6 +751,41 @@ else
       "$(manifest_value "$PREDECESSOR_RESULT" unattributed_changes)" = 0 &&
       "$(manifest_value "$PREDECESSOR_RESULT" counter_mismatches)" = none ]] ||
       die "successor-release predecessor mismatch"
+    revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"
+    if [[ "$revision_platform" = none ]]; then
+      for field in \
+        predecessor_approval_sha256 predecessor_attempt_result_sha256 \
+        predecessor_run_summary_sha256 predecessor_delta_sha256; do
+        [[ "$(manifest_value "$HISTORY_APPROVAL" "$field")" = none ]] ||
+          die "ordinary successor release carries revision lineage"
+      done
+    else
+      [[ "$revision_platform" = "$PLATFORMS" &&
+        "$(manifest_value "$HISTORY_APPROVAL" predecessor_approval_sha256)" = \
+          "$(manifest_value "$PREDECESSOR_RESULT" history_approval_sha256)" &&
+        "$(manifest_value "$HISTORY_APPROVAL" predecessor_attempt_result_sha256)" = \
+          "$predecessor_sha" &&
+        "$(manifest_value "$HISTORY_APPROVAL" predecessor_run_summary_sha256)" = \
+          "$(sha256_file "$predecessor_summary")" &&
+        "$(manifest_value "$HISTORY_APPROVAL" predecessor_delta_sha256)" = \
+          "$(sha256_file "$predecessor_delta")" &&
+        "$(manifest_value "$HISTORY_APPROVAL" "${revision_platform}_count")" = \
+          "$(stage_value "$predecessor_summary" history_import_summary \
+            "${revision_platform}_contentless_details")" &&
+        "$(manifest_value "$HISTORY_APPROVAL" "${revision_platform}_fingerprint")" = \
+          "$(stage_value "$predecessor_summary" history_import_summary \
+            "${revision_platform}_contentless_fingerprint")" &&
+        "$(stage_value "$predecessor_summary" history_import_summary \
+          contentless_acceptance_mismatches)" = 1 &&
+        "$(manifest_value "$PREDECESSOR_RESULT" exit_status)" = 1 &&
+        "$(manifest_value "$PREDECESSOR_RESULT" termination)" = normal ]] ||
+        die "successor-release revision lineage mismatch"
+      for suffix in count fingerprint; do
+        [[ "$(manifest_value "$HISTORY_APPROVAL" "${revision_platform}_${suffix}")" = \
+          "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" "${revision_platform}_${suffix}")" ]] ||
+          die "successor-release revision is not bound into its authorization"
+      done
+    fi
     cross_release_predecessor=true
   else
     [[ "$(manifest_value "$PREDECESSOR_RESULT" candidate_commit)" = "$CANDIDATE_COMMIT" ]] ||
@@ -801,6 +823,29 @@ else
       "$(manifest_value "$PREDECESSOR_RESULT" exit_status)" = 1 &&
       "$(manifest_value "$PREDECESSOR_RESULT" termination)" = normal ]] ||
       die "history revision predecessor mismatch"
+    if [[
+      "$(manifest_value "$HISTORY_APPROVAL" \
+        "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_count")" = \
+        "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" \
+          "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_count")" &&
+      "$(manifest_value "$HISTORY_APPROVAL" \
+        "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_fingerprint")" = \
+        "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" \
+          "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_fingerprint")"
+    ]]; then
+      die "same-release history revision did not change its selected contentless projection"
+    fi
+    [[ "$(manifest_value "$HISTORY_APPROVAL" \
+      "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_count")" = \
+      "$(stage_value "$predecessor_summary" history_import_summary \
+        "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_contentless_details")" &&
+      "$(manifest_value "$HISTORY_APPROVAL" \
+        "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_fingerprint")" = \
+      "$(stage_value "$predecessor_summary" history_import_summary \
+        "$(manifest_value "$HISTORY_APPROVAL" revision_platform)_contentless_fingerprint")" &&
+      "$(stage_value "$predecessor_summary" history_import_summary \
+        contentless_acceptance_mismatches)" = 1 ]] ||
+      die "history revision observations mismatch"
     [[ "$PLATFORMS" = "$(manifest_value "$HISTORY_APPROVAL" revision_platform)" ]] ||
       die "the first revised attempt must resume the revised platform"
   elif [[ "$cross_release_predecessor" = false ]]; then

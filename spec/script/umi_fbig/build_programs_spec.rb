@@ -1037,6 +1037,45 @@ RSpec.describe 'UMI FB/IG production program builder' do
     end
   end
 
+  it 'accepts carried and same-release revision projections but rejects unselected drift' do
+    common = File.join(repository_root, 'script/umi_fbig/programs/common.sh')
+    command = 'source "$1"; validate_production_first_contentless_relation "$2" "$3"'
+
+    Dir.mktmpdir do |directory|
+      authorization = File.join(directory, 'authorization.tsv')
+      File.binwrite(
+        authorization,
+        "messenger_count\t9\nmessenger_fingerprint\t#{'a' * 64}\n" \
+        "instagram_count\t7\ninstagram_fingerprint\t#{'b' * 64}\n"
+      )
+      approvals = {
+        carried: "revision_platform\tmessenger\nmessenger_count\t9\nmessenger_fingerprint\t#{'a' * 64}\n" \
+                 "instagram_count\t7\ninstagram_fingerprint\t#{'b' * 64}\n",
+        same_release: "revision_platform\tmessenger\nmessenger_count\t10\nmessenger_fingerprint\t#{'c' * 64}\n" \
+                      "instagram_count\t7\ninstagram_fingerprint\t#{'b' * 64}\n",
+        unselected_drift: "revision_platform\tmessenger\nmessenger_count\t9\nmessenger_fingerprint\t#{'a' * 64}\n" \
+                          "instagram_count\t8\ninstagram_fingerprint\t#{'d' * 64}\n"
+      }
+      paths = approvals.each_with_index.to_h do |(shape, bytes), index|
+        path = File.join(directory, "approval-#{index}.tsv")
+        File.binwrite(path, bytes)
+        [shape, path]
+      end
+
+      %i[carried same_release].each do |shape|
+        _stdout, stderr, status = Open3.capture3(
+          'bash', '-c', command, 'bash', common, authorization, paths.fetch(shape)
+        )
+        expect(status).to be_success, "#{shape}: #{stderr}"
+      end
+      _stdout, stderr, status = Open3.capture3(
+        'bash', '-c', command, 'bash', common, authorization, paths.fetch(:unselected_drift)
+      )
+      expect(status).not_to be_success
+      expect(stderr).to include('changed the unselected contentless projection')
+    end
+  end
+
   # rubocop:disable RSpec/ExampleLength
   it 'builds a crash-adoptable history program around sealed Rails graph evidence' do
     Dir.mktmpdir do |directory|

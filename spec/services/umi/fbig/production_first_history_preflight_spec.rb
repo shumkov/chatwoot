@@ -63,6 +63,14 @@ RSpec.describe Umi::Fbig::HistoryImportService, '.preflight_task_environment!' d
       end.not_to raise_error
     end
 
+    it 'allows a carried revision whose accepted projections are bound into a successor authorization' do
+      carried = approval_for(authorization, revision_platform: 'messenger')
+
+      expect do
+        described_class.send(:validate_production_first_chain!, authorization, carried)
+      end.not_to raise_error
+    end
+
     it 'rejects a revision that also changes the unselected platform projection' do
       revised = approval_for(
         authorization,

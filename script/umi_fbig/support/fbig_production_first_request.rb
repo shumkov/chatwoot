@@ -33,6 +33,13 @@ SUCCESSOR_INVARIANT_FIELDS = %w[
   instagram_unavailable_message_thread_count instagram_unavailable_message_thread_fingerprint
   r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256 r2_probe_summary_sha256
 ].freeze
+SUCCESSOR_REVISION_ZERO_FIELDS = %w[
+  failed_threads partially_paginated_threads uncategorized_threads unavailable_message_threads
+  unavailable_message_thread_acceptance_mismatches platform_failures retry_exhaustion rate_limits
+  authentication_failures lock_loss foreign_source_id_anomalies reindex_failures
+  download_budget_exhaustions recovered_target_mismatches recovered_target_duplicate_listings
+  ambiguous_senders predecessor_archive_not_returned
+].freeze
 
 def invalid!
   raise 'production-first request inputs are invalid'
@@ -87,6 +94,50 @@ def stage_values(bytes, stage)
   end
   invalid! unless rows.one?
   rows.first
+end
+
+def revision_approval_matches_result?(approval, result_approval, evidence)
+  result = evidence.fetch(:result)
+  result_bytes = evidence.fetch(:result_bytes)
+  summary_bytes = evidence.fetch(:summary_bytes)
+  delta_bytes = evidence.fetch(:delta_bytes)
+  platform = result.fetch('platforms')
+  summary = stage_values(summary_bytes, 'history_import_summary')
+  mutable_fields = %W[
+    #{platform}_count #{platform}_fingerprint revision_platform predecessor_approval_sha256
+    predecessor_attempt_result_sha256 predecessor_run_summary_sha256 predecessor_delta_sha256
+    approved_by approved_at
+  ]
+  invariants_match = Umi::Fbig::ProductionFirstHistoryApproval::FIELD_NAMES.all? do |field|
+    mutable_fields.include?(field) || approval.values.fetch(field) == result_approval.values.fetch(field)
+  end
+  approval.revision_platform == platform &&
+    result.fetch('exit_status') == '1' &&
+    result_approval.sha256 == result.fetch('history_approval_sha256') &&
+    approval.predecessor_approval_sha256 == result_approval.sha256 &&
+    approval.predecessor_attempt_result_sha256 == Digest::SHA256.hexdigest(result_bytes) &&
+    approval.predecessor_run_summary_sha256 == Digest::SHA256.hexdigest(summary_bytes) &&
+    approval.predecessor_delta_sha256 == Digest::SHA256.hexdigest(delta_bytes) &&
+    approval.values.fetch("#{platform}_count") == summary.fetch("#{platform}_contentless_details") &&
+    approval.values.fetch("#{platform}_fingerprint") == summary.fetch("#{platform}_contentless_fingerprint") &&
+    summary.fetch('dry_run') == 'false' &&
+    summary.fetch('scan_complete') == 'true' &&
+    summary.fetch('write_complete') == 'false' &&
+    summary.fetch('contentless_acceptance_mismatches') == '1' &&
+    summary.fetch('exit_failures') == '1' &&
+    SUCCESSOR_REVISION_ZERO_FIELDS.all? { |field| summary.fetch(field) == '0' } &&
+    invariants_match
+rescue KeyError
+  false
+end
+
+def approval_matches_result?(approval, result_approval, evidence)
+  result = evidence.fetch(:result)
+  result_approval.sha256 == result.fetch('history_approval_sha256') &&
+    (
+      approval.sha256 == result_approval.sha256 ||
+      revision_approval_matches_result?(approval, result_approval, evidence)
+    )
 end
 
 def publish!(directory, bytes)
@@ -221,6 +272,11 @@ begin
       checksum_path: ENV.fetch('UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH'),
       expected_uid: expected_uid
     )
+    predecessor_result_approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
+      manifest_path: ENV.fetch('UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_PATH'),
+      checksum_path: ENV.fetch('UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_CHECKSUM_PATH'),
+      expected_uid: expected_uid
+    )
     predecessor_result_bytes = verified_bytes(
       ENV.fetch('UMI_FBIG_PREDECESSOR_HISTORY_RESULT_PATH'),
       expected_uid
@@ -239,6 +295,12 @@ begin
       expected_uid
     )
     predecessor_result = manifest_values(predecessor_result_bytes)
+    predecessor_evidence = {
+      result: predecessor_result,
+      result_bytes: predecessor_result_bytes,
+      summary_bytes: predecessor_summary_bytes,
+      delta_bytes: predecessor_delta_bytes
+    }
     predecessor_sidecar = manifest_values(predecessor_sidecar_bytes)
     stable_sidecar = STABLE_SIDECAR_FIELDS.all? do |field|
       predecessor_sidecar.fetch(field) == source_sidecar.fetch(field)
@@ -247,7 +309,11 @@ begin
       predecessor_approval.production_first_authorization_sha256 == predecessor_authorization.sha256 &&
       predecessor_result.fetch('authorization_mode') == 'production_first' &&
       predecessor_result.fetch('authorization_sha256') == predecessor_authorization.sha256 &&
-      predecessor_result.fetch('history_approval_sha256') == predecessor_approval.sha256 &&
+      approval_matches_result?(
+        predecessor_approval,
+        predecessor_result_approval,
+        predecessor_evidence
+      ) &&
       predecessor_result.fetch('candidate_commit') == predecessor_authorization.repository_commit &&
       predecessor_result.fetch('candidate_image') == predecessor_authorization.image_digest &&
       predecessor_result.fetch('operation') == 'apply' &&
@@ -260,6 +326,7 @@ begin
       predecessor_result.fetch('deleted_rows') == '0' &&
       predecessor_result.fetch('unattributed_changes') == '0' &&
       predecessor_result.fetch('counter_mismatches') == 'none' &&
+      predecessor_result_approval.production_first_authorization_sha256 == predecessor_authorization.sha256 &&
       Digest::SHA256.hexdigest(predecessor_sidecar_bytes) == predecessor_approval.unrecoverable_sidecar_sha256 &&
       predecessor_sidecar.fetch('repository_commit') == predecessor_authorization.repository_commit &&
       predecessor_sidecar.fetch('image_digest') == predecessor_authorization.image_digest &&

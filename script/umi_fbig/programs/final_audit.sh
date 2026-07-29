@@ -524,11 +524,6 @@ validate_production_history_pair() {
   local approval="$4"
   local expected_approval_sha="$5"
   local field
-  local platform
-  local suffix
-  local contentless_matches
-  local revision_platform
-
   verify_checksum "$authorization" "${authorization}.sha256"
   require_ordered_manifest \
     "$authorization" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
@@ -570,20 +565,7 @@ validate_production_history_pair() {
       "$(manifest_value "$authorization" "$field")"
   done
 
-  revision_platform="$(manifest_value "$approval" revision_platform)"
-  for platform in messenger instagram; do
-    contentless_matches=true
-    for suffix in count fingerprint; do
-      test "$(manifest_value "$approval" "${platform}_${suffix}")" = \
-        "$(manifest_value "$authorization" "${platform}_${suffix}")" ||
-        contentless_matches=false
-    done
-    if [[ "$revision_platform" = none || "$platform" != "$revision_platform" ]]; then
-      test "$contentless_matches" = true
-    else
-      test "$contentless_matches" = false
-    fi
-  done
+  validate_production_first_contentless_relation "$authorization" "$approval"
 }
 
 validate_profile_result() {
@@ -1012,6 +994,7 @@ history_sequence=0
 previous_history_sha=none
 previous_authorization_sha=none
 previous_approval_sha=none
+previous_approval=none
 declare -A PREVIOUS_HISTORY_POST=([messenger]=none [instagram]=none)
 declare -A FIRST_HISTORY_PRE=([messenger]=none [instagram]=none)
 declare -A FIRST_HISTORY_SUMMARY=([messenger]=none [instagram]=none)
@@ -1077,15 +1060,59 @@ while IFS= read -r history_index_row; do
       test "$(manifest_value "$previous_result" deleted_rows)" = 0
       test "$(manifest_value "$previous_result" unattributed_changes)" = 0
       test "$(manifest_value "$previous_result" counter_mismatches)" = none
-      test "$(manifest_value "$approval" revision_platform)" = none
-      for field in \
-        predecessor_approval_sha256 predecessor_attempt_result_sha256 \
-        predecessor_run_summary_sha256 predecessor_delta_sha256; do
-        test "$(manifest_value "$approval" "$field")" = none
-      done
+      revision_platform="$(manifest_value "$approval" revision_platform)"
+      if [[ "$revision_platform" = none ]]; then
+        for field in \
+          predecessor_approval_sha256 predecessor_attempt_result_sha256 \
+          predecessor_run_summary_sha256 predecessor_delta_sha256; do
+          test "$(manifest_value "$approval" "$field")" = none
+        done
+      else
+        for suffix in count fingerprint; do
+          test "$(manifest_value "$approval" "${revision_platform}_${suffix}")" = \
+            "$(manifest_value "$authorization" "${revision_platform}_${suffix}")"
+        done
+        for platform in messenger instagram; do
+          if [[ "$platform" != "$revision_platform" ]]; then
+            for suffix in count fingerprint; do
+              test "$(manifest_value "$approval" "${platform}_${suffix}")" = \
+                "$(manifest_value "$previous_approval" "${platform}_${suffix}")"
+            done
+          fi
+        done
+        test "$(manifest_value "$result" platforms)" = "$revision_platform"
+        test "$(manifest_value "$previous_result" platforms)" = \
+          "$revision_platform"
+        test "$(manifest_value "$approval" predecessor_approval_sha256)" = \
+          "$previous_approval_sha"
+        test "$(manifest_value "$approval" predecessor_attempt_result_sha256)" = \
+          "$previous_history_sha"
+        test "$(manifest_value "$approval" predecessor_run_summary_sha256)" = \
+          "$(sha256_file "$predecessor_summary")"
+        test "$(manifest_value "$approval" predecessor_delta_sha256)" = \
+          "$(sha256_file "$predecessor_delta")"
+        test "$(manifest_value "$approval" "${revision_platform}_count")" = \
+          "$(stage_value "$predecessor_summary" history_import_summary \
+            "${revision_platform}_contentless_details")"
+        test "$(manifest_value "$approval" "${revision_platform}_fingerprint")" = \
+          "$(stage_value "$predecessor_summary" history_import_summary \
+            "${revision_platform}_contentless_fingerprint")"
+        test "$(stage_value "$predecessor_summary" history_import_summary \
+          contentless_acceptance_mismatches)" = 1
+        test "$(manifest_value "$previous_result" exit_status)" = 1
+        test "$(manifest_value "$previous_result" termination)" = normal
+      fi
     elif [[ "$approval_sha" != "$previous_approval_sha" ]]; then
       test "$(manifest_value "$approval" revision_platform)" != none
       revision_platform="$(manifest_value "$approval" revision_platform)"
+      if [[
+        "$(manifest_value "$approval" "${revision_platform}_count")" = \
+          "$(manifest_value "$authorization" "${revision_platform}_count")" &&
+        "$(manifest_value "$approval" "${revision_platform}_fingerprint")" = \
+          "$(manifest_value "$authorization" "${revision_platform}_fingerprint")"
+      ]]; then
+        die "same-release history revision must change its selected contentless pair"
+      fi
       predecessor_summary="$(dirname "$previous_result")/history-summary.tsv"
       predecessor_delta="$(dirname "$previous_result")/history-delta.tsv"
       verify_checksum "$predecessor_summary" "${predecessor_summary}.sha256"
@@ -1172,6 +1199,7 @@ while IFS= read -r history_index_row; do
   previous_history_sha="$expected_sha"
   previous_authorization_sha="$authorization_sha"
   previous_approval_sha="$approval_sha"
+  previous_approval="$approval"
   PREVIOUS_HISTORY_POST["$selected_platform"]="$current_post"
 done <"$HISTORY_RESULT_INDEX"
 test "$history_sequence" -gt 0

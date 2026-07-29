@@ -358,8 +358,7 @@ class Umi::Fbig::HistoryImportService
       valid &&= if revision_platform == 'none'
                   contentless_matches.values.all?
                 else
-                  contentless_matches.fetch(revision_platform) == false &&
-                    contentless_matches.except(revision_platform).values.all?
+                  contentless_matches.except(revision_platform).values.all?
                 end
       raise ConfigurationError, 'production-first approval chain mismatch' unless valid
     end

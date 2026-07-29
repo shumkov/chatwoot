@@ -311,29 +311,8 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         checksum_path: "#{predecessor_approval_path}.sha256",
         expected_uid: Process.uid
       )
-      revision_directory = File.join(root, 'revision')
-      FileUtils.mkdir_p(revision_directory, mode: 0o700)
-      File.chmod(0o700, revision_directory)
-      revised_approval_values = predecessor_approval.values.merge(
-        'instagram_count' => '9',
-        'instagram_fingerprint' => 'e' * 64,
-        'revision_platform' => 'instagram',
-        'predecessor_approval_sha256' => predecessor_approval.sha256,
-        'predecessor_attempt_result_sha256' => '1' * 64,
-        'predecessor_run_summary_sha256' => '2' * 64,
-        'predecessor_delta_sha256' => '3' * 64,
-        'approved_at' => '2026-07-29T02:30:00Z'
-      )
-      predecessor_approval_path = seal(
-        revision_directory,
-        'fbig-production-first-history-approval-v1.tsv',
-        ordered_bytes(Umi::Fbig::ProductionFirstHistoryApproval, revised_approval_values)
-      )
-      predecessor_approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
-        manifest_path: predecessor_approval_path,
-        checksum_path: "#{predecessor_approval_path}.sha256",
-        expected_uid: Process.uid
-      )
+      original_approval_path = predecessor_approval_path
+      original_approval = predecessor_approval
       successor_source = File.join(root, 'successor-source')
       successor_attempt = File.join(root, 'successor-attempt')
       successor_request_output = File.join(root, 'successor-request')
@@ -363,7 +342,25 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'fbig-coordinated-backup-v1.tsv',
         successor_backup_bytes
       )
-      predecessor_summary_bytes = "[UMI-FBIG] stage=history_import_summary platforms=messenger\n"
+      revision_zero_fields = %w[
+        failed_threads partially_paginated_threads uncategorized_threads unavailable_message_threads
+        unavailable_message_thread_acceptance_mismatches platform_failures retry_exhaustion rate_limits
+        authentication_failures lock_loss foreign_source_id_anomalies reindex_failures
+        download_budget_exhaustions recovered_target_mismatches recovered_target_duplicate_listings
+        ambiguous_senders predecessor_archive_not_returned
+      ]
+      predecessor_summary_fields = {
+        'platforms' => 'messenger',
+        'dry_run' => 'false',
+        'scan_complete' => 'true',
+        'write_complete' => 'false',
+        'contentless_acceptance_mismatches' => '1',
+        'exit_failures' => '1',
+        'messenger_contentless_details' => '9',
+        'messenger_contentless_fingerprint' => 'e' * 64
+      }.merge(revision_zero_fields.index_with('0'))
+      predecessor_summary_bytes =
+        "[UMI-FBIG] stage=history_import_summary #{predecessor_summary_fields.map { |field, value| "#{field}=#{value}" }.join(' ')}\n"
       predecessor_delta_bytes =
         '[UMI-FBIG] stage=history_state_comparison protected_changes=0 deleted_rows=0 ' \
         "unattributed_changes=0 counter_mismatches=none\n"
@@ -378,7 +375,7 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
       predecessor_result_bytes = {
         'authorization_mode' => 'production_first',
         'authorization_sha256' => predecessor_authorization.sha256,
-        'history_approval_sha256' => predecessor_approval.sha256,
+        'history_approval_sha256' => original_approval.sha256,
         'candidate_commit' => predecessor_authorization.repository_commit,
         'candidate_image' => predecessor_authorization.image_digest,
         'platforms' => 'messenger',
@@ -398,6 +395,29 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'fbig-history-attempt-result-v1.tsv',
         predecessor_result_bytes
       )
+      revision_directory = File.join(root, 'revision')
+      FileUtils.mkdir_p(revision_directory, mode: 0o700)
+      File.chmod(0o700, revision_directory)
+      revised_approval_values = original_approval.values.merge(
+        'messenger_count' => '9',
+        'messenger_fingerprint' => 'e' * 64,
+        'revision_platform' => 'messenger',
+        'predecessor_approval_sha256' => original_approval.sha256,
+        'predecessor_attempt_result_sha256' => Digest::SHA256.hexdigest(predecessor_result_bytes),
+        'predecessor_run_summary_sha256' => Digest::SHA256.hexdigest(predecessor_summary_bytes),
+        'predecessor_delta_sha256' => Digest::SHA256.hexdigest(predecessor_delta_bytes),
+        'approved_at' => '2026-07-29T02:30:00Z'
+      )
+      predecessor_approval_path = seal(
+        revision_directory,
+        'fbig-production-first-history-approval-v1.tsv',
+        ordered_bytes(Umi::Fbig::ProductionFirstHistoryApproval, revised_approval_values)
+      )
+      predecessor_approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
+        manifest_path: predecessor_approval_path,
+        checksum_path: "#{predecessor_approval_path}.sha256",
+        expected_uid: Process.uid
+      )
       successor_sidecar = corrected_sidecar.merge(
         'repository_commit' => successor_commit,
         'image_digest' => successor_image,
@@ -411,8 +431,8 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'image_digest' => successor_image,
         'unrecoverable_sidecar_sha256' => Digest::SHA256.hexdigest(successor_sidecar_bytes),
         'coordinated_backup_manifest_sha256' => Digest::SHA256.hexdigest(successor_backup_bytes),
-        'instagram_count' => predecessor_approval.instagram_count,
-        'instagram_fingerprint' => predecessor_approval.instagram_fingerprint,
+        'messenger_count' => predecessor_approval.messenger_count,
+        'messenger_fingerprint' => predecessor_approval.messenger_fingerprint,
         'predecessor_authorization_sha256' => predecessor_authorization.sha256,
         'predecessor_history_result_sha256' => Digest::SHA256.hexdigest(predecessor_result_bytes),
         'predecessor_terminal_summary_sha256' => Digest::SHA256.hexdigest(predecessor_summary_bytes),
@@ -432,6 +452,8 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'UMI_FBIG_PREDECESSOR_AUTHORIZATION_CHECKSUM_PATH' => "#{predecessor_authorization_path}.sha256",
         'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH' => predecessor_approval_path,
         'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH' => "#{predecessor_approval_path}.sha256",
+        'UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_PATH' => original_approval_path,
+        'UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_CHECKSUM_PATH' => "#{original_approval_path}.sha256",
         'UMI_FBIG_PREDECESSOR_HISTORY_RESULT_PATH' => predecessor_result_path,
         'UMI_FBIG_PREDECESSOR_TERMINAL_SUMMARY_PATH' => predecessor_summary_path,
         'UMI_FBIG_PREDECESSOR_DELTA_PATH' => predecessor_delta_path,
@@ -439,6 +461,52 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'UMI_FBIG_PREDECESSOR_UNRECOVERABLE_SIDECAR_PATH' => predecessor_sidecar_path,
         'UMI_FBIG_PRODUCTION_FIRST_REQUEST_OUTPUT_DIR' => successor_request_output
       )
+      invalid_revision_directory = File.join(root, 'invalid-revision')
+      invalid_request_output = File.join(root, 'invalid-successor-request')
+      [invalid_revision_directory, invalid_request_output].each do |directory|
+        FileUtils.mkdir_p(directory, mode: 0o700)
+        File.chmod(0o700, directory)
+      end
+      invalid_approval_path = seal(
+        invalid_revision_directory,
+        'fbig-production-first-history-approval-v1.tsv',
+        ordered_bytes(
+          Umi::Fbig::ProductionFirstHistoryApproval,
+          revised_approval_values.merge('messenger_count' => '8')
+        )
+      )
+      invalid_request_env = successor_request_env.merge(
+        'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH' => invalid_approval_path,
+        'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH' => "#{invalid_approval_path}.sha256",
+        'UMI_FBIG_PRODUCTION_FIRST_REQUEST_OUTPUT_DIR' => invalid_request_output
+      )
+      _invalid_stdout, _invalid_stderr, invalid_status = Open3.capture3(
+        invalid_request_env, Gem.ruby, 'bin/rails', 'runner', request_program, chdir: repository_root
+      )
+      expect(invalid_status).not_to be_success
+      invalid_other_revision_directory = File.join(root, 'invalid-other-revision')
+      invalid_other_request_output = File.join(root, 'invalid-other-successor-request')
+      [invalid_other_revision_directory, invalid_other_request_output].each do |directory|
+        FileUtils.mkdir_p(directory, mode: 0o700)
+        File.chmod(0o700, directory)
+      end
+      invalid_other_approval_path = seal(
+        invalid_other_revision_directory,
+        'fbig-production-first-history-approval-v1.tsv',
+        ordered_bytes(
+          Umi::Fbig::ProductionFirstHistoryApproval,
+          revised_approval_values.merge('instagram_count' => '8')
+        )
+      )
+      invalid_other_request_env = successor_request_env.merge(
+        'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH' => invalid_other_approval_path,
+        'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH' => "#{invalid_other_approval_path}.sha256",
+        'UMI_FBIG_PRODUCTION_FIRST_REQUEST_OUTPUT_DIR' => invalid_other_request_output
+      )
+      _invalid_stdout, _invalid_stderr, invalid_status = Open3.capture3(
+        invalid_other_request_env, Gem.ruby, 'bin/rails', 'runner', request_program, chdir: repository_root
+      )
+      expect(invalid_status).not_to be_success
       _successor_request_stdout, successor_request_stderr, successor_request_status = Open3.capture3(
         successor_request_env, Gem.ruby, 'bin/rails', 'runner', request_program, chdir: repository_root
       )
@@ -457,6 +525,8 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'UMI_FBIG_PREDECESSOR_AUTHORIZATION_CHECKSUM_PATH' => "#{predecessor_authorization_path}.sha256",
         'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH' => predecessor_approval_path,
         'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH' => "#{predecessor_approval_path}.sha256",
+        'UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_PATH' => original_approval_path,
+        'UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_CHECKSUM_PATH' => "#{original_approval_path}.sha256",
         'UMI_FBIG_PREDECESSOR_HISTORY_RESULT_PATH' => predecessor_result_path,
         'UMI_FBIG_PREDECESSOR_TERMINAL_SUMMARY_PATH' => predecessor_summary_path,
         'UMI_FBIG_PREDECESSOR_DELTA_PATH' => predecessor_delta_path,
@@ -465,6 +535,18 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
         'UMI_FBIG_PREDECESSOR_UNRECOVERABLE_SIDECAR_PATH' => predecessor_sidecar_path,
         'UMI_FBIG_PRODUCTION_FIRST_OUTPUT_DIR' => successor_output
       )
+      invalid_successor_output = File.join(root, 'invalid-successor-output')
+      FileUtils.mkdir_p(invalid_successor_output, mode: 0o700)
+      File.chmod(0o700, invalid_successor_output)
+      invalid_authorizer_env = successor_authorizer_env.merge(
+        'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH' => invalid_approval_path,
+        'UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH' => "#{invalid_approval_path}.sha256",
+        'UMI_FBIG_PRODUCTION_FIRST_OUTPUT_DIR' => invalid_successor_output
+      )
+      _invalid_stdout, _invalid_stderr, invalid_status = Open3.capture3(
+        invalid_authorizer_env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root
+      )
+      expect(invalid_status).not_to be_success
       _successor_stdout, successor_stderr, successor_status = Open3.capture3(
         successor_authorizer_env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root
       )
@@ -479,6 +561,16 @@ RSpec.describe 'UMI FB/IG production-first authorization generator' do
       )
       expect(successor_authorization.unrecoverable_sidecar_sha256).not_to eq(
         predecessor_authorization.unrecoverable_sidecar_sha256
+      )
+      successor_approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
+        manifest_path: File.join(successor_output, 'fbig-production-first-history-approval-v1.tsv'),
+        checksum_path: File.join(successor_output, 'fbig-production-first-history-approval-v1.tsv.sha256'),
+        expected_uid: Process.uid
+      )
+      expect(successor_approval.revision_platform).to eq('messenger')
+      expect(successor_approval.predecessor_approval_sha256).to eq(original_approval.sha256)
+      expect(successor_approval.predecessor_attempt_result_sha256).to eq(
+        Digest::SHA256.hexdigest(predecessor_result_bytes)
       )
     end
   end
