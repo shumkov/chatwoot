@@ -953,6 +953,69 @@ RSpec.describe 'UMI FB/IG production program builder' do
   end
 
   # rubocop:disable RSpec/ExampleLength
+  it 'accepts the standard sticky production lock parent without weakening the protected directory' do
+    common = File.join(repository_root, 'script/umi_fbig/programs/common.sh')
+    command = 'source "$1"; require_root_directory "$2"'
+    Dir.mktmpdir do |directory|
+      directory = File.realpath(directory)
+      tools = File.join(directory, 'tools')
+      lock_parent = File.join(directory, 'run-lock')
+      lock_directory = File.join(lock_parent, 'umi-fbig')
+      Dir.mkdir(tools)
+      Dir.mkdir(lock_parent)
+      Dir.mkdir(lock_directory)
+      File.binwrite(
+        File.join(tools, 'stat'),
+        <<~'SH'
+          #!/usr/bin/env bash
+          case "$2" in
+            %u:%g) printf '0:0\n' ;;
+            %u:%g:%a) printf '0:0:%s\n' "$UMI_FBIG_LOCK_DIRECTORY_MODE" ;;
+            %a)
+              if [[ "$3" = "$UMI_FBIG_LOCK_PARENT" ]]; then
+                printf '%s\n' "$UMI_FBIG_LOCK_PARENT_MODE"
+              elif [[ "$3" = "$UMI_FBIG_LOCK_DIRECTORY" ]]; then
+                printf '%s\n' "$UMI_FBIG_LOCK_DIRECTORY_MODE"
+              else
+                printf '700\n'
+              fi
+              ;;
+            *) exec /usr/bin/stat "$@" ;;
+          esac
+        SH
+      )
+      File.chmod(0o700, File.join(tools, 'stat'))
+      environment = {
+        'PATH' => "#{tools}:#{ENV.fetch('PATH')}",
+        'UMI_FBIG_LOCK_PARENT' => lock_parent,
+        'UMI_FBIG_LOCK_PARENT_MODE' => '1777',
+        'UMI_FBIG_LOCK_DIRECTORY' => lock_directory,
+        'UMI_FBIG_LOCK_DIRECTORY_MODE' => '700'
+      }
+
+      _stdout, sticky_stderr, sticky_status = Open3.capture3(
+        environment, 'bash', '-c', command, 'bash', common, lock_directory
+      )
+      expect(sticky_status).to be_success, sticky_stderr
+
+      _stdout, writable_stderr, writable_status = Open3.capture3(
+        environment.merge('UMI_FBIG_LOCK_PARENT_MODE' => '777'),
+        'bash', '-c', command, 'bash', common, lock_directory
+      )
+      expect(writable_status).not_to be_success
+      expect(writable_stderr).to include('writable path ancestor must have the sticky bit')
+
+      _stdout, leaf_stderr, leaf_status = Open3.capture3(
+        environment.merge('UMI_FBIG_LOCK_DIRECTORY_MODE' => '1777'),
+        'bash', '-c', command, 'bash', common, lock_directory
+      )
+      expect(leaf_status).not_to be_success
+      expect(leaf_stderr).to include('directory must not be group/world writable')
+    end
+  end
+  # rubocop:enable RSpec/ExampleLength
+
+  # rubocop:disable RSpec/ExampleLength
   it 'builds a crash-adoptable history program around sealed Rails graph evidence' do
     Dir.mktmpdir do |directory|
       _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
