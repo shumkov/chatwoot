@@ -74,9 +74,8 @@ RSpec.describe Umi::Fbig::HistoryImportService, '.preflight_task_environment!' d
         }
       )
 
-      expect do
-        described_class.send(:validate_production_first_chain!, authorization, revised)
-      end.to raise_error(Umi::Fbig::HistoryImportService::ConfigurationError)
+      expect { described_class.send(:validate_production_first_chain!, authorization, revised) }
+        .to raise_error(StandardError) { |error| expect(error.class.name).to eq('Umi::Fbig::HistoryImportService::ConfigurationError') }
     end
   end
 
