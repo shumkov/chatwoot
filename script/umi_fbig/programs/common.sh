@@ -12,6 +12,25 @@ sha256_file() {
   sha256sum --binary "$1" | awk '{ print $1 }'
 }
 
+validate_production_first_contentless_relation() {
+  local authorization="$1"
+  local approval="$2"
+  local revision_platform
+  local platform
+  local suffix
+
+  revision_platform="$(manifest_value "$approval" revision_platform)"
+  for platform in messenger instagram; do
+    if [[ "$revision_platform" = none || "$platform" != "$revision_platform" ]]; then
+      for suffix in count fingerprint; do
+        [[ "$(manifest_value "$approval" "${platform}_${suffix}")" = \
+          "$(manifest_value "$authorization" "${platform}_${suffix}")" ]] ||
+          die "production-first revision changed the unselected contentless projection"
+      done
+    fi
+  done
+}
+
 require_safe_token() {
   local name="$1"
   local value="$2"

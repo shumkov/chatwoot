@@ -159,6 +159,8 @@ UMI_FBIG_PREDECESSOR_AUTHORIZATION_PATH
 UMI_FBIG_PREDECESSOR_AUTHORIZATION_CHECKSUM_PATH
 UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH
 UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH
+UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_PATH
+UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_CHECKSUM_PATH
 UMI_FBIG_PREDECESSOR_HISTORY_RESULT_PATH
 UMI_FBIG_PREDECESSOR_TERMINAL_SUMMARY_PATH
 UMI_FBIG_PREDECESSOR_DELTA_PATH
@@ -172,6 +174,10 @@ revision), binds the fresh expanded-state backup, and regenerates the
 release-specific unrecoverable sidecar. The sidecar's scope, cutoff,
 structural count, and fingerprint must remain identical; its commit, image,
 inspector, approver, timestamp, and therefore SHA may change with the release.
+When the successor crosses directly from a contentless-only failed result, its
+new history approval preserves the revision platform and predecessor approval,
+result, summary, and delta digests so profile approval and final audit can
+reconstruct the revision across the release boundary.
 
 Run it as the deployed candidate's Rails environment so its UMI manifest
 classes are the same exact code bound into the request:

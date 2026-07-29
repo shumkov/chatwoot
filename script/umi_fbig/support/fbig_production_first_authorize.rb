@@ -20,6 +20,13 @@ UNRECOVERABLE_SIDECAR_FIELDS = %w[
 STABLE_UNRECOVERABLE_SIDECAR_FIELDS = %w[
   schema_version account_id inbox_id instagram_business_id before platform count fingerprint
 ].freeze
+SUCCESSOR_REVISION_ZERO_FIELDS = %w[
+  failed_threads partially_paginated_threads uncategorized_threads unavailable_message_threads
+  unavailable_message_thread_acceptance_mismatches platform_failures retry_exhaustion rate_limits
+  authentication_failures lock_loss foreign_source_id_anomalies reindex_failures
+  download_budget_exhaustions recovered_target_mismatches recovered_target_duplicate_listings
+  ambiguous_senders predecessor_archive_not_returned
+].freeze
 
 def invalid!
   raise 'production-first authorization inputs are invalid'
@@ -79,6 +86,50 @@ def manifest_values(bytes)
   end
   invalid! unless pairs.map(&:first).uniq.size == pairs.size
   pairs.to_h
+end
+
+def revision_approval_matches_result?(approval, result_approval, evidence)
+  result = evidence.fetch(:result)
+  result_bytes = evidence.fetch(:result_bytes)
+  summary_bytes = evidence.fetch(:summary_bytes)
+  delta_bytes = evidence.fetch(:delta_bytes)
+  platform = result.fetch('platforms')
+  summary = stage_values(summary_bytes, 'history_import_summary')
+  mutable_fields = %W[
+    #{platform}_count #{platform}_fingerprint revision_platform predecessor_approval_sha256
+    predecessor_attempt_result_sha256 predecessor_run_summary_sha256 predecessor_delta_sha256
+    approved_by approved_at
+  ]
+  invariants_match = Umi::Fbig::ProductionFirstHistoryApproval::FIELD_NAMES.all? do |field|
+    mutable_fields.include?(field) || approval.values.fetch(field) == result_approval.values.fetch(field)
+  end
+  approval.revision_platform == platform &&
+    result.fetch('exit_status') == '1' &&
+    result_approval.sha256 == result.fetch('history_approval_sha256') &&
+    approval.predecessor_approval_sha256 == result_approval.sha256 &&
+    approval.predecessor_attempt_result_sha256 == Digest::SHA256.hexdigest(result_bytes) &&
+    approval.predecessor_run_summary_sha256 == Digest::SHA256.hexdigest(summary_bytes) &&
+    approval.predecessor_delta_sha256 == Digest::SHA256.hexdigest(delta_bytes) &&
+    approval.values.fetch("#{platform}_count") == summary.fetch("#{platform}_contentless_details") &&
+    approval.values.fetch("#{platform}_fingerprint") == summary.fetch("#{platform}_contentless_fingerprint") &&
+    summary.fetch('dry_run') == 'false' &&
+    summary.fetch('scan_complete') == 'true' &&
+    summary.fetch('write_complete') == 'false' &&
+    summary.fetch('contentless_acceptance_mismatches') == '1' &&
+    summary.fetch('exit_failures') == '1' &&
+    SUCCESSOR_REVISION_ZERO_FIELDS.all? { |field| summary.fetch(field) == '0' } &&
+    invariants_match
+rescue KeyError
+  false
+end
+
+def approval_matches_result?(approval, result_approval, evidence)
+  result = evidence.fetch(:result)
+  result_approval.sha256 == result.fetch('history_approval_sha256') &&
+    (
+      approval.sha256 == result_approval.sha256 ||
+      revision_approval_matches_result?(approval, result_approval, evidence)
+    )
 end
 
 def publish!(directory, basename, bytes)
@@ -151,6 +202,7 @@ begin
     coordinated_backup.facebook_page_id == authorization.facebook_page_id &&
     coordinated_backup.instagram_business_id == authorization.instagram_business_id
   predecessor_sidecar = nil
+  carried_revision = nil
   if authorization.predecessor_authorization_sha256 != 'none'
     predecessor_authorization = Umi::Fbig::ProductionFirstAuthorization.load(
       manifest_path: ENV.fetch('UMI_FBIG_PREDECESSOR_AUTHORIZATION_PATH'),
@@ -160,6 +212,11 @@ begin
     predecessor_approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
       manifest_path: ENV.fetch('UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH'),
       checksum_path: ENV.fetch('UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH'),
+      expected_uid: expected_uid
+    )
+    predecessor_result_approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
+      manifest_path: ENV.fetch('UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_PATH'),
+      checksum_path: ENV.fetch('UMI_FBIG_PREDECESSOR_RESULT_APPROVAL_CHECKSUM_PATH'),
       expected_uid: expected_uid
     )
     predecessor_result_bytes = protected_bytes(
@@ -188,12 +245,23 @@ begin
       checksum: true
     )
     predecessor_result = manifest_values(predecessor_result_bytes)
+    predecessor_evidence = {
+      result: predecessor_result,
+      result_bytes: predecessor_result_bytes,
+      summary_bytes: predecessor_summary_bytes,
+      delta_bytes: predecessor_delta_bytes
+    }
     predecessor_sidecar = manifest_values(predecessor_sidecar_bytes)
     invalid! unless
       predecessor_authorization.sha256 == authorization.predecessor_authorization_sha256 &&
       predecessor_approval.production_first_authorization_sha256 == predecessor_authorization.sha256 &&
       predecessor_result.fetch('authorization_sha256') == predecessor_authorization.sha256 &&
-      predecessor_result.fetch('history_approval_sha256') == predecessor_approval.sha256 &&
+      predecessor_result_approval.production_first_authorization_sha256 == predecessor_authorization.sha256 &&
+      approval_matches_result?(
+        predecessor_approval,
+        predecessor_result_approval,
+        predecessor_evidence
+      ) &&
       predecessor_result.fetch('run_summary_sha256') == authorization.predecessor_terminal_summary_sha256 &&
       predecessor_result.fetch('delta_sha256') == authorization.predecessor_delta_sha256 &&
       predecessor_result.fetch('poststate_sha256') == authorization.predecessor_expanded_baseline_sha256 &&
@@ -231,6 +299,8 @@ begin
         authorization.public_send("#{platform}_fingerprint") ==
         predecessor_approval.public_send("#{platform}_fingerprint")
     end
+    carried_revision = predecessor_approval if
+      predecessor_result.fetch('history_approval_sha256') != predecessor_approval.sha256
   end
 
   targets = Umi::Fbig::RecoveredThreadTargets.parse(source_bytes.fetch('recovered_thread_targets_sha256'))
@@ -325,11 +395,11 @@ begin
     'r2_launch_manifest_sha256' => authorization.r2_launch_manifest_sha256,
     'r2_probe_log_sha256' => authorization.r2_probe_log_sha256,
     'r2_probe_summary_sha256' => authorization.r2_probe_summary_sha256,
-    'revision_platform' => 'none',
-    'predecessor_approval_sha256' => 'none',
-    'predecessor_attempt_result_sha256' => 'none',
-    'predecessor_run_summary_sha256' => 'none',
-    'predecessor_delta_sha256' => 'none',
+    'revision_platform' => carried_revision&.revision_platform || 'none',
+    'predecessor_approval_sha256' => carried_revision&.predecessor_approval_sha256 || 'none',
+    'predecessor_attempt_result_sha256' => carried_revision&.predecessor_attempt_result_sha256 || 'none',
+    'predecessor_run_summary_sha256' => carried_revision&.predecessor_run_summary_sha256 || 'none',
+    'predecessor_delta_sha256' => carried_revision&.predecessor_delta_sha256 || 'none',
     'approved_by' => authorization.approved_by,
     'approved_at' => authorization.created_at
   }
