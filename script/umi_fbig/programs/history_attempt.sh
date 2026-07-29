@@ -5,6 +5,7 @@ readonly BINDING_CHECKSUM="${BINDING_MANIFEST}.sha256"
 PROGRAM_PATH="$(readlink -f "$0")"
 readonly PROGRAM_PATH
 readonly PROGRAM_CHECKSUM="${PROGRAM_PATH}.sha256"
+readonly PLATFORMLESS_HISTORY_SUMMARY_PROGRAM_SHA256=bc9c48c39da93c22282a01ae13fdff4e8d1bab0368521b21e4faef1fa439adb5
 
 readonly BINDING_FIELDS=(
   schema_version label operation platforms require_zero_writes candidate_commit
@@ -410,6 +411,40 @@ if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
   fi
 fi
 
+validate_history_summary_platform() {
+  local summary="$1"
+  local expected="$2"
+  local attempt_identity
+  local run_log
+  local summary_count
+
+  attempt_identity="$(dirname "$summary")/fbig-history-attempt-identity-v1.tsv"
+  run_log="$(dirname "$summary")/history-run.log"
+  verify_checksum "$summary" "${summary}.sha256"
+  verify_checksum "$attempt_identity" "${attempt_identity}.sha256"
+  verify_checksum "$run_log" "${run_log}.sha256"
+  summary_count="$(
+    grep -c '^\[UMI-FBIG\] stage=history_import_summary ' "$run_log" || true
+  )"
+  [[ "$summary_count" -eq 1 ]] ||
+    die "history summary is not unique in its sealed run log"
+  cmp -s "$summary" <(
+    grep '^\[UMI-FBIG\] stage=history_import_summary ' "$run_log"
+  ) || die "history summary differs from its sealed run log"
+  [[ "$(manifest_value "$attempt_identity" platforms)" = "$expected" ]] ||
+    die "history summary platform does not match its sealed attempt identity"
+  [[ "$(stage_value "$run_log" history_import_start platforms)" = "$expected" ]] ||
+    die "history summary platform does not match its sealed start record"
+  if grep -Eq '(^|[[:space:]])platforms=' "$summary"; then
+    [[ "$(stage_value "$summary" history_import_summary platforms)" = "$expected" ]] ||
+      die "history summary platform does not match its sealed start record"
+  else
+    [[ "$(manifest_value "$attempt_identity" program_sha256)" = \
+      "$PLATFORMLESS_HISTORY_SUMMARY_PROGRAM_SHA256" ]] ||
+      die "history summary is missing platforms outside the exact legacy program"
+  fi
+}
+
 validate_history_terminal_summary() {
   local summary="$1"
   local expected_dry_run="$2"
@@ -435,8 +470,8 @@ validate_history_terminal_summary() {
     stage_value "$summary" history_import_summary message_cursor_exhausted_threads
   )"
 
-  [[ "$(stage_value "$summary" history_import_summary platforms)" = "$PLATFORMS" &&
-    "$(stage_value "$summary" history_import_summary dry_run)" = "$expected_dry_run" &&
+  validate_history_summary_platform "$summary" "$PLATFORMS"
+  [[ "$(stage_value "$summary" history_import_summary dry_run)" = "$expected_dry_run" &&
     "$(stage_value "$summary" history_import_summary scan_complete)" = true &&
     "$(stage_value "$summary" history_import_summary write_complete)" = "$expected_write_complete" &&
     "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0 &&
@@ -628,6 +663,8 @@ production_first_history_head_sha() {
 validate_initial_messenger_predecessor() {
   local result="$1"
   local summary="$2"
+  local attempt_identity
+  local run_log
   local unavailable_count
   local classified_count
   local listed_count
@@ -641,6 +678,9 @@ validate_initial_messenger_predecessor() {
   exhausted_count="$(
     stage_value "$summary" history_import_summary message_cursor_exhausted_threads
   )"
+  attempt_identity="$(dirname "$summary")/fbig-history-attempt-identity-v1.tsv"
+  run_log="$(dirname "$summary")/history-run.log"
+  validate_history_summary_platform "$summary" messenger
   [[ "$(manifest_value "$result" platforms)" = messenger &&
     "$(manifest_value "$result" operation)" = apply &&
     "$(manifest_value "$result" require_zero_writes)" = true &&
@@ -651,8 +691,10 @@ validate_initial_messenger_predecessor() {
     "$(manifest_value "$result" deleted_rows)" = 0 &&
     "$(manifest_value "$result" unattributed_changes)" = 0 &&
     "$(manifest_value "$result" counter_mismatches)" = none &&
+    "$(manifest_value "$result" attempt_identity_sha256)" = \
+      "$(sha256_file "$attempt_identity")" &&
+    "$(manifest_value "$result" run_log_sha256)" = "$(sha256_file "$run_log")" &&
     "$(manifest_value "$result" run_summary_sha256)" = "$(sha256_file "$summary")" &&
-    "$(stage_value "$summary" history_import_summary platforms)" = messenger &&
     "$(stage_value "$summary" history_import_summary dry_run)" = false &&
     "$(stage_value "$summary" history_import_summary scan_complete)" = true &&
     "$(stage_value "$summary" history_import_summary write_complete)" = true &&

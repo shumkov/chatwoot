@@ -200,10 +200,17 @@ RSpec.describe 'umi:fbig:history_import' do
       PROFILE_MODE: 'defer',
       UMI_FBIG_HISTORY_APPROVAL_MODE: 'unaccepted_probe'
     )
+    expected_output = Regexp.new(
+      [
+        'stage=history_import_start.*platforms=messenger,instagram.*since=all.*',
+        '\n.*stage=history_import_summary platforms=messenger,instagram.*write_complete=not_applicable'
+      ].join,
+      Regexp::MULTILINE
+    )
 
     with_modified_env(**env) do
       expect { task.invoke(inbox.id) }
-        .to output(/dry_run=true.*platforms=messenger,instagram.*since=all.*write_complete=not_applicable/m).to_stdout
+        .to output(expected_output).to_stdout
     end
 
     expect(Umi::Fbig::HistoryImportService).to have_received(:new).with(

@@ -1354,7 +1354,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
   # rubocop:enable RSpec/ExampleLength
 
   # rubocop:disable RSpec/ExampleLength
-  it 'rejects a writeful Messenger predecessor before an initial Instagram attempt can mutate' do
+  it 'rejects unsafe Messenger predecessor evidence before an initial Instagram attempt can mutate' do
     history_attempt = File.binread(
       File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
     )
@@ -1370,12 +1370,14 @@ RSpec.describe 'UMI FB/IG production program builder' do
           case "$2" in
             platforms) printf 'messenger\n' ;;
             operation) printf 'apply\n' ;;
-            require_zero_writes) printf 'false\n' ;;
-            zero_write_observed) printf 'false\n' ;;
+            require_zero_writes) printf '%s\n' "$REQUIRE_ZERO_WRITES_VALUE" ;;
+            zero_write_observed) printf '%s\n' "$ZERO_WRITE_OBSERVED_VALUE" ;;
             exit_status) printf '0\n' ;;
             termination) printf 'normal\n' ;;
             protected_changes|deleted_rows|unattributed_changes) printf '0\n' ;;
             counter_mismatches) printf 'none\n' ;;
+            attempt_identity_sha256) printf '%s\n' "$ATTEMPT_IDENTITY_SHA_VALUE" ;;
+            run_log_sha256) printf '%s\n' "$RUN_LOG_SHA_VALUE" ;;
             run_summary_sha256) printf '%064d\n' 0 ;;
             messenger_unavailable_message_thread_count) printf '0\n' ;;
             messenger_unavailable_message_thread_fingerprint) printf '%064d\n' 0 ;;
@@ -1383,6 +1385,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
           esac
         }
         sha256_file() { printf '%064d\n' 0; }
+        validate_history_summary_platform() { :; }
         stage_value() {
           case "$3" in
             platforms) printf 'messenger\n' ;;
@@ -1414,15 +1417,180 @@ RSpec.describe 'UMI FB/IG production program builder' do
         validate_initial_messenger_predecessor /result /summary
         docker compose run
       BASH
-      _stdout, stderr, status = Open3.capture3(
-        { 'UMI_FBIG_MUTATION_LOG' => mutation_log }, 'bash', '-c', shell
-      )
+      valid_sha = '0' * 64
+      invalid_sha = '1' * 64
+      [
+        ['false', 'false', valid_sha, valid_sha],
+        ['true', 'true', invalid_sha, valid_sha],
+        ['true', 'true', valid_sha, invalid_sha]
+      ].each do |require_zero_writes, zero_write_observed, identity_sha, run_log_sha|
+        _stdout, stderr, status = Open3.capture3(
+          {
+            'UMI_FBIG_MUTATION_LOG' => mutation_log,
+            'REQUIRE_ZERO_WRITES_VALUE' => require_zero_writes,
+            'ZERO_WRITE_OBSERVED_VALUE' => zero_write_observed,
+            'ATTEMPT_IDENTITY_SHA_VALUE' => identity_sha,
+            'RUN_LOG_SHA_VALUE' => run_log_sha
+          },
+          'bash',
+          '-c',
+          shell
+        )
 
-      expect(status).not_to be_success
-      expect(stderr).to include(
-        'initial Instagram predecessor is not a successful terminal zero-write Messenger result'
+        expect(status).not_to be_success
+        expect(stderr).to include(
+          'initial Instagram predecessor is not a successful terminal zero-write Messenger result'
+        )
+        expect(File).not_to exist(mutation_log)
+      end
+
+      _stdout, stderr, status = Open3.capture3(
+        {
+          'UMI_FBIG_MUTATION_LOG' => mutation_log,
+          'REQUIRE_ZERO_WRITES_VALUE' => 'true',
+          'ZERO_WRITE_OBSERVED_VALUE' => 'true',
+          'ATTEMPT_IDENTITY_SHA_VALUE' => valid_sha,
+          'RUN_LOG_SHA_VALUE' => valid_sha
+        },
+        'bash',
+        '-c',
+        shell
       )
-      expect(File).not_to exist(mutation_log)
+      expect(status).to be_success, stderr
+      expect(File).to exist(mutation_log)
+    end
+  end
+  # rubocop:enable RSpec/ExampleLength
+
+  # rubocop:disable RSpec/ExampleLength
+  it 'recovers a sealed successful summary only when its start record proves the bound platform' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    validator = history_attempt.match(
+      /^validate_history_summary_platform\(\) \{.*?^\}/m
+    )[0]
+    legacy_program_sha = 'bc9c48c39da93c22282a01ae13fdff4e8d1bab0368521b21e4faef1fa439adb5'
+    expect(history_attempt).to include(
+      "readonly PLATFORMLESS_HISTORY_SUMMARY_PROGRAM_SHA256=#{legacy_program_sha}"
+    )
+
+    Dir.mktmpdir do |directory|
+      summary = File.join(directory, 'history-summary.tsv')
+      run_log = File.join(directory, 'history-run.log')
+      attempt_identity = File.join(directory, 'fbig-history-attempt-identity-v1.tsv')
+      summary_line = "[UMI-FBIG] stage=history_import_summary dry_run=false scan_complete=true write_complete=true\n"
+      File.write(summary, summary_line)
+      File.write(
+        run_log,
+        "[UMI-FBIG] stage=history_import_start platforms=messenger\n#{summary_line}"
+      )
+      File.write(
+        attempt_identity,
+        "schema_version\t1\nplatforms\tmessenger\nprogram_sha256\t#{legacy_program_sha}\n"
+      )
+      [summary, run_log, attempt_identity].each do |path|
+        File.write("#{path}.sha256", "#{Digest::SHA256.file(path).hexdigest}  #{File.basename(path)}\n")
+      end
+      shell = <<~BASH
+        set -Eeuo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        sha256_file() { sha256sum --binary "$1" | awk '{ print $1 }'; }
+        verify_checksum() {
+          [[ "$(cat "$2")" = "$(sha256_file "$1")  $(basename "$1")" ]] ||
+            die "checksum mismatch: $1"
+        }
+        manifest_value() {
+          awk -F '\\t' -v key="$2" '
+            $1 == key {
+              count += 1
+              value = $2
+            }
+            END {
+              if (count != 1) exit 1
+              print value
+            }
+          ' "$1" || die "missing or duplicate manifest field $2: $1"
+        }
+        stage_value() {
+          awk -v expected_stage="$2" -v expected_key="$3" '
+            {
+              current_stage = ""
+              found = 0
+              value = ""
+              for (field = 1; field <= NF; field += 1) {
+                split($field, pair, "=")
+                if (pair[1] == "stage") current_stage = pair[2]
+                if (pair[1] == expected_key) {
+                  found += 1
+                  value = pair[2]
+                }
+              }
+              if (current_stage == expected_stage && found == 1) {
+                matches += 1
+                result = value
+              }
+            }
+            END {
+              if (matches != 1) exit 1
+              print result
+            }
+          ' "$1" || die "missing or ambiguous $2.$3: $1"
+        }
+        PLATFORMLESS_HISTORY_SUMMARY_PROGRAM_SHA256=#{legacy_program_sha}
+        #{validator}
+        validate_history_summary_platform "$1" messenger
+      BASH
+
+      _stdout, stderr, status = Open3.capture3('bash', '-c', shell, 'bash', summary)
+      expect(status).to be_success, stderr
+
+      File.write(
+        summary,
+        "[UMI-FBIG] stage=history_import_summary dry_run=false scan_complete=true write_complete=true degraded=true\n"
+      )
+      File.write(
+        "#{summary}.sha256",
+        "#{Digest::SHA256.file(summary).hexdigest}  #{File.basename(summary)}\n"
+      )
+      _stdout, stderr, status = Open3.capture3('bash', '-c', shell, 'bash', summary)
+      expect(status).not_to be_success
+      expect(stderr).to include('history summary differs from its sealed run log')
+
+      File.write(summary, summary_line)
+      File.write("#{summary}.sha256", "#{Digest::SHA256.file(summary).hexdigest}  #{File.basename(summary)}\n")
+      File.write(
+        attempt_identity,
+        "schema_version\t1\nplatforms\tmessenger\nprogram_sha256\t#{'f' * 64}\n"
+      )
+      File.write(
+        "#{attempt_identity}.sha256",
+        "#{Digest::SHA256.file(attempt_identity).hexdigest}  #{File.basename(attempt_identity)}\n"
+      )
+      _stdout, stderr, status = Open3.capture3('bash', '-c', shell, 'bash', summary)
+      expect(status).not_to be_success
+      expect(stderr).to include('history summary is missing platforms outside the exact legacy program')
+
+      summary_line = "[UMI-FBIG] stage=history_import_summary platforms=messenger dry_run=false scan_complete=true write_complete=true\n"
+      File.write(summary, summary_line)
+      File.write(
+        run_log,
+        "[UMI-FBIG] stage=history_import_start platforms=messenger\n#{summary_line}"
+      )
+      [summary, run_log].each do |path|
+        File.write("#{path}.sha256", "#{Digest::SHA256.file(path).hexdigest}  #{File.basename(path)}\n")
+      end
+      _stdout, stderr, status = Open3.capture3('bash', '-c', shell, 'bash', summary)
+      expect(status).to be_success, stderr
+
+      File.write(
+        run_log,
+        "[UMI-FBIG] stage=history_import_start platforms=instagram\n#{summary_line}"
+      )
+      File.write("#{run_log}.sha256", "#{Digest::SHA256.file(run_log).hexdigest}  #{File.basename(run_log)}\n")
+      _stdout, stderr, status = Open3.capture3('bash', '-c', shell, 'bash', summary)
+      expect(status).not_to be_success
+      expect(stderr).to include('history summary platform does not match its sealed start record')
     end
   end
   # rubocop:enable RSpec/ExampleLength
@@ -1468,6 +1636,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
           *) exit 3 ;;
         esac
       }
+      validate_history_summary_platform() { :; }
       HISTORY_APPROVAL=/approval
       AUTHORIZATION_MODE=clone_authorized
       PLATFORMS=instagram
