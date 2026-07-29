@@ -19,6 +19,10 @@ require_safe_token() {
     die "$name contains unsupported characters"
 }
 
+valid_importer_exit_status() {
+  [[ "$1" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( 10#$1 <= 255 ))
+}
+
 require_trusted_ancestors() {
   local path="$1"
   local canonical

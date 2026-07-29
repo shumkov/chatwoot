@@ -1377,7 +1377,7 @@ finalize_attempt() {
   else
     termination=adopted_interrupted_attempt
   fi
-  [[ "$exit_status" = unknown || "$exit_status" =~ ^(?:0|[1-9][0-9]{0,2})$ ]] ||
+  [[ "$exit_status" = unknown ]] || valid_importer_exit_status "$exit_status" ||
     die "invalid importer exit status"
 
   if [[ ! -e "$RUN_LOG" ]]; then
