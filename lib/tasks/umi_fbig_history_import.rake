@@ -63,6 +63,7 @@ namespace :umi do
       write_complete = result.write_complete.nil? ? 'not_applicable' : result.write_complete
       puts [
         '[UMI-FBIG] stage=history_import_summary',
+        "platforms=#{options.platforms.join(',')}",
         "dry_run=#{result.dry_run}",
         "scan_complete=#{result.scan_complete}",
         "write_complete=#{write_complete}",

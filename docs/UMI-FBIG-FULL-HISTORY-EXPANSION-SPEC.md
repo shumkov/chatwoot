@@ -2181,7 +2181,12 @@ apply:
     a result that binds its label,
     canonical log and summary paths and SHAs, selected platforms, dry/apply
     mode, byte budget, release/schema proof, approval SHA, and predecessor
-    result. Every Rails one-off resolves through a sealed per-attempt Compose
+    result. The terminal summary repeats that selected platform and must be
+    byte-identical to the unique terminal summary line in its sealed run log;
+    its attempt identity and start record must name the same platform. The
+    one already-sealed platform-less Messenger summary is accepted only for
+    its exact legacy program SHA and only through those independent sealed
+    bindings. Every Rails one-off resolves through a sealed per-attempt Compose
     override that pins the accepted digest. An apply also binds two distinct,
     successful, zero-write dry results for the same platform and requires
     their terminal summaries to be byte-identical before the first production
