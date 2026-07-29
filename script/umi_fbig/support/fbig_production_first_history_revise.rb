@@ -184,7 +184,6 @@ begin
     result['unattributed_changes'] == '0' &&
     result['counter_mismatches'] == 'none'
   invalid! unless
-    summary['platforms'] == platform &&
     summary['dry_run'] == 'false' &&
     summary['scan_complete'] == 'true' &&
     summary['write_complete'] == 'false' &&

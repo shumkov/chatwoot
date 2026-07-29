@@ -32,7 +32,7 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
     [path, "#{path}.sha256"].each { |artifact| File.chmod(0o400, artifact) }
   end
 
-  it 'changes only the observed platform contentless pair after an otherwise clean full scan' do
+  it 'revises from a production-shaped summary without a synthetic platforms field' do
     Dir.mktmpdir do |root|
       authorization_directory = File.join(root, 'authorization')
       approval_directory = File.join(root, 'approval')
@@ -145,7 +145,6 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
       approval = Umi::Fbig::ProductionFirstHistoryApproval.parse(File.binread(approval_path))
 
       summary_fields = {
-        'platforms' => 'instagram',
         'dry_run' => 'false',
         'scan_complete' => 'true',
         'write_complete' => 'false',
