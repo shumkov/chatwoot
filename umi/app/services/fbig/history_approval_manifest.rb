@@ -3,7 +3,8 @@
 require 'digest'
 require 'pathname'
 
-# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength
+# rubocop:disable Metrics/PerceivedComplexity
 class Umi::Fbig::HistoryApprovalManifest
   class InvalidManifest < StandardError; end
 
@@ -183,9 +184,11 @@ class Umi::Fbig::HistoryApprovalManifest
       exact!(values, 'profile_mode', 'defer')
       COUNT_FIELDS.each { |name| count!(values, name) }
       FINGERPRINT_FIELDS.each { |name| pattern!(values, name, SHA256_PATTERN) }
-      empty_messenger = Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: 'messenger', records: [])
-      exact!(values, 'messenger_unavailable_message_thread_count', empty_messenger.count.to_s)
-      exact!(values, 'messenger_unavailable_message_thread_fingerprint', empty_messenger.fingerprint)
+      %w[messenger instagram].each do |platform|
+        empty = Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: [])
+        exact!(values, "#{platform}_unavailable_message_thread_count", empty.count.to_s)
+        exact!(values, "#{platform}_unavailable_message_thread_fingerprint", empty.fingerprint)
+      end
       approved_by = values.fetch('approved_by')
       raise InvalidManifest if approved_by.strip.empty? || approved_by.bytesize > 255
 
@@ -220,4 +223,5 @@ class Umi::Fbig::HistoryApprovalManifest
     end
   end
 end
-# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength
+# rubocop:enable Metrics/PerceivedComplexity

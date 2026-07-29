@@ -38,8 +38,8 @@ class Umi::Fbig::ProfileTaskConfiguration
 
   def self.build(env:, actual_database:, expected_uid: 0)
     mode = env['UMI_FBIG_PROFILE_APPROVAL_MODE']
-    raise ConfigurationError, 'UMI_FBIG_PROFILE_APPROVAL_MODE must be clone_evidence or production' unless
-      mode.in?(%w[clone_evidence production])
+    raise ConfigurationError, 'UMI_FBIG_PROFILE_APPROVAL_MODE must be clone_evidence, production, or production_first' unless
+      mode.in?(%w[clone_evidence production production_first])
 
     expected_database = env['UMI_FBIG_HISTORY_EXPECTED_DATABASE']
     raise ConfigurationError, 'UMI_FBIG_HISTORY_EXPECTED_DATABASE is required' if expected_database.blank?
@@ -47,14 +47,12 @@ class Umi::Fbig::ProfileTaskConfiguration
 
     reject_present!(env, HISTORY_ONLY_ENV)
     dry_run = boolean!(env['DRY_RUN'], 'DRY_RUN')
-    history = Umi::Fbig::HistoryApprovalManifest.load(
-      manifest_path: env['UMI_FBIG_APPROVAL_MANIFEST_PATH'],
-      checksum_path: env['UMI_FBIG_APPROVAL_CHECKSUM_PATH'],
-      expected_uid: expected_uid
-    )
+    history = load_history_manifest(env, mode, expected_uid)
 
     if mode == 'clone_evidence'
       clone_options(env, actual_database, dry_run, history, expected_uid)
+    elsif mode == 'production_first'
+      production_first_options(env, actual_database, dry_run, history, expected_uid)
     else
       production_options(env, actual_database, dry_run, history, expected_uid)
     end
@@ -63,6 +61,10 @@ class Umi::Fbig::ProfileTaskConfiguration
          Umi::Fbig::ProfileTargetManifest::InvalidManifest,
          Umi::Fbig::ProfileStateSnapshot::InvalidSnapshot,
          Umi::Fbig::ProfilePreAttemptBackupManifest::InvalidManifest,
+         Umi::Fbig::ProductionFirstAuthorization::InvalidAuthorization,
+         Umi::Fbig::ProductionFirstHistoryApproval::InvalidApproval,
+         Umi::Fbig::ProductionFirstProfileApproval::InvalidApproval,
+         Umi::Fbig::CoordinatedBackupManifest::InvalidManifest,
          Umi::Fbig::AvatarIntentStore::InvalidStore
     raise ConfigurationError, 'profile approval artifact is invalid'
   end
@@ -136,6 +138,23 @@ class Umi::Fbig::ProfileTaskConfiguration
 
   class << self
     private
+
+    def load_history_manifest(env, mode, expected_uid)
+      if mode == 'production_first'
+        reject_present!(env, %w[UMI_FBIG_APPROVAL_MANIFEST_PATH UMI_FBIG_APPROVAL_CHECKSUM_PATH])
+        return Umi::Fbig::ProductionFirstHistoryApproval.load(
+          manifest_path: env['UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_PATH'],
+          checksum_path: env['UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_CHECKSUM_PATH'],
+          expected_uid: expected_uid
+        )
+      end
+
+      Umi::Fbig::HistoryApprovalManifest.load(
+        manifest_path: env['UMI_FBIG_APPROVAL_MANIFEST_PATH'],
+        checksum_path: env['UMI_FBIG_APPROVAL_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+    end
 
     def clone_options(env, actual_database, dry_run, history, expected_uid)
       exact!(env, 'PLATFORMS', 'messenger,instagram')
@@ -258,6 +277,154 @@ class Umi::Fbig::ProfileTaskConfiguration
       )
     end
 
+    def production_first_options(env, actual_database, dry_run, history, expected_uid)
+      raise ConfigurationError, 'production-first profile runs are apply-only' if dry_run
+
+      exact!(env, 'PLATFORMS', 'messenger,instagram')
+      exact!(env, 'ACK_PRODUCTION_FIRST_LIVE_IMPORT', 'true')
+      reject_present!(env, [*PROFILE_SETTING_ENV, 'UMI_FBIG_PROFILE_PRODUCTION_DATABASE_NAME'])
+      authorization = Umi::Fbig::ProductionFirstAuthorization.load(
+        manifest_path: env['UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_PATH'],
+        checksum_path: env['UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      profile = Umi::Fbig::ProductionFirstProfileApproval.load(
+        manifest_path: env['UMI_FBIG_PRODUCTION_FIRST_PROFILE_APPROVAL_PATH'],
+        checksum_path: env['UMI_FBIG_PRODUCTION_FIRST_PROFILE_APPROVAL_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      exact!(env, 'UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_SHA256', authorization.sha256)
+      exact!(env, 'UMI_FBIG_RUNTIME_REPOSITORY_COMMIT', profile.repository_commit)
+      exact!(env, 'UMI_FBIG_RUNTIME_IMAGE_DIGEST', profile.image_digest)
+      raise ConfigurationError, 'production database does not match profile approval' unless
+        actual_database == profile.production_database_name
+
+      valid_chain = profile.production_first_authorization_sha256 == authorization.sha256 &&
+                    profile.history_manifest_sha256 == history.sha256 &&
+                    profile.repository_commit == history.repository_commit &&
+                    profile.image_digest == history.image_digest &&
+                    profile.production_database_name == history.production_database &&
+                    profile.recovered_thread_targets_sha256 == history.recovered_thread_targets_sha256 &&
+                    profile.placeholder_targets_sha256 == history.placeholder_targets_sha256
+      raise ConfigurationError, 'production-first profile approval chain mismatch' unless valid_chain
+
+      verify_bound_artifact!(
+        env['UMI_FBIG_MESSENGER_TERMINAL_HISTORY_RESULT_PATH'],
+        env['UMI_FBIG_MESSENGER_TERMINAL_HISTORY_RESULT_CHECKSUM_PATH'],
+        profile.messenger_terminal_history_result_sha256,
+        expected_uid
+      )
+      verify_bound_artifact!(
+        env['UMI_FBIG_INSTAGRAM_TERMINAL_HISTORY_RESULT_PATH'],
+        env['UMI_FBIG_INSTAGRAM_TERMINAL_HISTORY_RESULT_CHECKSUM_PATH'],
+        profile.instagram_terminal_history_result_sha256,
+        expected_uid
+      )
+      coordinated_backup = Umi::Fbig::CoordinatedBackupManifest.load(
+        manifest_path: env['UMI_FBIG_COORDINATED_PRE_PROFILE_BACKUP_PATH'],
+        checksum_path: env['UMI_FBIG_COORDINATED_PRE_PROFILE_BACKUP_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      valid_coordinated_backup = coordinated_backup.sha256 == profile.coordinated_pre_profile_backup_sha256 &&
+                                 coordinated_backup.production_database_name == profile.production_database_name &&
+                                 coordinated_backup.image_digest == profile.image_digest &&
+                                 coordinated_backup.account_id == profile.account_id &&
+                                 coordinated_backup.inbox_id == profile.inbox_id &&
+                                 coordinated_backup.facebook_page_id == profile.facebook_page_id &&
+                                 coordinated_backup.instagram_business_id == profile.instagram_business_id
+      raise ConfigurationError, 'coordinated pre-profile backup does not match approval' unless valid_coordinated_backup
+
+      validate_snapshot_paths!(
+        env,
+        path_name: 'UMI_FBIG_PROFILE_STATE_PATH',
+        checksum_name: 'UMI_FBIG_PROFILE_STATE_CHECKSUM_PATH',
+        basename: 'fbig-profile-state-v1.tsv',
+        label: 'source state'
+      )
+      source_state = Umi::Fbig::ProfileStateSnapshot.load(
+        path: env['UMI_FBIG_PROFILE_STATE_PATH'],
+        checksum_path: env['UMI_FBIG_PROFILE_STATE_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      raise ConfigurationError, 'source profile state does not match approval' unless
+        source_state.sha256 == profile.source_profile_state_sha256
+
+      predecessor_state = load_production_first_predecessor_state(env, expected_uid)
+
+      seeds = load_targets(env, history, expected_uid)
+      raise ConfigurationError, 'placeholder target count does not match approval' unless
+        seeds.size == profile.placeholder_target_count
+
+      backup = Umi::Fbig::ProfilePreAttemptBackupManifest.load(
+        manifest_path: env['UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_PATH'],
+        checksum_path: env['UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      attempt_directory, intent_directory = validate_attempt_directories!(env, expected_uid)
+      Options.new(
+        approval_mode: 'production_first',
+        clone_phase: nil,
+        dry_run: false,
+        platforms: profile.platforms,
+        actual_database: actual_database,
+        production_database_name: profile.production_database_name,
+        repository_commit: profile.repository_commit,
+        image_digest: profile.image_digest,
+        graph_delay_ms: profile.graph_delay_ms,
+        max_conversation_pages: profile.max_conversation_pages,
+        max_rate_limit_wait_seconds: profile.max_rate_limit_wait_seconds,
+        max_download_bytes: profile.max_avatar_download_bytes,
+        history_manifest: history,
+        profile_approval: profile,
+        pre_attempt_backup: backup,
+        seed_targets: seeds,
+        source_state: source_state,
+        predecessor_state: predecessor_state,
+        attempt_directory: attempt_directory,
+        avatar_intent_directory: intent_directory
+      )
+    end
+
+    def verify_bound_artifact!(path, checksum_path, expected_sha256, expected_uid)
+      artifact = Pathname.new(path.to_s)
+      checksum = Pathname.new(checksum_path.to_s)
+      valid = artifact.absolute? && artifact.cleanpath.to_s == path.to_s &&
+              checksum == Pathname.new("#{artifact}.sha256") &&
+              artifact.dirname == checksum.dirname
+      raise ConfigurationError, 'bound profile artifact path is invalid' unless valid
+
+      directory = File.lstat(artifact.dirname)
+      raise ConfigurationError, 'bound profile artifact directory is invalid' unless
+        directory.directory? && !directory.symlink? && directory.uid == expected_uid &&
+        (directory.mode & 0o777) == 0o700
+
+      bytes = locked_bytes!(artifact, expected_uid)
+      checksum_bytes = locked_bytes!(checksum, expected_uid)
+      actual = Digest::SHA256.hexdigest(bytes)
+      raise ConfigurationError, 'bound profile artifact checksum is invalid' unless
+        actual == expected_sha256 && checksum_bytes == "#{actual}  #{artifact.basename}\n"
+    rescue SystemCallError
+      raise ConfigurationError, 'bound profile artifact is invalid'
+    end
+
+    def locked_bytes!(path, expected_uid)
+      bytes = nil
+      opened_stat = nil
+      File.open(path, 'rb') do |file|
+        opened_stat = file.stat
+        raise ConfigurationError, 'bound profile artifact is not locked' unless
+          opened_stat.file? && opened_stat.uid == expected_uid && opened_stat.nlink == 1 &&
+          (opened_stat.mode & 0o777) == 0o400
+
+        bytes = file.read
+      end
+      path_stat = File.lstat(path)
+      raise ConfigurationError, 'bound profile artifact changed' if
+        path_stat.symlink? || path_stat.dev != opened_stat.dev || path_stat.ino != opened_stat.ino
+
+      bytes
+    end
+
     def manual_settings!(env)
       {
         graph_delay_ms: positive_integer!(env['UMI_FBIG_PROFILE_GRAPH_DELAY_MS'], 'UMI_FBIG_PROFILE_GRAPH_DELAY_MS'),
@@ -355,6 +522,29 @@ class Umi::Fbig::ProfileTaskConfiguration
       Umi::Fbig::ProfileStateSnapshot.load(
         path: env['UMI_FBIG_PROFILE_PREDECESSOR_STATE_PATH'],
         checksum_path: env['UMI_FBIG_PROFILE_PREDECESSOR_STATE_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+    end
+
+    def load_production_first_predecessor_state(env, expected_uid)
+      names = %w[
+        UMI_FBIG_PROFILE_PREDECESSOR_STATE_PATH
+        UMI_FBIG_PROFILE_PREDECESSOR_STATE_CHECKSUM_PATH
+      ]
+      return if names.all? { |name| env[name].blank? }
+      raise ConfigurationError, 'production-first predecessor state paths must be provided together' if
+        names.any? { |name| env[name].blank? }
+
+      validate_snapshot_paths!(
+        env,
+        path_name: names.first,
+        checksum_name: names.last,
+        basename: 'fbig-profile-production-poststate-v1.tsv',
+        label: 'predecessor state'
+      )
+      Umi::Fbig::ProfileStateSnapshot.load(
+        path: env[names.first],
+        checksum_path: env[names.last],
         expected_uid: expected_uid
       )
     end

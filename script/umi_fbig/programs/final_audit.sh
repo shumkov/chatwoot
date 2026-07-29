@@ -5,7 +5,9 @@ readonly PROGRAM_PATH
 readonly PROGRAM_CHECKSUM="${PROGRAM_PATH}.sha256"
 
 readonly BINDING_FIELDS=(
-  schema_version candidate_commit candidate_image stack_dir compose_file
+  schema_version authorization_mode authorization_manifest
+  authorization_checksum authorization_sha256 candidate_commit candidate_image
+  stack_dir compose_file
   compose_file_sha256 compose_project rails_service sidekiq_service
   production_database audit_root inbox_id acceptance_manifest
   acceptance_checksum acceptance_sha256 history_approval
@@ -27,8 +29,51 @@ readonly BINDING_FIELDS=(
   final_profile_audit_checksum first_checkpoint first_checkpoint_checksum
   final_checkpoint final_checkpoint_checksum production_lock
 )
+readonly PRODUCTION_FIRST_AUTHORIZATION_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 unrecoverable_inspector_sha256
+  coordinated_backup_manifest_sha256
+  history_program_sha256 profile_program_sha256 final_audit_program_sha256
+  delivery_audit_program_sha256 delivery_checkpoint_program_sha256
+  profile_wrapper_sha256 storage_helper_sha256
+  recovered_target_generator_sha256 authorization_generator_sha256
+  history_revision_generator_sha256 profile_approval_generator_sha256
+  normal_terminal_acceptance_sha256
+  normal_dry_pair_sha256 predecessor_authorization_sha256
+  predecessor_history_result_sha256 predecessor_terminal_summary_sha256
+  predecessor_delta_sha256 predecessor_expanded_baseline_sha256
+  current_state_backup_sha256 approved_by created_at
+)
+readonly PRODUCTION_FIRST_HISTORY_APPROVAL_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  coordinated_backup_manifest_sha256 production_first_authorization_sha256
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 revision_platform predecessor_approval_sha256
+  predecessor_attempt_result_sha256 predecessor_run_summary_sha256
+  predecessor_delta_sha256 approved_by approved_at
+)
 readonly HISTORY_RESULT_FIELDS=(
-  schema_version label operation platforms require_zero_writes program_sha256
+  schema_version authorization_mode authorization_sha256 label operation
+  platforms require_zero_writes program_sha256
   binding_sha256 candidate_commit candidate_image production_database inbox_id
   history_approval_sha256 acceptance_sha256 pre_history_backup_sha256
   dry_pair_sha256 attempt_identity_sha256 compose_override_sha256
@@ -58,7 +103,8 @@ readonly HISTORY_RESULT_FIELDS=(
   finished_at sealed_at
 )
 readonly PROFILE_RESULT_FIELDS=(
-  schema_version label profile_phase program_sha256 binding_sha256
+  schema_version authorization_mode authorization_sha256 label profile_phase
+  program_sha256 binding_sha256
   profile_wrapper_sha256 storage_helper_sha256 candidate_commit candidate_image
   production_database
   inbox_id acceptance_sha256 profile_approval_sha256
@@ -75,7 +121,8 @@ readonly PROFILE_ATTEMPT_FIELDS=(
   run_summary_sha256 exit_status started_at finished_at
 )
 readonly PROFILE_AUDIT_FIELDS=(
-  schema_version label program_sha256 binding_sha256 candidate_commit
+  schema_version authorization_mode authorization_sha256 label program_sha256
+  binding_sha256 candidate_commit
   candidate_image acceptance_sha256 attempt_result_sha256
   attempt_manifest_sha256 attempt_started_at attempt_finished_at
   before_checkpoint_sha256 after_checkpoint_sha256
@@ -207,7 +254,8 @@ readonly PLATFORM_COUNT_FIELDS=(
   unrecoverable_instagram_envelopes profile_mutations_are_aggregate
 )
 readonly FINAL_MANIFEST_FIELDS=(
-  schema_version program_sha256 binding_sha256 candidate_commit
+  schema_version authorization_mode authorization_sha256 program_sha256
+  binding_sha256 candidate_commit
   candidate_image production_database inbox_id acceptance_sha256
   history_approval_sha256 profile_approval_sha256
   pre_history_backup_sha256 history_result_index_sha256
@@ -229,6 +277,10 @@ binding() {
 }
 
 CANDIDATE_COMMIT="$(binding candidate_commit)"
+AUTHORIZATION_MODE="$(binding authorization_mode)"
+AUTHORIZATION_MANIFEST="$(binding authorization_manifest)"
+AUTHORIZATION_CHECKSUM="$(binding authorization_checksum)"
+AUTHORIZATION_SHA256="$(binding authorization_sha256)"
 CANDIDATE_IMAGE="$(binding candidate_image)"
 STACK_DIR="$(binding stack_dir)"
 COMPOSE_FILE="$(binding compose_file)"
@@ -288,7 +340,8 @@ FIRST_CHECKPOINT_CHECKSUM="$(binding first_checkpoint_checksum)"
 FINAL_CHECKPOINT="$(binding final_checkpoint)"
 FINAL_CHECKPOINT_CHECKSUM="$(binding final_checkpoint_checksum)"
 PRODUCTION_LOCK="$(binding production_lock)"
-readonly CANDIDATE_COMMIT CANDIDATE_IMAGE STACK_DIR COMPOSE_FILE
+readonly AUTHORIZATION_MODE AUTHORIZATION_MANIFEST AUTHORIZATION_CHECKSUM
+readonly AUTHORIZATION_SHA256 CANDIDATE_COMMIT CANDIDATE_IMAGE STACK_DIR COMPOSE_FILE
 readonly COMPOSE_FILE_SHA256 COMPOSE_PROJECT RAILS_SERVICE SIDEKIQ_SERVICE
 readonly PRODUCTION_DATABASE AUDIT_ROOT INBOX_ID ACCEPTANCE_MANIFEST
 readonly ACCEPTANCE_CHECKSUM ACCEPTANCE_SHA256 HISTORY_APPROVAL
@@ -317,6 +370,34 @@ readonly PRODUCTION_LOCK
 [[ "$PROFILE_WRAPPER_SHA256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$STORAGE_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]]
+[[ "$AUTHORIZATION_MODE" = clone_authorized ||
+  "$AUTHORIZATION_MODE" = production_first ]]
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  verify_checksum "$AUTHORIZATION_MANIFEST" "$AUTHORIZATION_CHECKSUM"
+  require_ordered_manifest \
+    "$AUTHORIZATION_MANIFEST" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
+  test "$(sha256_file "$AUTHORIZATION_MANIFEST")" = "$AUTHORIZATION_SHA256"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" authorization_mode)" = production_first
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" repository_commit)" = \
+    "$CANDIDATE_COMMIT"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" image_digest)" = "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" production_database)" = \
+    "$PRODUCTION_DATABASE"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" inbox_id)" = "$INBOX_ID"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" final_audit_program_sha256)" = \
+    "$(sha256_file "$PROGRAM_PATH")"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" profile_wrapper_sha256)" = \
+    "$PROFILE_WRAPPER_SHA256"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" storage_helper_sha256)" = \
+    "$STORAGE_HELPER_SHA256"
+  test "$ACCEPTANCE_MANIFEST" = none
+  test "$ACCEPTANCE_CHECKSUM" = none
+  test "$ACCEPTANCE_SHA256" = none
+else
+  test "$AUTHORIZATION_MANIFEST" = none
+  test "$AUTHORIZATION_CHECKSUM" = none
+  test "$AUTHORIZATION_SHA256" = none
+fi
 require_safe_token compose_project "$COMPOSE_PROJECT"
 require_safe_token rails_service "$RAILS_SERVICE"
 require_safe_token sidekiq_service "$SIDEKIQ_SERVICE"
@@ -324,15 +405,19 @@ require_root_directory "$STACK_DIR"
 require_root_readonly_file "$COMPOSE_FILE"
 test "$(sha256_file "$COMPOSE_FILE")" = "$COMPOSE_FILE_SHA256"
 require_root_directory "$AUDIT_ROOT"
-for tuple in \
-  "$ACCEPTANCE_MANIFEST:$ACCEPTANCE_CHECKSUM:$ACCEPTANCE_SHA256" \
+artifact_tuples=(
   "$HISTORY_APPROVAL:$HISTORY_APPROVAL_CHECKSUM:$HISTORY_APPROVAL_SHA256" \
   "$PROFILE_APPROVAL:$PROFILE_APPROVAL_CHECKSUM:$PROFILE_APPROVAL_SHA256" \
   "$UNRECOVERABLE_SIDECAR:$UNRECOVERABLE_SIDECAR_CHECKSUM:$UNRECOVERABLE_SIDECAR_SHA256" \
   "$PRE_HISTORY_BACKUP:$PRE_HISTORY_BACKUP_CHECKSUM:$PRE_HISTORY_BACKUP_SHA256" \
   "$HISTORY_RESULT_INDEX:$HISTORY_RESULT_INDEX_CHECKSUM:$HISTORY_RESULT_INDEX_SHA256" \
   "$PROFILE_RESULT_INDEX:$PROFILE_RESULT_INDEX_CHECKSUM:$PROFILE_RESULT_INDEX_SHA256" \
-  "$CHECKPOINT_INDEX:$CHECKPOINT_INDEX_CHECKSUM:$CHECKPOINT_INDEX_SHA256"; do
+  "$CHECKPOINT_INDEX:$CHECKPOINT_INDEX_CHECKSUM:$CHECKPOINT_INDEX_SHA256"
+)
+if [[ "$AUTHORIZATION_MODE" = clone_authorized ]]; then
+  artifact_tuples+=("$ACCEPTANCE_MANIFEST:$ACCEPTANCE_CHECKSUM:$ACCEPTANCE_SHA256")
+fi
+for tuple in "${artifact_tuples[@]}"; do
   artifact="${tuple%%:*}"
   remainder="${tuple#*:}"
   checksum="${remainder%%:*}"
@@ -342,14 +427,23 @@ for tuple in \
 done
 require_root_artifact "$PROFILE_TARGETS"
 test "$(sha256_file "$PROFILE_TARGETS")" = "$PROFILE_TARGETS_SHA256"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_commit)" = \
-  "$CANDIDATE_COMMIT"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_image)" = \
-  "$CANDIDATE_IMAGE"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" history_approval_sha256)" = \
-  "$HISTORY_APPROVAL_SHA256"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" profile_approval_sha256)" = \
-  "$PROFILE_APPROVAL_SHA256"
+if [[ "$AUTHORIZATION_MODE" = clone_authorized ]]; then
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_commit)" = \
+    "$CANDIDATE_COMMIT"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_image)" = \
+    "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" history_approval_sha256)" = \
+    "$HISTORY_APPROVAL_SHA256"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" profile_approval_sha256)" = \
+    "$PROFILE_APPROVAL_SHA256"
+else
+  test "$(manifest_value "$HISTORY_APPROVAL" authorization_mode)" = production_first
+  test "$(manifest_value "$HISTORY_APPROVAL" production_first_authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256"
+  test "$(manifest_value "$PROFILE_APPROVAL" authorization_mode)" = production_first
+  test "$(manifest_value "$PROFILE_APPROVAL" production_first_authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256"
+fi
 test "$(manifest_value "$HISTORY_APPROVAL" inbox_id)" = "$INBOX_ID"
 test "$(manifest_value "$PROFILE_APPROVAL" inbox_id)" = "$INBOX_ID"
 
@@ -363,6 +457,10 @@ readonly PROFILE_ATTEMPT_ROOT='/opt/umi/fbig-profile-attempts'
 validate_history_result() {
   local result="$1"
   local checksum="$2"
+  local expected_authorization_sha="${3:-$AUTHORIZATION_SHA256}"
+  local expected_commit="${4:-$CANDIDATE_COMMIT}"
+  local expected_image="${5:-$CANDIDATE_IMAGE}"
+  local expected_approval_sha="${6:-$HISTORY_APPROVAL_SHA256}"
   local directory
   local artifact
   local field
@@ -370,13 +468,16 @@ validate_history_result() {
 
   verify_checksum "$result" "$checksum"
   require_ordered_manifest "$result" "${HISTORY_RESULT_FIELDS[@]}"
-  test "$(manifest_value "$result" candidate_commit)" = "$CANDIDATE_COMMIT"
-  test "$(manifest_value "$result" candidate_image)" = "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$result" authorization_mode)" = "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$result" authorization_sha256)" = \
+    "$expected_authorization_sha"
+  test "$(manifest_value "$result" candidate_commit)" = "$expected_commit"
+  test "$(manifest_value "$result" candidate_image)" = "$expected_image"
   test "$(manifest_value "$result" production_database)" = "$PRODUCTION_DATABASE"
   test "$(manifest_value "$result" inbox_id)" = "$INBOX_ID"
   test "$(manifest_value "$result" acceptance_sha256)" = "$ACCEPTANCE_SHA256"
   test "$(manifest_value "$result" history_approval_sha256)" = \
-    "$HISTORY_APPROVAL_SHA256"
+    "$expected_approval_sha"
   for field in protected_changes deleted_rows unattributed_changes; do
     test "$(manifest_value "$result" "$field")" = 0
   done
@@ -416,6 +517,75 @@ validate_history_result() {
   done
 }
 
+validate_production_history_pair() {
+  local result="$1"
+  local authorization="$2"
+  local expected_authorization_sha="$3"
+  local approval="$4"
+  local expected_approval_sha="$5"
+  local field
+  local platform
+  local suffix
+  local contentless_matches
+  local revision_platform
+
+  verify_checksum "$authorization" "${authorization}.sha256"
+  require_ordered_manifest \
+    "$authorization" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
+  test "$(sha256_file "$authorization")" = "$expected_authorization_sha"
+  test "$(manifest_value "$authorization" authorization_mode)" = production_first
+  test "$(manifest_value "$authorization" production_database)" = "$PRODUCTION_DATABASE"
+  test "$(manifest_value "$authorization" inbox_id)" = "$INBOX_ID"
+
+  verify_checksum "$approval" "${approval}.sha256"
+  require_ordered_manifest \
+    "$approval" "${PRODUCTION_FIRST_HISTORY_APPROVAL_FIELDS[@]}"
+  test "$(sha256_file "$approval")" = "$expected_approval_sha"
+  test "$(manifest_value "$approval" authorization_mode)" = production_first
+  test "$(manifest_value "$approval" production_first_authorization_sha256)" = \
+    "$expected_authorization_sha"
+
+  validate_history_result \
+    "$result" "${result}.sha256" "$expected_authorization_sha" \
+    "$(manifest_value "$authorization" repository_commit)" \
+    "$(manifest_value "$authorization" image_digest)" "$expected_approval_sha"
+  test "$(manifest_value "$result" pre_history_backup_sha256)" = \
+    "$(manifest_value "$approval" coordinated_backup_manifest_sha256)"
+  test "$(manifest_value "$result" program_sha256)" = \
+    "$(manifest_value "$authorization" history_program_sha256)"
+
+  for field in \
+    repository_commit image_digest production_database account_id inbox_id \
+    facebook_page_id instagram_business_id since before outbound_policy \
+    profile_mode coordinated_backup_manifest_sha256 \
+    recovered_thread_targets_sha256 placeholder_targets_sha256 \
+    unrecoverable_sidecar_sha256 \
+    messenger_unavailable_message_thread_count \
+    messenger_unavailable_message_thread_fingerprint \
+    instagram_unavailable_message_thread_count \
+    instagram_unavailable_message_thread_fingerprint \
+    r2_acceptance_binding_sha256 r2_launch_manifest_sha256 \
+    r2_probe_log_sha256 r2_probe_summary_sha256; do
+    test "$(manifest_value "$approval" "$field")" = \
+      "$(manifest_value "$authorization" "$field")"
+  done
+
+  revision_platform="$(manifest_value "$approval" revision_platform)"
+  for platform in messenger instagram; do
+    contentless_matches=true
+    for suffix in count fingerprint; do
+      test "$(manifest_value "$approval" "${platform}_${suffix}")" = \
+        "$(manifest_value "$authorization" "${platform}_${suffix}")" ||
+        contentless_matches=false
+    done
+    if [[ "$revision_platform" = none || "$platform" != "$revision_platform" ]]; then
+      test "$contentless_matches" = true
+    else
+      test "$contentless_matches" = false
+    fi
+  done
+}
+
 validate_profile_result() {
   local result="$1"
   local checksum="$2"
@@ -426,6 +596,8 @@ validate_profile_result() {
 
   verify_checksum "$result" "$checksum"
   require_ordered_manifest "$result" "${PROFILE_RESULT_FIELDS[@]}"
+  test "$(manifest_value "$result" authorization_mode)" = "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$result" authorization_sha256)" = "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$result" candidate_commit)" = "$CANDIDATE_COMMIT"
   test "$(manifest_value "$result" candidate_image)" = "$CANDIDATE_IMAGE"
   test "$(manifest_value "$result" production_database)" = "$PRODUCTION_DATABASE"
@@ -437,6 +609,10 @@ validate_profile_result() {
     "$PROFILE_WRAPPER_SHA256"
   test "$(manifest_value "$result" storage_helper_sha256)" = \
     "$STORAGE_HELPER_SHA256"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    test "$(manifest_value "$result" program_sha256)" = \
+      "$(manifest_value "$AUTHORIZATION_MANIFEST" profile_program_sha256)"
+  fi
   attempt_directory="$(manifest_value "$result" attempt_directory)"
   test "$attempt_directory" = "$(realpath -e -- "$attempt_directory")"
   test "$(dirname "$attempt_directory")" = "$PROFILE_ATTEMPT_ROOT"
@@ -476,16 +652,23 @@ validate_profile_audit() {
 
   verify_checksum "$audit" "$checksum"
   require_ordered_manifest "$audit" "${PROFILE_AUDIT_FIELDS[@]}"
+  test "$(manifest_value "$audit" authorization_mode)" = "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$audit" authorization_sha256)" = "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$audit" candidate_commit)" = "$CANDIDATE_COMMIT"
   test "$(manifest_value "$audit" candidate_image)" = "$CANDIDATE_IMAGE"
   test "$(manifest_value "$audit" acceptance_sha256)" = "$ACCEPTANCE_SHA256"
   test "$(manifest_value "$audit" zero_unrecovered_deliveries)" = true
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    test "$(manifest_value "$audit" program_sha256)" = \
+      "$(manifest_value "$AUTHORIZATION_MANIFEST" delivery_audit_program_sha256)"
+  fi
 }
 
 validate_checkpoint() {
   local checkpoint="$1"
   local checksum="$2"
   local field
+  local identity_manifest
 
   verify_checksum "$checkpoint" "$checksum"
   require_ordered_manifest "$checkpoint" "${CHECKPOINT_FIELDS[@]}"
@@ -494,6 +677,10 @@ validate_checkpoint() {
   test "$(manifest_value "$checkpoint" production_database)" = \
     "$PRODUCTION_DATABASE"
   test "$(manifest_value "$checkpoint" inbox_id)" = "$INBOX_ID"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    test "$(manifest_value "$checkpoint" program_sha256)" = \
+      "$(manifest_value "$AUTHORIZATION_MANIFEST" delivery_checkpoint_program_sha256)"
+  fi
   test "$(manifest_value "$checkpoint" service_source_sha256)" = \
     "$(manifest_value "$FIRST_CHECKPOINT" service_source_sha256)"
   test "$(manifest_value "$checkpoint" running_rails_commit)" = \
@@ -510,12 +697,16 @@ validate_checkpoint() {
     "$(manifest_value "$checkpoint" running_rails_image_id)"
   candidate_image_matches_container \
     "$(manifest_value "$checkpoint" running_sidekiq_image_id)"
+  identity_manifest="$ACCEPTANCE_MANIFEST"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    identity_manifest="$AUTHORIZATION_MANIFEST"
+  fi
   test "$(manifest_value "$checkpoint" page_identity_sha256)" = "$(
-    printf '%s' "$(manifest_value "$ACCEPTANCE_MANIFEST" facebook_page_id)" |
+    printf '%s' "$(manifest_value "$identity_manifest" facebook_page_id)" |
       sha256sum | awk '{ print $1 }'
   )"
   test "$(manifest_value "$checkpoint" instagram_identity_sha256)" = "$(
-    printf '%s' "$(manifest_value "$ACCEPTANCE_MANIFEST" instagram_business_id)" |
+    printf '%s' "$(manifest_value "$identity_manifest" instagram_business_id)" |
       sha256sum | awk '{ print $1 }'
   )"
   for field in \
@@ -536,8 +727,17 @@ validate_terminal_result() {
   local result="$1"
   local checksum="$2"
   local platform="$3"
+  local result_sha
 
-  validate_history_result "$result" "$checksum"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    verify_checksum "$result" "$checksum"
+    require_ordered_manifest "$result" "${HISTORY_RESULT_FIELDS[@]}"
+    result_sha="$(sha256_file "$result")"
+    test -n "${RESULT_AUTHORIZATION_SHA["$result_sha"]:-}"
+    test -n "${RESULT_APPROVAL_SHA["$result_sha"]:-}"
+  else
+    validate_history_result "$result" "$checksum"
+  fi
   test "$(manifest_value "$result" operation)" = apply
   test "$(manifest_value "$result" platforms)" = "$platform"
   test "$(manifest_value "$result" require_zero_writes)" = true
@@ -644,6 +844,24 @@ validate_terminal_summary() {
   test "$classified" -eq "$((expected_structural + unavailable))"
   test "$failed" = 0
   test "$listed" -eq "$((cursor_exhausted + classified + failed))"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    local recovered_expected=0
+    local recovered_sha=none
+    if [[ "$platform" = instagram ]]; then
+      recovered_expected=2
+      recovered_sha="$(manifest_value "$HISTORY_APPROVAL" recovered_thread_targets_sha256)"
+    fi
+    test "$(stage_value "$summary" history_import_summary recovered_thread_targets_sha256)" = \
+      "$recovered_sha"
+    test "$(stage_value "$summary" history_import_summary recovered_targets_expected)" = \
+      "$recovered_expected"
+    test "$(stage_value "$summary" history_import_summary recovered_targets_listed)" = \
+      "$recovered_expected"
+    test "$(stage_value "$summary" history_import_summary recovered_targets_message_cursor_exhausted)" = \
+      "$recovered_expected"
+    test "$(stage_value "$summary" history_import_summary recovered_target_mismatches)" = 0
+    test "$(stage_value "$summary" history_import_summary recovered_target_duplicate_listings)" = 0
+  fi
   test "$(stage_value "$summary" history_import_summary scan_complete)" = true
   test "$(stage_value "$summary" history_import_summary write_complete)" = true
   for counter in \
@@ -658,6 +876,20 @@ validate_terminal_summary() {
     download_budget_exhaustions exit_failures; do
     test "$(stage_value "$summary" history_import_summary "$counter")" = 0
   done
+}
+
+validate_history_platform_transition() {
+  local predecessor="$1"
+  local successor="$2"
+  local predecessor_platform
+  local successor_platform
+
+  predecessor_platform="$(manifest_value "$predecessor" platforms)"
+  successor_platform="$(manifest_value "$successor" platforms)"
+  [[ "$predecessor_platform" = messenger && "$successor_platform" = instagram ]] ||
+    die "production-first history platform transition is invalid"
+  validate_terminal_result "$predecessor" "${predecessor}.sha256" messenger
+  validate_terminal_summary "$predecessor" messenger
 }
 
 history_state_content_sha256() {
@@ -683,6 +915,8 @@ validate_final_manifest() {
 
   verify_checksum "$manifest" "${manifest}.sha256"
   require_ordered_manifest "$manifest" "${FINAL_MANIFEST_FIELDS[@]}"
+  test "$(manifest_value "$manifest" authorization_mode)" = "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$manifest" authorization_sha256)" = "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$manifest" candidate_commit)" = "$CANDIDATE_COMMIT"
   test "$(manifest_value "$manifest" candidate_image)" = "$CANDIDATE_IMAGE"
   test "$(manifest_value "$manifest" inbox_id)" = "$INBOX_ID"
@@ -710,49 +944,56 @@ mkdir "$STAGING_DIRECTORY"
 chmod 0700 "$STAGING_DIRECTORY"
 readonly LIVE_COUNTS_TEMP="$STAGING_DIRECTORY/fbig-production-live-counts-v1.tsv"
 
-validate_history_result "$MESSENGER_DRY_1" "$MESSENGER_DRY_1_CHECKSUM"
-validate_history_result "$MESSENGER_DRY_2" "$MESSENGER_DRY_2_CHECKSUM"
-validate_history_result "$INSTAGRAM_DRY_1" "$INSTAGRAM_DRY_1_CHECKSUM"
-validate_history_result "$INSTAGRAM_DRY_2" "$INSTAGRAM_DRY_2_CHECKSUM"
-for result in "$MESSENGER_DRY_1" "$MESSENGER_DRY_2"; do
-  test "$(manifest_value "$result" operation)" = dry
-  test "$(manifest_value "$result" platforms)" = messenger
-  test "$(manifest_value "$result" require_zero_writes)" = true
-  test "$(manifest_value "$result" zero_write_observed)" = true
-  test "$(manifest_value "$result" exit_status)" = 0
-  test "$(manifest_value "$result" termination)" = normal
-  test "$(manifest_value "$result" pre_history_backup_sha256)" = none
-  test "$(manifest_value "$result" dry_pair_sha256)" = none
-done
-for result in "$INSTAGRAM_DRY_1" "$INSTAGRAM_DRY_2"; do
-  test "$(manifest_value "$result" operation)" = dry
-  test "$(manifest_value "$result" platforms)" = instagram
-  test "$(manifest_value "$result" require_zero_writes)" = true
-  test "$(manifest_value "$result" zero_write_observed)" = true
-  test "$(manifest_value "$result" exit_status)" = 0
-  test "$(manifest_value "$result" termination)" = normal
-  test "$(manifest_value "$result" pre_history_backup_sha256)" = none
-  test "$(manifest_value "$result" dry_pair_sha256)" = none
-done
-cmp -s \
-  "$(dirname "$MESSENGER_DRY_1")/history-summary.tsv" \
-  "$(dirname "$MESSENGER_DRY_2")/history-summary.tsv"
-cmp -s \
-  "$(dirname "$INSTAGRAM_DRY_1")/history-summary.tsv" \
-  "$(dirname "$INSTAGRAM_DRY_2")/history-summary.tsv"
-MESSENGER_DRY_PAIR_SHA="$(
-  dry_pair_sha messenger "$MESSENGER_DRY_1" "$MESSENGER_DRY_2"
-)"
-INSTAGRAM_DRY_PAIR_SHA="$(
-  dry_pair_sha instagram "$INSTAGRAM_DRY_1" "$INSTAGRAM_DRY_2"
-)"
+MESSENGER_DRY_PAIR_SHA=none
+INSTAGRAM_DRY_PAIR_SHA=none
+if [[ "$AUTHORIZATION_MODE" = clone_authorized ]]; then
+  validate_history_result "$MESSENGER_DRY_1" "$MESSENGER_DRY_1_CHECKSUM"
+  validate_history_result "$MESSENGER_DRY_2" "$MESSENGER_DRY_2_CHECKSUM"
+  validate_history_result "$INSTAGRAM_DRY_1" "$INSTAGRAM_DRY_1_CHECKSUM"
+  validate_history_result "$INSTAGRAM_DRY_2" "$INSTAGRAM_DRY_2_CHECKSUM"
+  for result in "$MESSENGER_DRY_1" "$MESSENGER_DRY_2"; do
+    test "$(manifest_value "$result" operation)" = dry
+    test "$(manifest_value "$result" platforms)" = messenger
+    test "$(manifest_value "$result" require_zero_writes)" = true
+    test "$(manifest_value "$result" zero_write_observed)" = true
+    test "$(manifest_value "$result" exit_status)" = 0
+    test "$(manifest_value "$result" termination)" = normal
+    test "$(manifest_value "$result" pre_history_backup_sha256)" = none
+    test "$(manifest_value "$result" dry_pair_sha256)" = none
+  done
+  for result in "$INSTAGRAM_DRY_1" "$INSTAGRAM_DRY_2"; do
+    test "$(manifest_value "$result" operation)" = dry
+    test "$(manifest_value "$result" platforms)" = instagram
+    test "$(manifest_value "$result" require_zero_writes)" = true
+    test "$(manifest_value "$result" zero_write_observed)" = true
+    test "$(manifest_value "$result" exit_status)" = 0
+    test "$(manifest_value "$result" termination)" = normal
+    test "$(manifest_value "$result" pre_history_backup_sha256)" = none
+    test "$(manifest_value "$result" dry_pair_sha256)" = none
+  done
+  cmp -s \
+    "$(dirname "$MESSENGER_DRY_1")/history-summary.tsv" \
+    "$(dirname "$MESSENGER_DRY_2")/history-summary.tsv"
+  cmp -s \
+    "$(dirname "$INSTAGRAM_DRY_1")/history-summary.tsv" \
+    "$(dirname "$INSTAGRAM_DRY_2")/history-summary.tsv"
+  MESSENGER_DRY_PAIR_SHA="$(
+    dry_pair_sha messenger "$MESSENGER_DRY_1" "$MESSENGER_DRY_2"
+  )"
+  INSTAGRAM_DRY_PAIR_SHA="$(
+    dry_pair_sha instagram "$INSTAGRAM_DRY_1" "$INSTAGRAM_DRY_2"
+  )"
+else
+  test "$MESSENGER_DRY_1" = none
+  test "$MESSENGER_DRY_1_CHECKSUM" = none
+  test "$MESSENGER_DRY_2" = none
+  test "$MESSENGER_DRY_2_CHECKSUM" = none
+  test "$INSTAGRAM_DRY_1" = none
+  test "$INSTAGRAM_DRY_1_CHECKSUM" = none
+  test "$INSTAGRAM_DRY_2" = none
+  test "$INSTAGRAM_DRY_2_CHECKSUM" = none
+fi
 readonly MESSENGER_DRY_PAIR_SHA INSTAGRAM_DRY_PAIR_SHA
-validate_terminal_result \
-  "$MESSENGER_TERMINAL_RESULT" "$MESSENGER_TERMINAL_CHECKSUM" messenger
-validate_terminal_result \
-  "$INSTAGRAM_TERMINAL_RESULT" "$INSTAGRAM_TERMINAL_CHECKSUM" instagram
-validate_terminal_summary "$MESSENGER_TERMINAL_RESULT" messenger
-validate_terminal_summary "$INSTAGRAM_TERMINAL_RESULT" instagram
 
 declare -A HISTORY_TOTALS=()
 history_delta_fields=(
@@ -769,22 +1010,124 @@ done
 
 history_sequence=0
 previous_history_sha=none
+previous_authorization_sha=none
+previous_approval_sha=none
 declare -A PREVIOUS_HISTORY_POST=([messenger]=none [instagram]=none)
 declare -A FIRST_HISTORY_PRE=([messenger]=none [instagram]=none)
+declare -A FIRST_HISTORY_SUMMARY=([messenger]=none [instagram]=none)
+declare -A RESULT_AUTHORIZATION_SHA=()
+declare -A RESULT_APPROVAL_SHA=()
 last_messenger_result=none
 last_instagram_result=none
-while IFS=$'\t' read -r sequence result expected_sha extra; do
-  test -z "$extra"
+while IFS= read -r history_index_row; do
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    IFS=$'\t' read -r sequence result expected_sha authorization authorization_sha approval approval_sha extra \
+      <<<"$history_index_row"
+    test -z "$extra"
+    test -n "$approval_sha" ||
+      die "production-first history index must contain the complete chain"
+  else
+    IFS=$'\t' read -r sequence result expected_sha extra <<<"$history_index_row"
+    test -z "$extra"
+    authorization=none
+    authorization_sha=none
+    approval=none
+    approval_sha="$HISTORY_APPROVAL_SHA256"
+  fi
   history_sequence=$((history_sequence + 1))
   test "$sequence" = "$history_sequence"
-  validate_history_result "$result" "${result}.sha256"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    validate_production_history_pair \
+      "$result" "$authorization" "$authorization_sha" "$approval" "$approval_sha"
+    if [[ "$previous_authorization_sha" = none ]]; then
+      test "$(manifest_value "$authorization" predecessor_authorization_sha256)" = none ||
+        die "production-first history index must contain the complete chain"
+      test "$(manifest_value "$approval" revision_platform)" = none
+      for field in \
+        predecessor_approval_sha256 predecessor_attempt_result_sha256 \
+        predecessor_run_summary_sha256 predecessor_delta_sha256; do
+        test "$(manifest_value "$approval" "$field")" = none
+      done
+      test "$(manifest_value "$result" platforms)" = messenger
+    elif [[ "$authorization_sha" != "$previous_authorization_sha" ]]; then
+      test "$(manifest_value "$authorization" predecessor_authorization_sha256)" = \
+        "$previous_authorization_sha"
+      test "$(manifest_value "$authorization" predecessor_history_result_sha256)" = \
+        "$previous_history_sha"
+      test "$(manifest_value "$result" platforms)" = \
+        "$(manifest_value "$previous_result" platforms)"
+      predecessor_summary="$(dirname "$previous_result")/history-summary.tsv"
+      predecessor_delta="$(dirname "$previous_result")/history-delta.tsv"
+      predecessor_poststate="$(
+        dirname "$previous_result"
+      )/fbig-history-production-poststate-v1.tsv"
+      verify_checksum "$predecessor_summary" "${predecessor_summary}.sha256"
+      verify_checksum "$predecessor_delta" "${predecessor_delta}.sha256"
+      verify_checksum "$predecessor_poststate" "${predecessor_poststate}.sha256"
+      test "$(manifest_value "$authorization" predecessor_terminal_summary_sha256)" = \
+        "$(sha256_file "$predecessor_summary")"
+      test "$(manifest_value "$authorization" predecessor_delta_sha256)" = \
+        "$(sha256_file "$predecessor_delta")"
+      test "$(manifest_value "$authorization" predecessor_expanded_baseline_sha256)" = \
+        "$(sha256_file "$predecessor_poststate")"
+      test "$(manifest_value "$authorization" current_state_backup_sha256)" = \
+        "$(manifest_value "$approval" coordinated_backup_manifest_sha256)"
+      test "$(manifest_value "$authorization" current_state_backup_sha256)" != none
+      test "$(manifest_value "$previous_result" protected_changes)" = 0
+      test "$(manifest_value "$previous_result" deleted_rows)" = 0
+      test "$(manifest_value "$previous_result" unattributed_changes)" = 0
+      test "$(manifest_value "$previous_result" counter_mismatches)" = none
+      test "$(manifest_value "$approval" revision_platform)" = none
+      for field in \
+        predecessor_approval_sha256 predecessor_attempt_result_sha256 \
+        predecessor_run_summary_sha256 predecessor_delta_sha256; do
+        test "$(manifest_value "$approval" "$field")" = none
+      done
+    elif [[ "$approval_sha" != "$previous_approval_sha" ]]; then
+      test "$(manifest_value "$approval" revision_platform)" != none
+      revision_platform="$(manifest_value "$approval" revision_platform)"
+      predecessor_summary="$(dirname "$previous_result")/history-summary.tsv"
+      predecessor_delta="$(dirname "$previous_result")/history-delta.tsv"
+      verify_checksum "$predecessor_summary" "${predecessor_summary}.sha256"
+      verify_checksum "$predecessor_delta" "${predecessor_delta}.sha256"
+      test "$(manifest_value "$result" platforms)" = \
+        "$revision_platform"
+      test "$(manifest_value "$previous_result" platforms)" = \
+        "$revision_platform"
+      test "$(manifest_value "$approval" predecessor_approval_sha256)" = \
+        "$previous_approval_sha"
+      test "$(manifest_value "$approval" predecessor_attempt_result_sha256)" = \
+        "$previous_history_sha"
+      test "$(manifest_value "$approval" predecessor_run_summary_sha256)" = \
+        "$(sha256_file "$predecessor_summary")"
+      test "$(manifest_value "$approval" predecessor_delta_sha256)" = \
+        "$(sha256_file "$predecessor_delta")"
+      test "$(manifest_value "$approval" "${revision_platform}_count")" = \
+        "$(stage_value "$predecessor_summary" history_import_summary \
+          "${revision_platform}_contentless_details")"
+      test "$(manifest_value "$approval" "${revision_platform}_fingerprint")" = \
+        "$(stage_value "$predecessor_summary" history_import_summary \
+          "${revision_platform}_contentless_fingerprint")"
+      test "$(stage_value "$predecessor_summary" history_import_summary \
+        contentless_acceptance_mismatches)" = 1
+      test "$(manifest_value "$previous_result" exit_status)" = 1
+      test "$(manifest_value "$previous_result" termination)" = normal
+    elif [[ "$(manifest_value "$result" platforms)" != \
+      "$(manifest_value "$previous_result" platforms)" ]]; then
+      validate_history_platform_transition "$previous_result" "$result"
+    fi
+  else
+    validate_history_result "$result" "${result}.sha256"
+  fi
   test "$(sha256_file "$result")" = "$expected_sha"
   test "$(manifest_value "$result" predecessor_result_sha256)" = \
-    "$previous_history_sha"
+    "$previous_history_sha" ||
+    die "production-first history index must contain the complete chain"
   selected_platform="$(manifest_value "$result" platforms)"
   [[ "$selected_platform" =~ ^(messenger|instagram)$ ]]
   current_pre="$(dirname "$result")/fbig-history-production-prestate-v1.tsv"
   current_post="$(dirname "$result")/fbig-history-production-poststate-v1.tsv"
+  current_summary="$(dirname "$result")/history-summary.tsv"
   if [[ "${PREVIOUS_HISTORY_POST["$selected_platform"]}" = none ]]; then
     FIRST_HISTORY_PRE["$selected_platform"]="$current_pre"
   else
@@ -792,13 +1135,20 @@ while IFS=$'\t' read -r sequence result expected_sha extra; do
       history_state_content_sha256 "${PREVIOUS_HISTORY_POST["$selected_platform"]}"
     )" = "$(history_state_content_sha256 "$current_pre")"
   fi
+  if [[ "${FIRST_HISTORY_SUMMARY["$selected_platform"]}" = none &&
+    "$(manifest_value "$result" run_summary_sha256)" != none &&
+    "$(stage_value "$current_summary" history_import_summary scan_complete)" = true &&
+    "$(stage_value "$current_summary" history_import_summary failed_threads)" = 0 &&
+    "$(stage_value "$current_summary" history_import_summary partially_paginated_threads)" = 0 ]]; then
+    FIRST_HISTORY_SUMMARY["$selected_platform"]="$current_summary"
+  fi
   if [[ "$(manifest_value "$result" operation)" = apply ]]; then
-    if [[ "$selected_platform" = messenger ]]; then
-      test "$(manifest_value "$result" dry_pair_sha256)" = \
-        "$MESSENGER_DRY_PAIR_SHA"
+    if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+      test "$(manifest_value "$result" dry_pair_sha256)" = none
+    elif [[ "$selected_platform" = messenger ]]; then
+      test "$(manifest_value "$result" dry_pair_sha256)" = "$MESSENGER_DRY_PAIR_SHA"
     else
-      test "$(manifest_value "$result" dry_pair_sha256)" = \
-        "$INSTAGRAM_DRY_PAIR_SHA"
+      test "$(manifest_value "$result" dry_pair_sha256)" = "$INSTAGRAM_DRY_PAIR_SHA"
     fi
     for platform in messenger instagram; do
       if [[ ",$(manifest_value "$result" platforms)," = *",$platform,"* ]]; then
@@ -816,14 +1166,33 @@ while IFS=$'\t' read -r sequence result expected_sha extra; do
     last_messenger_result="$expected_sha"
   [[ ",$(manifest_value "$result" platforms)," != *,instagram,* ]] ||
     last_instagram_result="$expected_sha"
+  RESULT_AUTHORIZATION_SHA["$expected_sha"]="$authorization_sha"
+  RESULT_APPROVAL_SHA["$expected_sha"]="$approval_sha"
+  previous_result="$result"
   previous_history_sha="$expected_sha"
+  previous_authorization_sha="$authorization_sha"
+  previous_approval_sha="$approval_sha"
   PREVIOUS_HISTORY_POST["$selected_platform"]="$current_post"
 done <"$HISTORY_RESULT_INDEX"
 test "$history_sequence" -gt 0
 test "${FIRST_HISTORY_PRE[messenger]}" != none
 test "${FIRST_HISTORY_PRE[instagram]}" != none
+test "${FIRST_HISTORY_SUMMARY[messenger]}" != none
+test "${FIRST_HISTORY_SUMMARY[instagram]}" != none
 test "$last_messenger_result" = "$(sha256_file "$MESSENGER_TERMINAL_RESULT")"
 test "$last_instagram_result" = "$(sha256_file "$INSTAGRAM_TERMINAL_RESULT")"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  test "$previous_authorization_sha" = "$AUTHORIZATION_SHA256"
+  test "$previous_approval_sha" = "$HISTORY_APPROVAL_SHA256"
+  test "${RESULT_AUTHORIZATION_SHA["$last_instagram_result"]}" = "$AUTHORIZATION_SHA256"
+  test "${RESULT_APPROVAL_SHA["$last_instagram_result"]}" = "$HISTORY_APPROVAL_SHA256"
+fi
+validate_terminal_result \
+  "$MESSENGER_TERMINAL_RESULT" "$MESSENGER_TERMINAL_CHECKSUM" messenger
+validate_terminal_result \
+  "$INSTAGRAM_TERMINAL_RESULT" "$INSTAGRAM_TERMINAL_CHECKSUM" instagram
+validate_terminal_summary "$MESSENGER_TERMINAL_RESULT" messenger
+validate_terminal_summary "$INSTAGRAM_TERMINAL_RESULT" instagram
 
 declare -A PROFILE_TOTALS=()
 profile_sum_fields=(
@@ -1258,7 +1627,14 @@ PLATFORM_COUNTS_TEMP="$STAGING_DIRECTORY/fbig-production-platform-counts-v1.tsv"
 {
   printf 'schema_version\t1\n'
   for platform in messenger instagram; do
-    if [[ "$platform" = messenger ]]; then
+    if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+      dry_summary="${FIRST_HISTORY_SUMMARY["$platform"]}"
+      if [[ "$platform" = messenger ]]; then
+        terminal_result="$MESSENGER_TERMINAL_RESULT"
+      else
+        terminal_result="$INSTAGRAM_TERMINAL_RESULT"
+      fi
+    elif [[ "$platform" = messenger ]]; then
       dry_summary="$(dirname "$MESSENGER_DRY_1")/history-summary.tsv"
       terminal_result="$MESSENGER_TERMINAL_RESULT"
     else
@@ -1439,6 +1815,8 @@ seal_in_place "$RELEASE_SCHEMA_TEMP"
 FINAL_TEMP="$STAGING_DIRECTORY/fbig-production-migration-audit-v1.tsv"
 {
   printf 'schema_version\t1\n'
+  printf 'authorization_mode\t%s\n' "$AUTHORIZATION_MODE"
+  printf 'authorization_sha256\t%s\n' "$AUTHORIZATION_SHA256"
   printf 'program_sha256\t%s\n' "$(sha256_file "$PROGRAM_PATH")"
   printf 'binding_sha256\t%s\n' "$(sha256_file "$BINDING_MANIFEST")"
   printf 'candidate_commit\t%s\n' "$CANDIDATE_COMMIT"

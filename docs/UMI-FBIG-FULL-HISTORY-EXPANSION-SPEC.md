@@ -423,8 +423,11 @@ Both require `UMI_FBIG_HISTORY_EXPECTED_DATABASE`, `INBOX_ID`, `DRY_RUN`, and
   accepted-set input. Omitted `BEFORE` generates the safe frozen cutoff; an
   explicitly supplied cutoff must meet the same grammar/age rule. The task
   supplies both canonical zero accepted sets internally and is expected to exit
-  nonzero only for observed exact contentless-set and release-bound
-  unavailable-message-set mismatches.
+  nonzero only for observed exact contentless-set and, when nonempty,
+  unavailable-message-set mismatches. A platform whose observed unavailable
+  set is empty has zero unavailable-message mismatches; it is not forced to
+  manufacture a mismatch merely because another accepted-set class is
+  nonempty.
 - `approved` requires absolute
   `UMI_FBIG_APPROVAL_MANIFEST_PATH=.../fbig-approval-v2.tsv` and
   `UMI_FBIG_APPROVAL_CHECKSUM_PATH=.../fbig-approval-v2.tsv.sha256`.
@@ -447,8 +450,9 @@ equivalent as an accepted-run override. Any
 mode/path/checksum/ownership/parser/projection error fails before
 writer-lock acquisition, Meta access, or writes.
 
-During a platform scan, collect the structurally contentless mids and accepted
-release-bound unavailable-message threads in separate in-memory sets. Compare
+During a platform scan, collect the structurally contentless mids and
+classified release-bound unavailable-message threads in separate in-memory
+sets. Compare
 each exact count and fingerprint with its accepted value only after cursor
 exhaustion and before marker normalization:
 
@@ -1612,8 +1616,15 @@ failure. Those failures never modify history markers.
   rerun the same acknowledged expansion.
 - **Graph authentication failure:** abort the run and do not normalize the
   platform.
-- **Conversation/message pagination or transient detail failure:** mark the
-  scan incomplete, leave predecessor markers, and rerun.
+- **Initial message-connection `ClientError`:** retry the read-only request at
+  most three total attempts with bounded backoff, except authentication, which
+  aborts immediately. After exhaustion, only the exact Instagram response
+  shape documented below can enter the unavailable-message set; every other
+  shape is sanitized retry exhaustion. Both leave predecessor markers unless
+  the resulting exact set is approved.
+- **Conversation/message pagination or transient detail failure after a page
+  is returned:** mark the scan incomplete, leave predecessor markers, and
+  rerun. The initial-message retry boundary never restarts partial pagination.
 - **Graph client `detail=nil`:** keep the platform incomplete/nonzero and block
   marker normalization; it is not eligible for contentless-set acceptance.
 - **Fully validated structurally contentless detail:** create no synthetic
@@ -2040,9 +2051,10 @@ apply:
    projection and deferred-profile mode.
 9. Verify all history, contact, placeholder, and observed-username invariants;
    run exact two-platform recovery passes until one pass performs zero product
-   writes and reports only explicitly accepted contentless and release-bound
-   unavailable-message omissions. Only that final pass is history idempotency
-   proof.
+   writes and reports only explicitly accepted contentless omissions and the
+   exact approved unavailable-message set. For the corrected release described
+   below, that unavailable-message set must be empty. Only that final pass is
+   history idempotency proof.
 10. Create the strict PII-free source profile-state snapshot/checksum. After a
     Meta quota cooldown, run the profile task dry on the clone with an explicit
     rate-limit wait budget. Require no rate-limit, authentication, identity,
@@ -2138,8 +2150,9 @@ apply:
     continuity evidence. A final live-database reconciliation must bind the
     exact protected terminal acceptance, approvals, backup, per-platform apply summaries,
     terminal history/profile zero-write evidence, release/schema proof, and
-    exact classified structural and release-bound unavailable-message
-    omissions before completion is reported.
+    exact classified structural omission plus the approved unavailable-message
+    set before completion is reported. For R3 that unavailable-message set is
+    empty.
 19. Generate each production history, profile, delivery-checkpoint,
     delivery-audit, and final-audit phase as a complete standalone script.
     Publish the profile maintenance wrapper and storage artifact helper through
@@ -2389,63 +2402,126 @@ recoverable message was already present or imported; it lists exact classified
 omissions and never claims that every historical event or every exposed
 profile datum was migrated.
 
-## Clone finding: listed Instagram threads with unreadable message connections
+## Clone correction: transient initial-message connection failures
 
-The exact-image clone probe on commit
+The first exact-image clone probe on commit
 `562cffcdfd6982cb4907845ae82674dd6928fb49` exhausted 16 conversation pages
 and scanned 751 threads: 74 Messenger and 677 Instagram. Two otherwise
-well-formed Instagram threads were listed with a single external participant,
-but their initial
-`/<conversation-id>/messages` request returned the same sanitized response:
-HTTP 400, Graph code `-1`, subcode `2207085`, type `OAuthException`. A
-separate read-only classifier repeated both requests three times against the
-same image, token, clone database, and API version; all six requests failed
-with that exact shape before returning any message page. The failed acceptance
-and diagnostic artifacts are retained under
-`candidate-562cffcdf-pr28`.
+well-formed Instagram threads repeatedly returned the same sanitized initial
+message-connection response: HTTP 400, Graph code `-1`, subcode `2207085`,
+type `OAuthException`. Six immediate direct reads did not recover either
+thread, so the first design treated their exact fingerprint as a
+release-bound omission. Meta does not document that subcode as permanently
+unreadable, so even that design deliberately avoided a universal permanence
+claim.
 
-Meta's published Conversations API describes listing conversations and their
-messages, plus general limitations, but does not document subcode `2207085`.
-The implementation therefore must not claim a universal meaning for that
-subcode or permanent unavailability. It classifies only the observed response
-shape as an accepted release-bound unavailable message connection for this
-migration. Readability or response-shape drift always requires a new probe and
-approval.
+The merged-image R2 acceptance on commit
+`7a6929e331d62c8b33801119c3fff13e74acfb51` and image digest
+`sha256:c6348a23060d69a5a440b2f7a4bf20486b8ecec3a0d326969f2d18edc19908f7`
+listed 752 threads: 74 Messenger and 678 Instagram. It scanned 11,369 message
+ids, of which 11,363 were before the frozen cutoff, but ended with two raw
+Instagram `Koala::Facebook::ClientError` thread failures. That run logged only
+the sanitized exception class, not its HTTP/code/subcode tuple; it is therefore
+incorrect to assert that R2 reproduced the earlier exact response shape.
+
+After R2 terminated, a read-only diagnostic used the exact same image and the
+preserved clone to read only those two failed thread ids. Both returned a
+message collection. The pre/post structural-envelope artifacts remained
+byte-identical at one unrecoverable envelope. This proves that both message
+connections are currently readable and must be exhaustively scanned. Every
+eligible returned message must be imported; an exhausted empty collection
+still creates no Contact or Conversation. The diagnostic invalidates the
+previous assumption that repeated immediate failures established a
+release-bound unreadable set.
+
+R2 is retained as failed evidence and is never restarted, resumed, or used as
+acceptance. The corrected release requires a fresh R3 coordinated clone,
+new acceptance id, new audit root, and exact rebuilt image. R3 approves zero
+unavailable-message threads for both platforms: count zero plus each
+platform's canonical empty fingerprint. The previous two-record approval is
+never reused or edited in place.
+
+Meta's maintained
+[Business SDK guidance](https://github.com/facebook/facebook-java-business-sdk#failedrequestexception-troubleshooting)
+distinguishes permanent request or permission problems from temporary
+network/server problems and says temporary server failures should normally
+recover after a few seconds. It leaves retry policy to the application. The
+importer therefore adds a bounded retry at the narrowest read-only boundary
+where R2 failed, while preserving fail-closed classification and terminal
+accounting.
+
+That general guidance does not say arbitrary HTTP 4xx responses are
+retryable. The broader initial-message `ClientError` eligibility comes from
+local evidence instead: R2's two client errors later became readable, but R2
+did not retain their sanitized tuples, so an exact-`2207085`-only retry would
+not demonstrably cover the observed failure. The broader scope remains safe
+because it is confined to one idempotent initial read, excludes
+authentication, has one small shared attempt budget, and can never authorize
+an omission under R3's literal-zero gate.
 
 ### Chosen treatment
 
-Add a narrow `MessageConnectionUnavailableError` boundary to
-`HistoryImportGraphClient#messages`. It applies only when all of these are
-true:
+`HistoryImportGraphClient#messages` passes platform explicitly. Its initial
+`/<conversation-id>/messages` request opts into one shared request loop with
+one shared three-total-HTTP-attempt budget. The special path is not an outer
+retry around the existing request loop, so retryable 429, rate-limit-code,
+server, and transport failures cannot multiply into nested attempt budgets.
+Only a `Koala::Facebook::ClientError` raised before any collection or message
+page is returned extends the ordinary eligibility of that shared loop:
 
-- platform is Instagram;
-- the initial messages request fails before any collection or message page is
-  returned;
-- the response is HTTP 400, code `-1`, subcode `2207085`, and type
-  `OAuthException`.
+1. Authentication errors, including Graph code `190`, remain one-attempt
+   fatal errors.
+2. An ordinarily non-retryable initial-message `ClientError`, including the
+   exact Instagram `2207085` response, becomes newly retry-eligible and
+   receives message-specific bounded waits of 5 seconds before attempt two and
+   30 seconds before attempt three. Already-retryable 429, rate-limit-code,
+   server, and transport failures keep the existing bounded backoff, still
+   within the same total attempt budget.
+3. If a later attempt returns a collection, normal pagination continues and
+   the thread is migratable.
+4. After retry exhaustion, `MessageConnectionUnavailableError` is permitted
+   only when every failed attempt had the exact Instagram response
+   shape—HTTP 400, code `-1`, subcode `2207085`, type `OAuthException`.
+   A mixed sequence, changed shape, Messenger response, or error from any other
+   Graph operation becomes sanitized `RequestError(:retry_exhausted)` and
+   makes the scan incomplete.
+5. A `ClientError` from `next_page` is never handled by the initial-page retry.
+   Partial pagination remains blocking; no page or message is replayed.
 
-The platform must be passed explicitly to `#messages`; the client must not
-infer it from the conversation id. The same error on Messenger, after any
-message page, with any other status/code/subcode/type, or from another Graph
-operation remains an ordinary failure that makes the scan incomplete.
+The retry makes only idempotent Graph reads and does not widen any accepted
+omission. It reuses the existing request loop, attempt bound, request counters,
+Graph delay, authentication classification, and sanitized exception boundary;
+only the two waits for the newly eligible initial-message client errors are
+message-specific. Exhaustion proves `message_http_attempts == 3` for a
+single-thread call. It does not log response text, request ids, thread ids,
+participant ids, or access tokens.
 
-Classification eligibility begins in `HistoryImportService`, after the normal
-listing and identity validators have accepted the thread and exactly one
-external participant. A missing, duplicate, malformed, ambiguous, business-only,
-or otherwise invalid participant shape follows the existing structural or
-blocking path and can never be converted by this response classifier. The
-service also reads the existing importer-archive presence before making the
+The 35-second retry window is deliberately bounded. It covers the short
+temporary failures described by Meta, but it does not claim to reproduce the
+unknown and potentially hours-long interval between R2's failures and the
+successful diagnostic. A longer outage intentionally fails R3; the operator
+retains its evidence and starts a fresh acceptance later rather than extending
+a production migration into an unbounded wait.
+
+Classification eligibility still begins in `HistoryImportService`, after the
+normal listing and identity validators have accepted the thread and exactly
+one external participant. A missing, duplicate, malformed, ambiguous,
+business-only, or otherwise invalid participant shape follows the existing
+structural or blocking path and can never be converted by the response
+classifier. The service also reads importer-archive presence before the
 messages request.
 
-For an eligible exact response, the importer writes no Contact, ContactInbox,
-Conversation, Message, attachment, marker, or profile row for that thread. It
-records `thread_omitted reason=message_connection_unavailable`, increments
+For an exhausted eligible exact response, the importer writes no Contact,
+ContactInbox, Conversation, Message, attachment, marker, or profile row for
+that thread. It records only sanitized omission counters, increments
 `unavailable_message_threads` and `classified_omitted_threads`, marks the
 result degraded, and continues scanning. It does not increment
-`failed_threads`. This preserves the no-empty-conversation invariant: the
-thread is a separately classified omission, not an empty archive.
+`failed_threads`. This retains the no-empty-conversation invariant. Under R3's
+zero-count approval, however, the resulting exact-set mismatch keeps the scan
+non-successful and prevents this classified omission from being normalized or
+accepted.
 
-The fingerprint is exactly
+The fingerprint remains exactly
 `Umi::Fbig::TypedValueDigest.hexdigest(value)`, using that class's type tags,
 unsigned 64-bit big-endian framing, and lexicographically encoded hash-key
 ordering. `value` is the following string-keyed typed value:
@@ -2472,113 +2548,612 @@ Each `records` element has exactly these keys and value types:
 }
 ```
 
-Validate both identifiers as nonempty valid UTF-8, reject duplicate thread ids
-instead of deduplicating, and sort records by the exact UTF-8 bytes of
-`thread_id` before hashing. No response message, trace id, request id, timestamp,
-or other volatile field enters the record. Count is `records.length`; the
+Both identifiers remain nonempty valid UTF-8. Duplicate thread ids are
+rejected rather than deduplicated, records are sorted by the exact UTF-8 bytes
+of `thread_id`, and no response message, trace id, request id, timestamp, or
+other volatile field enters the record. Count is `records.length`; the
 platform-specific empty fingerprint hashes the wrapper with `threads: []`.
-Tests pin empty and two-record golden vectors, order invariance, platform
-separation, exact field types, invalid encoding, and duplicate rejection.
 Summaries expose only count and fingerprint, never ids.
 
-Unaccepted-probe mode compares both observed sets with their platform-specific
-empty sets. For the current evidence it increments one
-`unavailable_message_thread_acceptance_mismatches` counter for Instagram and
-continues to exhaustion; Messenger must remain at its canonical zero count and
-empty fingerprint. The history approval v2 binds all four fixed fields:
-Messenger unavailable count/fingerprint and Instagram unavailable
-count/fingerprint. Selected-platform projection includes the matching
-contentless and unavailable-message pair. Approved Instagram scans must
-reproduce the two-record set exactly. Because classification is
-Instagram-only, a corresponding Messenger error remains a normal blocking
-failure rather than an accepted-set mismatch.
+Unaccepted-probe mode compares both observed unavailable sets with their
+platform-specific empty sets. When both are empty, as R3 requires, the
+unavailable-message mismatch counter is zero; the probe's expected nonzero
+exit comes from the nonempty contentless sets. If either platform produces an
+unavailable record, the corresponding unavailable-message mismatch counter is
+one and R3 is rejected.
+
+The corrected acceptance binding requires
+`expected_instagram_unavailable_message_threads=0` literally during root
+preflight, before clone creation, Redis startup, Meta access, or any product
+write. A nonzero value is invalid configuration, not a value an operator may
+review into approval. The generated program therefore requires the observed
+unavailable mismatch counter to be zero, while computing `exit_failures` from
+the mismatch counters actually reported. Approval parsing additionally
+requires the canonical platform-specific empty fingerprint whenever either
+platform's unavailable count is zero; zero plus an arbitrary fingerprint is
+invalid. Tests pin the early nonzero-binding rejection and canonical
+Instagram-empty requirement.
+
+The history approval v2 continues to bind all four fixed fields: Messenger
+unavailable count/fingerprint and Instagram unavailable count/fingerprint.
+R3 binds zero and the canonical empty fingerprint for both platforms.
+Selected-platform projection remains unchanged. The narrow classifier is
+retained so an exact future occurrence is distinguishable from a generic
+failure and can be investigated safely; the current release does not approve
+such an occurrence.
+
+### Exact recovered-target evidence
+
+Aggregate listing and conservation totals cannot prove that the two specific
+R2 failures were recovered: one target could disappear while another thread
+appears, leaving every aggregate count unchanged. R3 and the final production
+audit therefore bind those two exact threads independently.
+
+The operator creates one strict root-owned, mode-`0400`, single-link
+`fbig-recovered-thread-targets-v1.tsv` plus checksum in the protected operations
+directory. It contains schema version, platform `instagram`, literal target
+count `2`, and two sorted unique target digests. Each digest is
+`Umi::Fbig::TypedValueDigest.hexdigest(value)`, where `value` is exactly this
+string-keyed typed hash:
+
+```ruby
+{
+  'domain' => 'umi-fbig-recovered-thread-target-v1', # UTF-8 String
+  'platform' => 'instagram',                         # UTF-8 String
+  'thread_id' => thread_id                           # UTF-8 String
+}
+```
+
+The generator rejects an empty, invalid-UTF-8, or overlong thread id before
+hashing. Digests are exactly 64 lowercase hexadecimal characters, sorted by
+ASCII bytes, and unique. Tests pin golden vectors, order invariance of the
+two-target file, platform/domain separation, invalid encoding/length, and
+duplicate rejection. The raw ids never enter the file or leave the process.
+
+The target file is not operator-authored. A deterministic, immutable support
+program derives it from the retained R2 failure artifacts: the exact R2
+acceptance binding/checksum, launch manifest/checksum, protected history-probe
+log, and terminal probe summary. It validates the R2 acceptance id, commit,
+image digest, invocation id, `failed_threads=2`,
+`instagram_failed_threads=2`, and exactly two unique Instagram
+`Koala::Facebook::ClientError` thread-failure records before hashing their raw
+thread ids in memory. Its output also binds the source binding, launch, log,
+summary, and generator SHA-256 values. It accepts artifact paths but no raw id
+through CLI or environment, emits no id or digest to stdout/stderr, uses
+no-replace publication, and fails with generic count/shape errors only.
+Program specs construct synthetic protected R2 artifacts and prove deterministic
+output, exact provenance rejection, and zero raw-id leakage on success and
+failure.
+
+The acceptance binding carries the generated file's absolute path and SHA-256,
+validates its provenance fields, exact grammar, ordering, uniqueness,
+ownership, checksum, and generator/source SHAs before clone creation or Meta
+access, and the terminal acceptance manifest publishes only the target-file
+SHA-256. This proves the two digests are the exact R2 failed threads, not an
+arbitrary pair selected by an operator.
+
+The history task parses this file during preflight, before writer-lock
+acquisition, Meta access, or writes. It is required for every
+Instagram-inclusive R3 and production history run and forbidden for
+Messenger-only runs. The protected binding supplies the expected target-file
+SHA to the task; Rails computes the bytes SHA and requires in-process equality
+before parsing and before writer-lock acquisition. Wrapper validation after the
+run is supplementary and can never authorize a swapped but grammatically valid
+file. `HistoryImportService` hashes each validated listed Instagram thread id
+with the same domain and tracks membership without logging the id or digest.
+For the target set it records:
+
+- `recovered_targets_expected`;
+- `recovered_targets_listed`;
+- `recovered_targets_message_cursor_exhausted`; and
+- `recovered_targets_in_scope_mids`.
+
+A duplicate listing of a target is blocking. A target enters
+`recovered_targets_message_cursor_exhausted` only after
+`HistoryImportGraphClient#messages` has returned every page successfully.
+Normal per-thread processing then continues unchanged. A later detail,
+identity, content, attachment, persistence, or classification error is already
+captured by the existing failed/omitted/completeness counters and prevents an
+accepted run. An exhausted target with no pre-cutoff messages remains valid and
+creates no Contact or Conversation.
+
+At Instagram platform exhaustion, before marker normalization, the importer
+requires expected, listed, and message-cursor-exhausted target counts all equal
+literal `2`, with no duplicate target classification. It emits the protected
+target-file SHA and only aggregate target counters in the terminal summary.
+Because the same run also requires `failed_threads=0`, zero unavailable
+omissions, full candidate conservation, and eventual terminal zero writes,
+this proves the importer itself listed, paginated, and processed those exact
+targets without duplicating its Graph/cutoff/anti-join/detail/import rules in a
+second inspector.
+
+The target-file path, checksum, and SHA are bound through the acceptance
+program/control, every Instagram-inclusive R3 probe/dry/apply/recovery
+validator, and the terminal acceptance manifest. Production history-attempt
+bindings carry the same accepted file and SHA into every Instagram
+dry/apply/recovery run; Messenger bindings use `none`. Result manifests already
+bind both their exact input binding and run-summary SHA, so they need no
+parallel target-evidence fields. Final audit validates the accepted target SHA
+and requires the final production Instagram terminal summary to report
+expected/listed/message-cursor-exhausted `2`. It cannot pass if a known target
+disappears, is replaced, is duplicated, fails pagination, or enters an omitted
+or failed terminal category.
 
 The existing structural unrecoverable-envelope sidecar remains independently
 bound to the one business-only ambiguous envelope. It is not broadened to
-cover message-connection errors. Clone and production gates instead require:
+cover message-connection errors. Clone and production gates require:
 
 - `structural_unrecoverable_threads` and `ambiguous_participants` equal the
   structural sidecar count;
-- `unavailable_message_threads` equals the approved unavailable-message count;
+- `unavailable_message_threads` equals the approved unavailable-message count,
+  which is zero for R3;
 - `classified_omitted_threads = structural_unrecoverable_threads +
   unavailable_message_threads`;
 - `listed_threads = message_cursor_exhausted_threads +
   classified_omitted_threads + failed_threads`;
-- every listed thread enters exactly one of those terminal categories, with
-  zero duplicate classifications, zero uncategorized threads, zero
-  partially-paginated threads, and `failed_threads=0` in an accepted run;
-- unavailable-message acceptance mismatches are one in the unaccepted probe
-  and zero in every approved dry/apply/recovery/idempotency run;
-- the observed unavailable-message fingerprint equals the approval;
+- every listed thread enters exactly one terminal category, with zero duplicate
+  classifications, zero uncategorized threads, zero partially-paginated
+  threads, and `failed_threads=0`;
+- unavailable-message acceptance mismatches are zero in the R3 unaccepted
+  probe and every approved dry/apply/recovery/idempotency run;
+- both observed unavailable-message fingerprints equal the approved canonical
+  empty fingerprints;
 - `scan_complete=true`, zero retry/auth/platform/lock failures, and the
-  existing exact contentless acceptance contract.
+  existing exact contentless acceptance contract; and
+- exact recovered-target evidence has two expected, listed, and
+  cursor-exhausted targets in every Instagram-inclusive accepted run.
 
-The current sealed coverage expectation is Messenger `listed_threads=74` and
-Instagram `listed_threads=677`, with 748 combined cursor-exhausted threads, one
-structural omission, two release-bound unavailable-message omissions, and zero
-failed threads. The source dry-summary checksum binds those per-platform
-counters; two approved dry runs must reproduce them. A legitimate listing
-change is drift to investigate and reapprove, not a number to force.
+The 74-Messenger/678-Instagram R2 listing is failed diagnostic evidence, not a
+sealed coverage expectation. R3 must list and exhaust every thread Meta exposes
+at its new frozen cutoff, and its source dry-summary checksum binds the new
+per-platform counters. A legitimate listing change is reviewed drift, not a
+number to force. R3 may be accepted only with one structural omission, zero
+unavailable-message omissions, zero failed threads, and complete message
+pagination for every other listed thread.
 
-If either thread becomes readable, a third thread acquires the same response,
-the participant/archive identity changes, or Meta changes the error shape, the
-count or fingerprint changes. A dry run fails with zero writes. In apply mode,
-the omitted thread still receives zero rows and the mismatch blocks marker
-normalization and later platforms, but valid earlier per-thread commits can
-remain because comparison occurs at cursor exhaustion. The attempt then uses
-the existing checksummed partial-write recovery contract and a fresh clone
-probe/approval; production never edits an approval in place. The two accepted
-production dry scans immediately preceding apply minimize this race window but
-cannot claim to eliminate Meta-side drift.
+If either recovered connection remains unreadable after the shared retry
+budget, a different thread acquires the exact response, or Meta changes the
+response shape, R3 fails. No operator changes the expected zero inline. The
+exact artifacts are retained, the response is diagnosed without PII, and a new
+image/run is required if code changes. Apply mode retains the existing bounded
+partial-write recovery contract: valid earlier per-thread commits may remain
+because set comparison occurs at cursor exhaustion, but marker normalization
+and later platforms are blocked.
 
 ### Alternatives rejected
 
-- **Skip every Instagram `ClientError`.** This could silently discard messages
-  for permission, contract, or malformed-request bugs and would make “all
-  exposed history” unprovable.
+- **Keep the two-record unavailable approval.** Both threads are readable now,
+  so this would knowingly omit Meta-exposed messages and violate the migration
+  goal.
+- **Run a fresh unchanged R3.** It could succeed now, but another single
+  transient initial read would discard another 9.5-hour scan. The small
+  read-only retry reduces that operational risk without changing what R3 may
+  approve. It is not completeness proof; only a fresh R3 with literal-zero
+  unavailable omissions and exact target evidence is proof.
+- **Retry R2 or reuse its clone as acceptance.** R2 terminated with raw failed
+  threads and incomplete set evidence. Reusing it would erase the distinction
+  between failed diagnostics and exact release approval.
+- **Skip every Instagram `ClientError` or broaden the unavailable
+  classifier.** This could silently discard permission, contract, or malformed
+  request failures and make “all exposed history” unprovable.
 - **Treat subcode `2207085` as globally permanent.** Meta does not publish that
-  semantic, and the same code after a partially readable pagination sequence
-  could discard already exposed messages.
-- **Create empty conversations for the listed threads.** There are no readable
-  messages to justify a conversation or contact, and the migration explicitly
-  forbids empty archives.
-- **Accept only an operator-maintained count.** A count of two cannot detect
-  replacement by different threads; the typed fingerprint binds the exact
-  pseudonymous set and error shape.
-- **Retry the full acceptance without a code change.** Six identical direct
-  requests across three passes ruled out the transient-error hypothesis; a
-  rerun would spend hours and fail at the same deterministic boundary.
+  semantic, and the observed threads later became readable.
+- **Retry the entire thread after the platform sweep.** `process_thread`
+  includes per-thread writes and terminal counters. Deferring raw thread
+  objects and reconciling duplicate statistics/writes adds materially more
+  mutable state than retrying the initial idempotent read, while a fresh
+  acceptance already fails closed if the bounded retry is insufficient.
+- **Create empty conversations for a failed thread.** No successfully paginated
+  message justifies an archive or contact, and the migration explicitly forbids
+  empty conversations.
+- **Remove unavailable-message fingerprinting entirely.** Keeping the narrow
+  classifier and typed empty-set approval makes any recurrence explicit and
+  reviewable rather than collapsing it into a generic failure.
+- **Trust aggregate thread totals for the two known targets.** Replacement
+  drift can conserve every aggregate equation while one recovered thread is
+  absent. The protected target input plus PII-free evidence closes that gap.
+- **Publish the recovered ids in the acceptance manifest.** The final audit
+  needs exact binding, not raw identifiers. Domain-separated target digests
+  plus a checksum provide that binding without spreading ids through long-lived
+  logs and indexes.
+- **Add a second targeted Graph/DB inspector.** It would duplicate listing,
+  pagination, cutoff, candidate, and persistence rules yet still would not
+  prove the importer itself processed the targets. Importer-owned target
+  counters are smaller and stronger.
 
 ### Verification
 
 Test first and demonstrate red to green:
 
-1. `history_import_graph_client_spec.rb`: the exact initial Instagram response
-   raises `MessageConnectionUnavailableError` with sanitized shape; a changed
-   subcode, Messenger request, and the same response from a later page remain
-   blocking.
-2. `history_import_service_spec.rb`: two exact unavailable threads are omitted
-   without rows, produce a stable count/fingerprint, keep the scan complete,
-   and make an unaccepted probe fail only through the explicit acceptance
-   mismatch. An approved matching set succeeds. Count, identity, participant,
-   archive-presence, or error-shape drift blocks terminal normalization; the
-   classified thread receives zero rows, and a writeful late mismatch exercises
-   the documented bounded partial-write recovery path.
-3. `history_approval_manifest_spec.rb` and rake specs: schema and strict field
-   order bind both platform count/fingerprint pairs, enforce canonical
-   Messenger empty values and selected-platform projection, and reject missing,
-   extra, malformed, or mismatched values.
-4. Program/runbook specs: clone and production summaries enforce the structural
-   ambiguity plus unavailable-message sum, the listed-thread conservation
-   equation, zero partial/unclassified failures, separate reporting, and no
-   generic failed threads.
-5. Repeat a fresh coordinated clone acceptance on a new id and exact rebuilt
-   digest. It must reproduce or explicitly reject drift from the sealed
-   74-Messenger/677-Instagram listing counts, conserve every listed thread,
-   report one structural ambiguity and two approved release-bound unreadable
-   message connections, complete the history/profile
-   dry/apply/idempotency sequence, and seal a terminal acceptance manifest
-   before merge or deployment.
+1. `history_import_graph_client_spec.rb`: an initial exact Instagram response
+   twice followed by success is retried and returns messages in exactly three
+   HTTP attempts; a changed initial `ClientError` followed by success is also
+   retried; three persistent exact Instagram failures classify; mixed or
+   persistent changed shapes become sanitized retry exhaustion; an initial 429
+   still performs only three total attempts; both a typed authentication error
+   and a code-190 `ClientError` remain one attempt; persistent Messenger exact
+   responses become sanitized retry exhaustion; later-page failures never
+   replay the initial page. Tests pin `message_http_attempts` and the
+   message-specific sleeper calls. A mixed sequence containing both an
+   initial-message client error and an ordinarily retryable server error also
+   remains within exactly three API calls and one shared request counter/
+   backoff sequence.
+2. Existing service/fingerprint/manifest specs continue to prove that a
+   classified unavailable thread creates no rows, binds an exact pseudonymous
+   set, preserves the no-empty-conversation rule, and blocks terminal
+   normalization whenever the approved set is empty.
+3. Program/runbook specs add the zero-unavailable case: an unaccepted probe
+   with zero observed unavailable threads expects zero unavailable mismatch,
+   computes `exit_failures` only from actual mismatch counters, and still
+   requires `failed_threads=0`, full listed-thread conservation, and the exact
+   structural count.
+4. Recovered-target generator, importer, and program specs pin exact R2 source
+   provenance, deterministic no-replace digest generation, strict in-process
+   checksum/digest parsing before the lock, exact listing membership,
+   duplicate/missing targets, full pagination, empty-target no-row outcomes,
+   zero identifier/digest leakage, acceptance-binding propagation, and
+   final-audit rejection of missing, replaced, or tampered evidence.
+5. Run the focused graph-client and generated-program specs, the importer
+   service/approval/rake regression set, RuboCop on changed Ruby, generator
+   syntax checks, and ShellCheck through the existing builder.
+6. **Normal clone-authorized path only:** build a new exact image and run fresh
+   coordinated R3 clone acceptance. It
+   must exhaust the current Messenger and Instagram listings, migrate the
+   messages from both formerly failed threads when Meta exposes them, report
+   one structural ambiguity, zero unavailable-message omissions, zero failed
+   threads, complete the history/profile dry/apply/idempotency sequence, and
+   seal a terminal acceptance manifest after the reviewed fix is merged and
+   before any production deployment.
+
+Implementation also updates the Historical FB/IG archive import row in
+`UMI-PATCHES.md` so the fork registry records the bounded initial-message retry,
+literal-zero unavailable approval, exact recovered-target evidence, and its
+remove-when condition without changing the patch's ownership boundary.
+
+### Operator-approved production-first execution
+
+On 2026-07-29 the operator explicitly rejected another three-run exhaustive
+clone-dry sequence and directed the corrected release to make its first full
+post-fix scan a resumable production apply: if it fails, preserve attributable
+per-thread commits, fix the cause, and resume live. This release-specific
+decision supersedes only the requirements for a fresh R3 clone acceptance,
+duplicate approved clone dry scans, authorizing production dry pairs, and a
+clone-derived profile approval. It does not weaken local red-to-green tests,
+multi-agent code review, exact merged-image proof, signed commits, literal-zero
+unavailable acceptance, exact recovered-target accounting, writer locking,
+download limits, no-empty-conversation behavior, fresh coordinated production
+backup, sanitized artifacts, or final live reconciliation.
+
+Before any live write:
+
+1. finish the corrected implementation and fix every actionable code-review
+   finding;
+2. merge it, resolve the exact registry digest, and prove both image
+   architecture and `/app/.git_sha`;
+3. quiesce writers and create a new coordinated production database/storage
+   backup with the existing checksum and restore-verification contract;
+4. derive the exact two-target digest artifact mechanically from retained R2
+   evidence; and
+5. create a versioned production-first authorization plus a new immutable
+   provisional production-first history approval from
+   R2's exhaustive contentless count/fingerprint pairs, the same frozen cutoff,
+   literal-zero unavailable count/canonical fingerprints, the new release
+   identity, and the new backup/target bindings. R2 remains failed evidence;
+   this approval reuses only its completed contentless observations and never
+   represents R2 as accepted.
+
+One deterministic no-replace request generator creates the strict
+`fbig-production-first-request-v1.tsv` and checksum from the protected source
+artifacts. The authorization generator independently revalidates that request
+and every source before publishing
+`fbig-production-first-authorization-v1.tsv`; the latter is the sole operator
+override artifact, and a fixed acknowledgement string is insufficient.
+It binds `authorization_mode=production_first`, inbox `2`, the exact commit,
+image digest, production database, R2 binding/launch/log/summary SHAs, frozen
+cutoff, both provisional R2-root contentless pairs, literal-zero unavailable
+counts/canonical fingerprints, recovered-thread and placeholder target SHAs, coordinated
+production backup manifest SHA, exact unrecoverable-envelope inspector SHA,
+exact generated history/profile/final-audit/support/recovered-target/
+authorization/history-revision/profile-approval program SHAs, approver, and
+canonical creation time. Its generator
+validates every source artifact and publishes no identifiers. Both history and
+profile approvals, every attempt binding/result, every delivery audit, and the
+final audit carry this authorization SHA.
+
+The authorization also carries predecessor authorization, history
+attempt-result, terminal-summary, attributed-delta, expanded-live-baseline, and
+current-state backup SHAs. They are all `none` for the initial release. A
+successor release requires all of them and is described below; no
+same-release contentless revision creates a new master authorization.
+The authorization's contentless pairs are immutable provenance for the
+provisional starting point, not a claim that every descendant approval retains
+them. A same-release revised history approval may differ only through the
+strict predecessor/result/summary/delta revision gate below; final audit walks
+that approval chain back to the authorization's provisional pairs.
+
+Normal authorization continues to require terminal acceptance and dry-pair
+fields exactly as before. In `production_first` mode those normal-only fields
+must be present as literal `none`; the production-first authorization,
+approval, backup, and predecessor fields are mandatory instead. No mode may
+accept a mixture.
+
+Production-first history authorization has its own strict
+`fbig-production-first-history-approval-v1.tsv` schema. It is not parsed as
+`fbig-approval-v2.tsv`, and normal `approved` mode rejects it. Conversely,
+`production_first` mode rejects clone approval and terminal-acceptance
+artifacts. The fixed-order manifest binds:
+
+- `schema_version=1` and `authorization_mode=production_first`;
+- the exact repository commit, image digest, production database, account,
+  inbox, Page id, Instagram business id, `SINCE=all`, frozen `before`,
+  `pre_presence`, and deferred profile mode;
+- the coordinated pre-history backup manifest SHA;
+- the production-first authorization SHA;
+- the exact recovered-target and placeholder-target artifact SHAs;
+- both platforms' contentless count/fingerprint pairs;
+- literal-zero unavailable counts and canonical empty fingerprints for both
+  platforms;
+- the retained R2 acceptance-binding, launch-manifest, failed probe-log, and
+  terminal-summary SHAs;
+- `revision_platform` (`none`, `messenger`, or `instagram`);
+- predecessor production-first approval, attempt-result, run-summary, and
+  delta SHAs, each `none` on the initial approval and all required on a
+  revision; and
+- approver and canonical approval timestamp.
+
+The loader applies the same absolute-path, root ownership, `0700` directory,
+`0400` single-link file, checksum, UTF-8/LF, exact-field-order, grammar, scope,
+release, and canonical-empty validation as normal approval. Task preflight
+also verifies the bound backup, acknowledgement, target artifacts, and R2
+provenance in process before writer-lock acquisition. Nothing may translate
+this manifest into fabricated clone database, restored-storage, source-dry, or
+terminal-acceptance fields.
+
+The no-replace authorization generator publishes a self-contained history
+package: the authorization, initial history approval, recovered-target
+artifact, unrecoverable-envelope sidecar, exact inspector, and a checksum for
+each. The profile-approval generator likewise publishes the profile approval,
+authorization, complete history-result index, both terminal history results,
+coordinated pre-profile backup manifest plus every bound database/storage
+component, source profile snapshot, exact placeholder targets, and checksums.
+Execution
+never depends on an unbound mutable copy outside the approved package.
+
+A separate deterministic no-replace binding generator owns the exact ordered
+schemas for production-first history, profile, delivery-audit,
+delivery-checkpoint, and final-audit programs. It accepts one explicit value
+for every non-schema field, rejects missing/blank/multiline values and
+pre-existing outputs, and publishes the binding plus checksum. Production
+bindings are never assembled manually from prose.
+
+A generated `production_first` history-attempt authorization extends the
+existing protected history program instead of invoking an ad hoc rake command.
+It is allowed only for inbox 2, the exact release digest/commit, operation
+`apply`, one selected platform, a fresh bound backup, the provisional approval,
+the exact recovered-target artifact for Instagram, and an explicit fixed
+production-first authorization SHA. It requires terminal-acceptance and
+dry-pair fields to be literal `none` rather than fabricating them. Every other
+existing release, database, compose, lock, attachment-reconciliation, pre/post
+state, delta, result-manifest, no-delete, and attribution check remains active.
+Result and final-audit schemas record `authorization_mode=production_first` so
+this exception cannot be confused with normal clone-authorized execution.
+
+Run Messenger first as the smaller canary, then Instagram. The importer still
+scans the complete selected platform before success:
+
+- if the provisional contentless set and literal-zero unavailable set match,
+  the platform completes and normalizes its marker;
+- if a recovered target exposes an additional contentless detail, another
+  acceptance set changes, or a Graph/persistence failure occurs, the attempt
+  exits nonzero and does not normalize that platform;
+- valid earlier thread commits remain append-only and are fully attributed by
+  the attempt delta;
+- no classified unavailable thread is accepted and no failed/empty thread
+  receives a synthetic archive.
+
+The predecessor chain is exact:
+
+- the initial Messenger apply uses the initial approval and has no predecessor;
+- while holding the production lock, admission rejects every other unpublished
+  history attempt and computes one unique global head across all
+  production-first authorizations, not merely the candidate release;
+- every same-platform Messenger successor binds the immediately preceding
+  Messenger result and its expanded live baseline, whether that result was
+  nonzero or successful-but-writeful;
+- Instagram cannot start until the current release/approval has a successful
+  terminal Messenger zero-write result;
+- the initial Instagram apply binds that Messenger terminal result as its
+  cross-platform predecessor;
+- every same-platform Instagram successor binds the immediately preceding
+  Instagram result and expanded live baseline, whether that result was
+  nonzero or successful-but-writeful; and
+- a revised approval can continue only from the exact nonzero result that
+  authorized the revision. No result may be skipped, reordered, or borrowed
+  from the other authorization mode.
+
+After a nonzero live attempt, preserve the backup, approval, program, binding,
+logs, summaries, state snapshots, and result manifest. Diagnose only sanitized
+error/count evidence. A code correction requires a new reviewed release and
+exact-image proof; an observed-set-only change requires a new immutable
+approval only through this exact revision gate:
+
+- the source scan is cursor-exhausted and `scan_complete=true`;
+- recovered-target evidence is platform-projected: Messenger requires target
+  path/SHA `none` and expected/listed/message-cursor-exhausted `0/0/0`;
+  Instagram requires the exact accepted target SHA and `2/2/2`;
+- unavailable counts and mismatches are zero;
+- failed, uncategorized, partially-paginated, retry, rate-limit,
+  authentication, lock, platform, sender/identity, persistence, attachment,
+  storage, and every other non-contentless failure counter is zero;
+- all platform and candidate conservation equations hold; and
+- `exit_failures` equals exactly the selected platform's one contentless-set
+  mismatch counter.
+
+A revision may replace only that failed selected platform's contentless
+count/fingerprint. It copies every release, scope, cutoff, policy, unavailable,
+other-platform contentless, target, backup, acknowledgement, and R2-provenance
+field byte-for-byte, sets `revision_platform`, and binds the predecessor
+approval plus exact failed attempt-result, terminal-summary, and attributed
+delta SHAs. The resume binding also binds that ordered predecessor result and
+the expanded live baseline so partial writes cannot become unattributed.
+
+Resume against the partially populated live database: scoped source-id
+anti-joins treat committed messages as already present, while target and
+conservation counters prove the next full scan. Never edit an approval or
+result in place and never restore only one half of the coordinated
+database/storage pair.
+
+History must then reach a complete zero-write scan for Messenger and a complete
+zero-write scan for Instagram on the final release and final production-first
+approval. Both require zero unavailable/failed/transient counters, exact target
+projection, full conservation, and no product/history mutations. Messenger
+requires target artifact `none` and counters `0/0/0`; Instagram requires the
+exact accepted SHA and `2/2/2`. A writeful successful apply is not terminal
+proof and cannot authorize profile work.
+
+If an attributed partial live attempt exposes a code defect, a corrected
+release may continue without erasing valid imported rows only through a
+successor production-first authorization. The generator first requires:
+
+- a sealed predecessor attempt/result/summary/delta with no deleted,
+  protected, unattributed, or counter-mismatched changes;
+- resolved attachment staging and a checksum-valid expanded live baseline that
+  attributes every row beyond the original backup;
+- the complete predecessor authorization/approval/result chain; and
+- a new coordinated database/storage backup of that exact expanded live state.
+
+The coordinated backup manifest additionally binds two checksum-valid,
+single-platform PII-free history snapshots captured while both application
+writers remain stopped:
+`fbig-history-backup-messenger-state-v1.tsv` and
+`fbig-history-backup-instagram-state-v1.tsv`. The loader verifies each
+snapshot's account, inbox, and exact one-platform scope. Before `run_importer`,
+the protected wrapper requires the selected live prestate to match the
+authorization-bound backup snapshot after the same metadata/shared-contact
+normalization used by final audit. A same-platform continuation also matches
+the preceding result's poststate; a cross-release continuation therefore
+proves `backup == predecessor == live`. The initial cross-platform transition
+uses the untouched selected-platform backup snapshot. No request built from a
+stale result or a backup of a different live state can mutate production.
+
+The successor authorization binds all predecessor SHAs, the new current-state
+backup, and the new reviewed commit/image/program SHAs. Its new history
+approval copies scope, cutoff, policy, unavailable, target, and accepted
+contentless fields unless the predecessor independently satisfies the strict
+contentless-only revision gate. History attempts then anti-join against and
+bind the expanded baseline. If any predecessor delta or staging state cannot
+be proven, this path is forbidden and the operator restores the appropriate
+coordinated backup and restarts.
+
+The deterministic request generator has explicit `initial` and `successor`
+modes. Successor mode loads and checksum-validates the predecessor
+authorization, latest history approval (including a contentless-only
+revision), result, summary, delta, expanded poststate, prior sidecar, and fresh
+coordinated backup. It carries forward the latest approved contentless pairs.
+The unrecoverable sidecar is release-specific, so its SHA is regenerated; its
+scope, cutoff, structural count, and fingerprint remain byte-identical while
+release identity, inspector, approver, and timestamp may change.
+
+Production-first profile windows form the same single-head chain. The first
+window requires the approved source snapshot to match live state. Every
+successor is admitted only while holding the production operation lock, after
+the wrapper proves the supplied result is the unique current result head, the
+supplied delivery audit is its unique matching audit with zero unrecovered
+deliveries, and the predecessor attempt manifest binds its sealed poststate.
+Rails then requires that predecessor poststate to equal the successor's newly
+captured live prestate and validates the original-source-to-predecessor changes
+as allowed profile mutations. This makes a writeful window followed by a
+terminal zero-write window possible without weakening drift detection.
+
+Final audit walks every authorization in order, proves each release transition
+starts from the prior sealed expanded baseline/current-state backup, and sums
+only attributed deltas. Regardless of earlier release results, both Messenger
+and Instagram must have terminal zero-write proofs on the final release and
+final authorization before profile work or completion.
+
+An Instagram-only contentless revision necessarily changes the combined
+approval SHA after Messenger may already have terminal proof. The final
+audit/profile admission may accept that Messenger terminal result under an
+ancestor production-first approval only when the complete approval-revision
+chain is present and every Messenger projection plus authorization, release,
+database, account/inbox/Page/Instagram identity, cutoff, policy, unavailable,
+target, backup, and R2-provenance field is byte-identical in the final approval.
+Only the Instagram contentless pair, revision marker, and predecessor fields
+may differ. Any Messenger-projection or common-field drift requires a new
+ordered Messenger terminal zero-write pass under the final approval before
+Instagram or profile work continues.
+
+Profile/avatar/placeholder enrichment runs directly on production in bounded
+resumable maintenance windows under a distinct
+`fbig-production-first-profile-approval-v1.tsv`, never a clone profile
+approval. Its fixed schema binds:
+
+- `authorization_mode=production_first`, exact release, production database,
+  account/inbox, production-first authorization SHA, coordinated pre-profile backup, and
+  final production-first history approval plus both terminal zero-write
+  history result SHAs;
+- the fresh PII-free live source profile-state SHA, stable Messenger/Instagram
+  target counts and fingerprints, exact placeholder-target SHA/count, and
+  recovered-thread-target SHA;
+- fixed platforms/order, graph delay/page ceilings/rate-limit wait budget,
+  avatar byte/download limits, exact release/settings, and approved timestamp;
+- no mutable predecessor fields; the approval is immutable for one exact
+  authorization/release/settings/source snapshot.
+
+The first writeful profile pass is admitted only after in-process validation of
+all those live snapshot, target, history, release, database, backup, and setting
+bindings. It keeps the existing rate-limit wait, avatar byte,
+exact-placeholder, field-preservation, per-attempt backup, and
+zero-unrecovered-delivery contracts. Every writeful profile pass is followed
+by a delivery audit before another window. Continue until a terminal pass
+makes zero scalar/avatar writes and has no transient/unclassified failures.
+
+The initial production-first profile `apply` is the only profile mutation
+allowed with no profile predecessor; it binds both terminal history results
+and the fresh live-source approval. Clone profile approval, terminal
+acceptance, clone dry/apply logs, and predecessor-dry fields are literal
+`none`. Every subsequent apply binds the immediately preceding profile attempt
+and its delivery audit in the attempt binding/result while reusing the same
+immutable profile approval. After the last writeful pass and audit, run the
+same profile operation again; only a zero-write, zero-transient result is
+terminal idempotency evidence.
+
+A production-first profile attempt that fails before sealed prestate proves
+zero requests, writes, and staging intents and may retry the same approval. An
+attributed failure after prestate may resume the same approval only when the
+release/settings are unchanged, the attempt delta and staging state are fully
+accounted, and the subsequent delivery audit reports zero unrecovered
+deliveries. An unattributed/protected delta or database/storage inconsistency
+requires coordinated restore of that attempt's bound pre-attempt
+database/storage pair.
+
+Any code/release/settings change always requires a fully attributed successor
+authorization built by the same cross-release rules above. Coordinated restore
+is additionally required when state/delta integrity demands it; restoration
+never makes an old exact-release authorization valid for new code. The
+successor release must run fresh terminal zero-write Messenger and Instagram
+history scans before creating a fresh live source snapshot and new
+production-first profile approval. It never switches to clone authorization
+mid-chain, and final audit binds the complete authorization/profile chain.
+
+The final live audit accepts either the normal terminal-clone authorization
+chain or this explicit production-first chain, never a mixture. For the latter
+it binds the operator acknowledgement, exact release, coordinated backup,
+provisional/revised approvals, every ordered history/profile attempt and
+delivery audit, final complete per-platform summaries, exact two-target
+evidence, literal-zero unavailable fingerprints, one structural omission,
+live row/attachment/contact/avatar totals, and exact remaining-placeholder
+classification. Only this final reconciliation can complete the migration
+goal.
+
+The earlier R3 clone-build/acceptance verification item remains the normal-path
+contract only. It is explicitly superseded for this inbox/release by the
+production-first authorization above; local tests, code review, exact merged
+image, backup, live zero-write terminal scans, and final reconciliation remain
+mandatory.
+
+The following profile-recovery paragraphs apply only to the normal
+clone-authorized path, not the production-first exception above.
 
 Profile approval is never edited in place. If an attempt exits before sealing
 prestate, its attempt artifact must have prestate, poststate, and staging

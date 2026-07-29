@@ -5,7 +5,7 @@ require 'fileutils'
 require 'open3'
 require 'tmpdir'
 
-# rubocop:disable RSpec/DescribeClass, RSpec/MultipleExpectations
+# rubocop:disable RSpec/DescribeClass, RSpec/ExampleLength, RSpec/MultipleExpectations
 RSpec.describe 'UMI FB/IG production program builder' do
   let(:repository_root) { File.expand_path('../../..', __dir__) }
   let(:builder) { File.join(repository_root, 'script/umi_fbig/build_programs.rb') }
@@ -19,7 +19,9 @@ RSpec.describe 'UMI FB/IG production program builder' do
         %w[
           acceptance acceptance_control delivery_audit delivery_checkpoint
           final_audit history_attempt profile_attempt profile_wrapper
-          storage_artifact
+          storage_artifact recovered_thread_targets production_first_request
+          production_first_binding production_first_authorize
+          production_first_history_revise production_first_profile_approve
         ]
       )
       %w[
@@ -54,6 +56,99 @@ RSpec.describe 'UMI FB/IG production program builder' do
         'python3', '-c', source, helper
       )
       expect(syntax_status).to be_success, syntax_stderr
+
+      recovered = File.join(directory, 'fbig-recovered-thread-targets.rb')
+      recovered_checksum = "#{recovered}.sha256"
+      recovered_bytes = File.binread(recovered)
+      expect(File.stat(recovered).mode & 0o777).to eq(0o400)
+      expect(File.binread(recovered_checksum)).to eq(
+        "#{Digest::SHA256.hexdigest(recovered_bytes)}  #{File.basename(recovered)}\n"
+      )
+      _ruby_stdout, ruby_stderr, ruby_status = Open3.capture3('ruby', '-c', recovered)
+      expect(ruby_status).to be_success, ruby_stderr
+
+      authorize = File.join(directory, 'fbig-production-first-authorize.rb')
+      authorize_checksum = "#{authorize}.sha256"
+      authorize_bytes = File.binread(authorize)
+      expect(File.stat(authorize).mode & 0o777).to eq(0o400)
+      expect(File.binread(authorize_checksum)).to eq(
+        "#{Digest::SHA256.hexdigest(authorize_bytes)}  #{File.basename(authorize)}\n"
+      )
+      _ruby_stdout, ruby_stderr, ruby_status = Open3.capture3('ruby', '-c', authorize)
+      expect(ruby_status).to be_success, ruby_stderr
+
+      history_revise = File.join(directory, 'fbig-production-first-history-revise.rb')
+      history_revise_checksum = "#{history_revise}.sha256"
+      history_revise_bytes = File.binread(history_revise)
+      expect(File.stat(history_revise).mode & 0o777).to eq(0o400)
+      expect(File.binread(history_revise_checksum)).to eq(
+        "#{Digest::SHA256.hexdigest(history_revise_bytes)}  #{File.basename(history_revise)}\n"
+      )
+      _ruby_stdout, ruby_stderr, ruby_status = Open3.capture3('ruby', '-c', history_revise)
+      expect(ruby_status).to be_success, ruby_stderr
+
+      profile_approve = File.join(directory, 'fbig-production-first-profile-approve.rb')
+      profile_approve_checksum = "#{profile_approve}.sha256"
+      profile_approve_bytes = File.binread(profile_approve)
+      expect(File.stat(profile_approve).mode & 0o777).to eq(0o400)
+      expect(File.binread(profile_approve_checksum)).to eq(
+        "#{Digest::SHA256.hexdigest(profile_approve_bytes)}  #{File.basename(profile_approve)}\n"
+      )
+      expect(profile_approve_bytes).to include(
+        'database.dump',
+        'database.restore.list',
+        'storage.tar',
+        'storage.manifest'
+      )
+      _ruby_stdout, ruby_stderr, ruby_status = Open3.capture3('ruby', '-c', profile_approve)
+      expect(ruby_status).to be_success, ruby_stderr
+    end
+  end
+
+  it 'enforces every production-first authorization-bound host program' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+
+      profile = File.binread(File.join(directory, 'fbig-profile-attempt.sh'))
+      profile_wrapper = File.binread(File.join(directory, 'fbig-profile-wrapper.sh'))
+      final_audit = File.binread(File.join(directory, 'fbig-final-audit.sh'))
+      delivery_audit = File.binread(File.join(directory, 'fbig-delivery-audit.sh'))
+      delivery_checkpoint = File.binread(File.join(directory, 'fbig-delivery-checkpoint.sh'))
+      expect(profile).to include(
+        'profile_program_sha256',
+        'profile_wrapper_sha256',
+        'storage_helper_sha256',
+        'production-first authorization does not bind this profile program'
+      )
+      expect(profile).to include(
+        'FBIG_PROFILE_AUDIT_ROOT="$AUDIT_ROOT"',
+        'FBIG_PROFILE_PREDECESSOR_RESULT="$PREDECESSOR_RESULT"',
+        'FBIG_PROFILE_PREDECESSOR_AUDIT="$PREDECESSOR_AUDIT"'
+      )
+      expect(profile_wrapper).to include(
+        'validate_profile_predecessor_chain',
+        'attempt_result_sha256',
+        'zero_unrecovered_deliveries',
+        'production-first profile chain has multiple heads',
+        'UMI_FBIG_PROFILE_PREDECESSOR_STATE_PATH'
+      )
+      expect(profile_wrapper).to include(
+        "acquire_operation_lock\nvalidate_profile_predecessor_chain\nreadonly PROFILE_PREDECESSOR_STATE_PATH"
+      )
+      expect(final_audit).to include(
+        'final_audit_program_sha256',
+        'profile_wrapper_sha256',
+        'storage_helper_sha256'
+      )
+      expect(delivery_audit).to include(
+        'authorization_manifest',
+        'delivery_audit_program_sha256'
+      )
+      expect(delivery_checkpoint).to include(
+        'authorization_manifest',
+        'delivery_checkpoint_program_sha256'
+      )
     end
   end
 
@@ -96,7 +191,6 @@ RSpec.describe 'UMI FB/IG production program builder' do
     end
   end
 
-  # rubocop:disable RSpec/ExampleLength
   it 'rejects a profile log or summary substituted after its attempt manifest was sealed' do
     Dir.mktmpdir do |directory|
       _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
@@ -136,6 +230,8 @@ RSpec.describe 'UMI FB/IG production program builder' do
 
       result = File.join(directory, 'profile-result.tsv')
       result_rows = {
+        authorization_mode: 'clone_authorized',
+        authorization_sha256: 'none',
         candidate_commit: 'c' * 40,
         candidate_image: attempt_rows[:image_digest],
         production_database: attempt_rows[:production_database_name],
@@ -169,6 +265,8 @@ RSpec.describe 'UMI FB/IG production program builder' do
         PROFILE_APPROVAL_SHA256=#{result_rows[:profile_approval_sha256]}
         PROFILE_WRAPPER_SHA256=#{result_rows[:profile_wrapper_sha256]}
         STORAGE_HELPER_SHA256=#{result_rows[:storage_helper_sha256]}
+        AUTHORIZATION_MODE=#{result_rows[:authorization_mode]}
+        AUTHORIZATION_SHA256=#{result_rows[:authorization_sha256]}
         PROFILE_ATTEMPT_ROOT="$2"
         PROFILE_RESULT_FIELDS=(schema_version)
         PROFILE_ATTEMPT_FIELDS=(schema_version)
@@ -305,7 +403,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
       source = File.join(repository_root, 'script/umi_fbig/support/fbig_profile_attempt.sh')
       expect(File.binread(generated)).to eq(File.binread(source))
       expect(Digest::SHA256.file(generated).hexdigest).to eq(
-        'd27ebf756ae4333ce1db94c7c665014a243efd771e00af2b863f4cf440babe7b'
+        '94714cfd5ceb68a7331bc145f168fa08f2f4b0bfc6f156ee74766e9fd2c24afb'
       )
     end
   end
@@ -854,6 +952,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
     end
   end
 
+  # rubocop:disable RSpec/ExampleLength
   it 'builds a crash-adoptable history program around sealed Rails graph evidence' do
     Dir.mktmpdir do |directory|
       _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
@@ -881,6 +980,26 @@ RSpec.describe 'UMI FB/IG production program builder' do
         'zero_write_observed',
         'require_ordered_manifest "$ACCEPTANCE_MANIFEST" "${ACCEPTANCE_FIELDS[@]}"'
       )
+      expect(bytes).to include(
+        "printf 'schema_version\\t1\\n'\n    printf 'authorization_mode\\t%s\\n' \"$AUTHORIZATION_MODE\"\n    " \
+        "printf 'authorization_sha256\\t%s\\n' \"$AUTHORIZATION_SHA256\"\n    " \
+        "printf 'label\\t%s\\n' \"$LABEL\""
+      )
+      expect(bytes).not_to include("arguments[-1]='DRY_RUN=true'")
+      expect(bytes).to include('-e DRY_RUN="$dry_run_value"')
+      lock_index = bytes.index('acquire_descriptor_verified_lock "$PRODUCTION_LOCK"')
+      head_index = bytes.index('global_head_sha=none')
+      expect(lock_index).to be < head_index
+      expect(bytes.scan('acquire_descriptor_verified_lock "$PRODUCTION_LOCK"').size).to eq(1)
+      expect(bytes).to include(
+        'revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"',
+        'production-first revision changed the unselected contentless projection',
+        'production_first_history_head_sha',
+        'history predecessor is not the global production-first head',
+        'successor release predecessor is not the global history head',
+        'another history attempt must be finalized before continuing',
+        'initial Instagram predecessor is not a successful terminal zero-write Messenger result'
+      )
       final_audit = File.binread(File.join(directory, 'fbig-final-audit.sh'))
       expect(final_audit).to include(
         'MESSENGER_DRY_PAIR_SHA',
@@ -890,10 +1009,284 @@ RSpec.describe 'UMI FB/IG production program builder' do
         'instagram_listed_threads',
         'unavailable_message_thread_acceptance_mismatches',
         '$((expected_structural + unavailable))',
-        '$((cursor_exhausted + classified + failed))'
+        '$((cursor_exhausted + classified + failed))',
+        'read -r sequence result expected_sha authorization authorization_sha approval approval_sha extra',
+        'production-first history index must contain the complete chain',
+        'FIRST_HISTORY_SUMMARY',
+        'dry_summary="${FIRST_HISTORY_SUMMARY["$platform"]}"',
+        'validate_history_platform_transition "$previous_result" "$result"',
+        'test "$(manifest_value "$result" pre_history_backup_sha256)" =',
+        '"$(manifest_value "$approval" coordinated_backup_manifest_sha256)"',
+        'test "$previous_authorization_sha" = "$AUTHORIZATION_SHA256"',
+        'test "$previous_approval_sha" = "$HISTORY_APPROVAL_SHA256"'
+      )
+      expect(final_audit).not_to include(
+        'manifest_value "$HISTORY_APPROVAL" predecessor_attempt_result_sha256'
       )
     end
   end
+  # rubocop:enable RSpec/ExampleLength
+
+  it 'rejects a new history label while an interrupted attempt remains unpublished' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    validator = history_attempt.match(
+      /^reject_other_in_progress_history_attempts\(\) \{.*?^\}/m
+    )[0]
+    Dir.mktmpdir do |directory|
+      Dir.mkdir(File.join(directory, '.interrupted.in-progress'), 0o700)
+      shell = <<~BASH
+        set -Eeuo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        require_root_directory() { :; }
+        AUDIT_ROOT=#{directory}
+        IN_PROGRESS_DIRECTORY=#{directory}/.new-label.in-progress
+        #{validator}
+        reject_other_in_progress_history_attempts
+      BASH
+
+      _stdout, stderr, status = Open3.capture3('bash', stdin_data: shell)
+
+      expect(status).not_to be_success
+      expect(stderr).to include('another history attempt must be finalized before continuing')
+    end
+  end
+
+  it 'selects the unique global production-first head across release authorizations' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    head_selector = history_attempt.match(
+      /^production_first_history_head_sha\(\) \{.*?^\}/m
+    )[0]
+    Dir.mktmpdir do |directory|
+      first_directory = File.join(directory, 'first')
+      second_directory = File.join(directory, 'second')
+      FileUtils.mkdir_p([first_directory, second_directory], mode: 0o700)
+      first = File.join(first_directory, 'fbig-history-attempt-result-v1.tsv')
+      second = File.join(second_directory, 'fbig-history-attempt-result-v1.tsv')
+      File.write(
+        first,
+        "authorization_mode\tproduction_first\n" \
+        "authorization_sha256\t#{'a' * 64}\n" \
+        "predecessor_result_sha256\tnone\n"
+      )
+      first_sha = Digest::SHA256.file(first).hexdigest
+      File.write(
+        second,
+        "authorization_mode\tproduction_first\n" \
+        "authorization_sha256\t#{'b' * 64}\n" \
+        "predecessor_result_sha256\t#{first_sha}\n"
+      )
+      second_sha = Digest::SHA256.file(second).hexdigest
+      interrupted_directory = File.join(directory, '.current.in-progress')
+      FileUtils.mkdir_p(interrupted_directory, mode: 0o700)
+      interrupted = File.join(interrupted_directory, 'fbig-history-attempt-result-v1.tsv')
+      File.write(
+        interrupted,
+        "authorization_mode\tproduction_first\n" \
+        "authorization_sha256\t#{'c' * 64}\n" \
+        "predecessor_result_sha256\t#{second_sha}\n"
+      )
+      shell = <<~BASH
+        set -Eeuo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        verify_checksum() { :; }
+        require_ordered_manifest() { :; }
+        manifest_value() { awk -F '\t' -v key="$2" '$1 == key { print $2 }' "$1"; }
+        sha256_file() { sha256sum --binary "$1" | awk '{ print $1 }'; }
+        AUDIT_ROOT=#{directory}
+        RESULT_FIELDS=(schema_version)
+        #{head_selector}
+        production_first_history_head_sha none #{interrupted}
+      BASH
+
+      stdout, stderr, status = Open3.capture3('bash', stdin_data: shell)
+
+      expect(status).to be_success, stderr
+      expect(stdout.chomp).to eq(second_sha)
+    end
+  end
+
+  # rubocop:disable RSpec/ExampleLength
+  it 'normalizes only history snapshot metadata when proving successor live state' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    content_digest = history_attempt.match(
+      /^history_state_content_sha256\(\) \{.*?^\}/m
+    )[0]
+    baseline_validator = history_attempt.match(
+      /^validate_successor_live_baseline\(\) \{.*?^\}/m
+    )[0]
+    Dir.mktmpdir do |directory|
+      predecessor = File.join(directory, 'predecessor.tsv')
+      matching = File.join(directory, 'matching.tsv')
+      drifted = File.join(directory, 'drifted.tsv')
+      header = "schema_version\t1\naccount_id\t1\ninbox_id\t2\nplatforms\tmessenger\n"
+      File.write(
+        predecessor,
+        "#{header}captured_at\t2026-07-29T00:00:00Z\nrow_count\t2\n" \
+        "contact\tshared\t9\told\narchive\tmessenger\t1\told\n"
+      )
+      File.write(
+        matching,
+        "#{header}captured_at\t2026-07-29T01:00:00Z\nrow_count\t2\n" \
+        "contact\tshared\t9\tnew\narchive\tmessenger\t1\told\n"
+      )
+      File.write(
+        drifted,
+        "#{header}captured_at\t2026-07-29T01:00:00Z\nrow_count\t1\narchive\tmessenger\t1\tnew\n"
+      )
+      shell = <<~BASH
+        set -Eeuo pipefail
+        #{content_digest}
+        test "$(history_state_content_sha256 #{predecessor})" = \
+          "$(history_state_content_sha256 #{matching})"
+        test "$(history_state_content_sha256 #{predecessor})" != \
+          "$(history_state_content_sha256 #{drifted})"
+      BASH
+
+      _stdout, stderr, status = Open3.capture3('bash', stdin_data: shell)
+
+      expect(status).to be_success, stderr
+
+      validator_shell = <<~BASH
+        set -Eeuo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        manifest_value() { printf 'messenger\n'; }
+        AUTHORIZATION_MODE=production_first
+        PLATFORMS=messenger
+        PREDECESSOR_RESULT="$PREDECESSOR_RESULT_VALUE"
+        predecessor_baseline="$PREDECESSOR_BASELINE_VALUE"
+        BACKUP_HISTORY_STATE=#{predecessor}
+        cross_release_predecessor="$CROSS_RELEASE_VALUE"
+        #{content_digest}
+        #{baseline_validator}
+        validate_successor_live_baseline "$LIVE_PRESTATE"
+      BASH
+      _stdout, stderr, status = Open3.capture3(
+        {
+          'PREDECESSOR_RESULT_VALUE' => 'none',
+          'PREDECESSOR_BASELINE_VALUE' => 'none',
+          'CROSS_RELEASE_VALUE' => 'false',
+          'LIVE_PRESTATE' => matching
+        },
+        'bash',
+        stdin_data: validator_shell
+      )
+      expect(status).to be_success, stderr
+
+      _stdout, stderr, status = Open3.capture3(
+        {
+          'PREDECESSOR_RESULT_VALUE' => 'none',
+          'PREDECESSOR_BASELINE_VALUE' => 'none',
+          'CROSS_RELEASE_VALUE' => 'false',
+          'LIVE_PRESTATE' => drifted
+        },
+        'bash',
+        stdin_data: validator_shell
+      )
+      expect(status).not_to be_success
+      expect(stderr).to include('successor live prestate differs from its coordinated backup state')
+
+      _stdout, stderr, status = Open3.capture3(
+        {
+          'PREDECESSOR_RESULT_VALUE' => '/predecessor',
+          'PREDECESSOR_BASELINE_VALUE' => drifted,
+          'CROSS_RELEASE_VALUE' => 'true',
+          'LIVE_PRESTATE' => drifted
+        },
+        'bash',
+        stdin_data: validator_shell
+      )
+      expect(status).not_to be_success
+      expect(stderr).to include('successor backup state differs from its predecessor expanded baseline')
+    end
+    expect(history_attempt).to include(
+      'validate_successor_live_baseline "$PRESTATE"',
+      'successor live prestate differs from its coordinated backup state'
+    )
+    validation_index = history_attempt.index('validate_successor_live_baseline "$PRESTATE"')
+    importer_index = history_attempt.index("\n  run_importer\n")
+    expect(validation_index).to be < importer_index
+  end
+  # rubocop:enable RSpec/ExampleLength
+
+  # rubocop:disable RSpec/ExampleLength
+  it 'rejects a writeful Messenger predecessor before an initial Instagram attempt can mutate' do
+    history_attempt = File.binread(
+      File.join(repository_root, 'script/umi_fbig/programs/history_attempt.sh')
+    )
+    validator = history_attempt.match(
+      /^validate_initial_messenger_predecessor\(\) \{.*?^\}/m
+    )[0]
+    Dir.mktmpdir do |directory|
+      mutation_log = File.join(directory, 'docker.log')
+      shell = <<~BASH
+        set -Eeuo pipefail
+        die() { printf '%s\n' "$*" >&2; exit 1; }
+        manifest_value() {
+          case "$2" in
+            platforms) printf 'messenger\n' ;;
+            operation) printf 'apply\n' ;;
+            require_zero_writes) printf 'false\n' ;;
+            zero_write_observed) printf 'false\n' ;;
+            exit_status) printf '0\n' ;;
+            termination) printf 'normal\n' ;;
+            protected_changes|deleted_rows|unattributed_changes) printf '0\n' ;;
+            counter_mismatches) printf 'none\n' ;;
+            run_summary_sha256) printf '%064d\n' 0 ;;
+            messenger_unavailable_message_thread_count) printf '0\n' ;;
+            messenger_unavailable_message_thread_fingerprint) printf '%064d\n' 0 ;;
+            *) exit 2 ;;
+          esac
+        }
+        sha256_file() { printf '%064d\n' 0; }
+        stage_value() {
+          case "$3" in
+            platforms) printf 'messenger\n' ;;
+            dry_run) printf 'false\n' ;;
+            scan_complete|write_complete) printf 'true\n' ;;
+            contentless_acceptance_mismatches|unavailable_message_thread_acceptance_mismatches|exit_failures)
+              printf '0\n'
+              ;;
+            failed_threads|partially_paginated_threads|uncategorized_threads|structural_unrecoverable_threads)
+              printf '0\n'
+              ;;
+            ambiguous_participants|unavailable_message_threads|messenger_unavailable_message_threads)
+              printf '0\n'
+              ;;
+            messenger_unavailable_message_thread_count) printf '0\n' ;;
+            messenger_unavailable_message_thread_fingerprint) printf '%064d\n' 0 ;;
+            recovered_thread_targets_sha256) printf 'none\n' ;;
+            recovered_targets_expected|recovered_targets_listed|recovered_targets_message_cursor_exhausted)
+              printf '0\n'
+              ;;
+            classified_omitted_threads) printf '0\n' ;;
+            listed_threads|message_cursor_exhausted_threads) printf '1\n' ;;
+            *) exit 3 ;;
+          esac
+        }
+        docker() { printf '%s\n' "$*" >>"$UMI_FBIG_MUTATION_LOG"; }
+        HISTORY_APPROVAL=/approval
+        #{validator}
+        validate_initial_messenger_predecessor /result /summary
+        docker compose run
+      BASH
+      _stdout, stderr, status = Open3.capture3(
+        { 'UMI_FBIG_MUTATION_LOG' => mutation_log }, 'bash', '-c', shell
+      )
+
+      expect(status).not_to be_success
+      expect(stderr).to include(
+        'initial Instagram predecessor is not a successful terminal zero-write Messenger result'
+      )
+      expect(File).not_to exist(mutation_log)
+    end
+  end
+  # rubocop:enable RSpec/ExampleLength
 
   # rubocop:disable RSpec/ExampleLength
   it 'rejects internally conserved history summaries that differ from the approved structural count' do
@@ -937,6 +1330,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
         esac
       }
       HISTORY_APPROVAL=/approval
+      AUTHORIZATION_MODE=clone_authorized
       PLATFORMS=instagram
       EXPECTED_STRUCTURAL_THREADS=1
       #{validator}

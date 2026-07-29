@@ -46,6 +46,7 @@ class Umi::Fbig::HistoryImportService
   )
   TaskOptions = Data.define(
     :approval_mode,
+    :authorization_sha256,
     :since,
     :before,
     :dry_run,
@@ -54,6 +55,7 @@ class Umi::Fbig::HistoryImportService
     :profile_mode,
     :accepted_contentless,
     :accepted_unavailable_message_threads,
+    :recovered_thread_targets,
     :ack_expand_existing,
     :max_download_bytes,
     :graph_delay_ms,
@@ -62,6 +64,7 @@ class Umi::Fbig::HistoryImportService
   )
   TaskEnvelope = Data.define(
     :approval_mode,
+    :authorization_sha256,
     :since,
     :before,
     :dry_run,
@@ -70,6 +73,7 @@ class Umi::Fbig::HistoryImportService
     :profile_mode,
     :accepted_contentless,
     :accepted_unavailable_message_threads,
+    :recovered_thread_targets,
     :ack_expand_existing,
     :max_download_bytes,
     :graph_delay_ms,
@@ -130,22 +134,34 @@ class Umi::Fbig::HistoryImportService
     history_evidence_changes_projected history_evidence_changes_applied
     messenger_history_evidence_changes_projected messenger_history_evidence_changes_applied
     instagram_history_evidence_changes_projected instagram_history_evidence_changes_applied
+    recovered_targets_expected recovered_targets_listed recovered_targets_message_cursor_exhausted
+    recovered_targets_in_scope_mids recovered_target_mismatches recovered_target_duplicate_listings
+    messenger_recovered_targets_expected messenger_recovered_targets_listed
+    messenger_recovered_targets_message_cursor_exhausted messenger_recovered_targets_in_scope_mids
+    instagram_recovered_targets_expected instagram_recovered_targets_listed
+    instagram_recovered_targets_message_cursor_exhausted instagram_recovered_targets_in_scope_mids
   ].freeze
 
   class << self
     def preflight_task_environment!(env: ENV, now: Time.current, expected_uid: 0)
       mode = env['UMI_FBIG_HISTORY_APPROVAL_MODE']
-      raise ConfigurationError, 'UMI_FBIG_HISTORY_APPROVAL_MODE must be unaccepted_probe or approved' unless
-        mode.in?(%w[unaccepted_probe approved])
+      raise ConfigurationError, 'UMI_FBIG_HISTORY_APPROVAL_MODE must be unaccepted_probe, approved, or production_first' unless
+        mode.in?(%w[unaccepted_probe approved production_first])
       raise ConfigurationError, 'DRY_RUN is required' if env['DRY_RUN'].nil?
       raise ConfigurationError, 'UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS is not a supported override' if
         env['UMI_FBIG_HISTORY_ACCEPTED_CONTENTLESS'].present?
       raise ConfigurationError, 'UMI_FBIG_HISTORY_ACCEPTED_UNAVAILABLE_MESSAGE_THREADS is not a supported override' if
         env['UMI_FBIG_HISTORY_ACCEPTED_UNAVAILABLE_MESSAGE_THREADS'].present?
 
-      mode == 'unaccepted_probe' ? unaccepted_probe_envelope(env, now) : approved_envelope(env, now, expected_uid)
-    rescue Umi::Fbig::HistoryApprovalManifest::InvalidManifest
-      raise ConfigurationError, 'history approval manifest is invalid'
+      return unaccepted_probe_envelope(env, now) if mode == 'unaccepted_probe'
+      return approved_envelope(env, now, expected_uid) if mode == 'approved'
+
+      production_first_envelope(env, now, expected_uid)
+    rescue Umi::Fbig::HistoryApprovalManifest::InvalidManifest,
+           Umi::Fbig::ProductionFirstAuthorization::InvalidAuthorization,
+           Umi::Fbig::ProductionFirstHistoryApproval::InvalidApproval,
+           Umi::Fbig::CoordinatedBackupManifest::InvalidManifest
+      raise ConfigurationError, 'history authorization or approval manifest is invalid'
     end
 
     def task_options(inbox, env: ENV, now: Time.current, envelope: nil)
@@ -179,6 +195,7 @@ class Umi::Fbig::HistoryImportService
       platforms = %w[messenger instagram]
       TaskEnvelope.new(
         approval_mode: 'unaccepted_probe',
+        authorization_sha256: nil,
         since: nil,
         before: parse_before(env['BEFORE'], dry_run: true, now: now),
         dry_run: true,
@@ -187,6 +204,7 @@ class Umi::Fbig::HistoryImportService
         profile_mode: 'defer',
         accepted_contentless: empty_contentless(platforms),
         accepted_unavailable_message_threads: empty_unavailable_message_threads(platforms),
+        recovered_thread_targets: nil,
         ack_expand_existing: false,
         max_download_bytes: nil,
         **graph_task_options(env),
@@ -210,6 +228,8 @@ class Umi::Fbig::HistoryImportService
       exact_environment!(env, 'UMI_FBIG_RUNTIME_IMAGE_DIGEST', approval.image_digest)
       raise ConfigurationError, 'approved BEFORE must be at least 15 minutes old' if approval.before > now - 15.minutes
 
+      reject_recovered_thread_targets!(env)
+
       ack_expand_existing = parse_boolean(env['ACK_EXPAND_EXISTING'], default: false, name: 'ACK_EXPAND_EXISTING')
       if dry_run
         raise ConfigurationError, 'ACK_EXPAND_EXISTING is apply-only' if env['ACK_EXPAND_EXISTING'].present?
@@ -227,6 +247,7 @@ class Umi::Fbig::HistoryImportService
 
       TaskEnvelope.new(
         approval_mode: 'approved',
+        authorization_sha256: nil,
         since: nil,
         before: approval.before,
         dry_run: dry_run,
@@ -235,11 +256,112 @@ class Umi::Fbig::HistoryImportService
         profile_mode: approval.profile_mode,
         accepted_contentless: approval.accepted_contentless(platforms),
         accepted_unavailable_message_threads: approval.accepted_unavailable_message_threads(platforms),
+        recovered_thread_targets: nil,
         ack_expand_existing: ack_expand_existing,
         max_download_bytes: max_download_bytes,
         **graph_task_options(env),
         approval: approval
       )
+    end
+
+    def production_first_envelope(env, now, expected_uid)
+      exact_environment!(env, 'DRY_RUN', 'false')
+      platforms = parse_canonical_platforms!(env['PLATFORMS'])
+      raise ConfigurationError, 'production-first attempts must select exactly one platform' unless platforms.one?
+
+      exact_environment!(env, 'ACK_EXPAND_EXISTING', 'true')
+      exact_environment!(env, 'ACK_PRODUCTION_FIRST_LIVE_IMPORT', 'true')
+      reject_present!(env, %w[
+                        SINCE BEFORE OUTBOUND_POLICY PROFILE_MODE
+                        UMI_FBIG_APPROVAL_MANIFEST_PATH UMI_FBIG_APPROVAL_CHECKSUM_PATH
+                      ])
+      authorization = Umi::Fbig::ProductionFirstAuthorization.load(
+        manifest_path: env['UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_PATH'],
+        checksum_path: env['UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      exact_environment!(env, 'UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_SHA256', authorization.sha256)
+      approval = Umi::Fbig::ProductionFirstHistoryApproval.load(
+        manifest_path: env['UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_PATH'],
+        checksum_path: env['UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      exact_environment!(env, 'UMI_FBIG_RUNTIME_REPOSITORY_COMMIT', approval.repository_commit)
+      exact_environment!(env, 'UMI_FBIG_RUNTIME_IMAGE_DIGEST', approval.image_digest)
+      exact_environment!(env, 'UMI_FBIG_HISTORY_EXPECTED_DATABASE', approval.production_database)
+      raise ConfigurationError, 'production-first BEFORE must be at least 15 minutes old' if approval.before > now - 15.minutes
+
+      validate_production_first_chain!(authorization, approval)
+      backup = Umi::Fbig::CoordinatedBackupManifest.load(
+        manifest_path: env['UMI_FBIG_PRE_HISTORY_BACKUP_MANIFEST_PATH'],
+        checksum_path: env['UMI_FBIG_PRE_HISTORY_BACKUP_MANIFEST_CHECKSUM_PATH'],
+        expected_uid: expected_uid
+      )
+      valid_backup = backup.sha256 == approval.coordinated_backup_manifest_sha256 &&
+                     backup.production_database_name == approval.production_database &&
+                     backup.image_digest == approval.image_digest &&
+                     backup.account_id == approval.account_id &&
+                     backup.inbox_id == approval.inbox_id &&
+                     backup.facebook_page_id == approval.facebook_page_id &&
+                     backup.instagram_business_id == approval.instagram_business_id
+      raise ConfigurationError, 'production-first coordinated backup mismatch' unless valid_backup
+
+      recovered_thread_targets = recovered_thread_targets_for!(env, platforms, expected_uid)
+      if recovered_thread_targets &&
+         recovered_thread_targets.sha256 != approval.recovered_thread_targets_sha256
+        raise ConfigurationError, 'recovered thread targets do not match production-first approval'
+      end
+
+      max_download_bytes = positive_integer(
+        env['UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES'],
+        nil,
+        'UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES'
+      )
+      TaskEnvelope.new(
+        approval_mode: 'production_first',
+        authorization_sha256: authorization.sha256,
+        since: nil,
+        before: approval.before,
+        dry_run: false,
+        platforms: platforms,
+        outbound_policy: approval.outbound_policy,
+        profile_mode: approval.profile_mode,
+        accepted_contentless: approval.accepted_contentless(platforms),
+        accepted_unavailable_message_threads: approval.accepted_unavailable_message_threads(platforms),
+        recovered_thread_targets: recovered_thread_targets,
+        ack_expand_existing: true,
+        max_download_bytes: max_download_bytes,
+        **graph_task_options(env),
+        approval: approval
+      )
+    end
+
+    def validate_production_first_chain!(authorization, approval)
+      common_fields = %w[
+        repository_commit image_digest production_database account_id inbox_id facebook_page_id
+        instagram_business_id since before outbound_policy profile_mode coordinated_backup_manifest_sha256
+        recovered_thread_targets_sha256 placeholder_targets_sha256 unrecoverable_sidecar_sha256
+        messenger_unavailable_message_thread_count
+        messenger_unavailable_message_thread_fingerprint instagram_unavailable_message_thread_count
+        instagram_unavailable_message_thread_fingerprint r2_acceptance_binding_sha256 r2_launch_manifest_sha256
+        r2_probe_log_sha256 r2_probe_summary_sha256
+      ]
+      valid = common_fields.all? { |field| authorization.public_send(field) == approval.public_send(field) } &&
+              approval.production_first_authorization_sha256 == authorization.sha256
+      contentless_matches = %w[messenger instagram].index_with do |platform|
+        %w[count fingerprint].all? do |suffix|
+          field = "#{platform}_#{suffix}"
+          authorization.public_send(field) == approval.public_send(field)
+        end
+      end
+      revision_platform = approval.revision_platform
+      valid &&= if revision_platform == 'none'
+                  contentless_matches.values.all?
+                else
+                  contentless_matches.fetch(revision_platform) == false &&
+                    contentless_matches.except(revision_platform).values.all?
+                end
+      raise ConfigurationError, 'production-first approval chain mismatch' unless valid
     end
 
     def validate_envelope_scope!(inbox, envelope)
@@ -290,6 +412,30 @@ class Umi::Fbig::HistoryImportService
       platforms.index_with do |platform|
         Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: [])
       end
+    end
+
+    def recovered_thread_targets_for!(env, platforms, expected_uid)
+      unless platforms.include?('instagram')
+        reject_recovered_thread_targets!(env)
+        return
+      end
+
+      Umi::Fbig::RecoveredThreadTargets.load(
+        manifest_path: env['UMI_FBIG_RECOVERED_THREAD_TARGETS_PATH'],
+        checksum_path: env['UMI_FBIG_RECOVERED_THREAD_TARGETS_CHECKSUM_PATH'],
+        expected_sha256: env['UMI_FBIG_RECOVERED_THREAD_TARGETS_SHA256'],
+        expected_uid: expected_uid
+      )
+    rescue Umi::Fbig::RecoveredThreadTargets::InvalidTargets
+      raise ConfigurationError, 'recovered thread targets are invalid'
+    end
+
+    def reject_recovered_thread_targets!(env)
+      reject_present!(env, %w[
+                        UMI_FBIG_RECOVERED_THREAD_TARGETS_PATH
+                        UMI_FBIG_RECOVERED_THREAD_TARGETS_CHECKSUM_PATH
+                        UMI_FBIG_RECOVERED_THREAD_TARGETS_SHA256
+                      ])
     end
 
     def exact_environment!(env, name, expected)
@@ -362,7 +508,8 @@ class Umi::Fbig::HistoryImportService
   def initialize(inbox, since:, before:, dry_run:, platforms:, outbound_policy:, graph_client: nil,
                  attachment_service: nil, logger: Rails.logger, run_id: SecureRandom.uuid, clock: -> { Time.current },
                  graph_options: nil, ack_expand_existing: false, max_download_bytes: nil, profile_service: nil,
-                 accepted_contentless: nil, accepted_unavailable_message_threads: nil, profile_mode: 'inline')
+                 accepted_contentless: nil, accepted_unavailable_message_threads: nil, recovered_thread_targets: nil,
+                 profile_mode: 'inline')
     @inbox = inbox
     @channel = inbox.channel
     @account = inbox.account
@@ -406,6 +553,12 @@ class Umi::Fbig::HistoryImportService
     @contentless_mids = Hash.new { |hash, platform| hash[platform] = [] }
     @contentless_mid_sets = Hash.new { |hash, platform| hash[platform] = Set.new }
     @unavailable_message_thread_records = Hash.new { |hash, platform| hash[platform] = [] }
+    @recovered_target_digests = Set.new(recovered_thread_targets&.digests || [])
+    @listed_recovered_target_digests = Set.new
+    @cursor_exhausted_recovered_target_digests = Set.new
+    @stats[:recovered_thread_targets_sha256] = recovered_thread_targets&.sha256 || 'none'
+    @stats[:recovered_targets_expected] = @recovered_target_digests.size
+    @stats[:instagram_recovered_targets_expected] = @recovered_target_digests.size
   end
 
   def perform
@@ -448,6 +601,7 @@ class Umi::Fbig::HistoryImportService
       process_thread(platform, thread)
     end
     @stats[:conversation_pages] += pages
+    compare_recovered_targets!(platform)
     compare_contentless_acceptance!(platform)
     compare_unavailable_message_thread_acceptance!(platform)
     record_archives_not_returned(platform)
@@ -479,14 +633,17 @@ class Umi::Fbig::HistoryImportService
     @stats[:threads_scanned] += 1
     increment_platform_stat(platform, :listed_threads)
     thread_id = required_text!(thread['id'], ApplicationRecord::MAX_TEXT_COLUMN_LENGTH, :invalid_thread_id)
+    recovered_target_digest = record_recovered_target_listing!(platform, thread_id)
     participant = external_participant!(platform, thread)
     archive_exists = validate_existing_archive_for_scan!(platform, thread_id, participant['id'])
     result = graph_client.messages(platform, thread_id, on_page: -> { renew_if_due! })
     @stats[:message_pages] += result.pages
     @stats[:mids_scanned] += result.items.size
+    record_recovered_target_cursor_exhausted!(platform, recovered_target_digest)
 
     listings = in_scope_listings(result.items)
     @stats[:in_scope_mids_scanned] += listings.size
+    record_recovered_target_in_scope_mids!(platform, recovered_target_digest, listings.size)
     @stats[:out_of_scope_mids] += result.items.size - listings.size
     existing_contact_inbox = @inbox.contact_inboxes.find_by(source_id: participant['id'])
     existing_profile_plan = profile_plan_for(platform, participant, listings, existing_contact_inbox.contact) if existing_contact_inbox
@@ -1629,8 +1786,7 @@ class Umi::Fbig::HistoryImportService
               result.count.is_a?(Integer) &&
               result.count >= 0 &&
               result.fingerprint.match?(/\A[0-9a-f]{64}\z/)
-      valid &&= result == Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: []) if
-        platform == 'messenger'
+      valid &&= result == Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: platform, records: [])
       raise ConfigurationError, "invalid accepted unavailable message threads for #{platform}" unless valid
     end
   end
@@ -1712,6 +1868,47 @@ class Umi::Fbig::HistoryImportService
   def complete_thread(platform, thread_id, candidates:)
     increment_platform_stat(platform, :message_cursor_exhausted_threads)
     log_detail(:thread_complete, platform: platform, thread_id: thread_id, candidates: candidates, dry_run: @dry_run)
+  end
+
+  def record_recovered_target_listing!(platform, thread_id)
+    return unless platform == 'instagram' && @recovered_target_digests.present?
+
+    digest = Umi::Fbig::RecoveredThreadTargets.digest(platform: platform, thread_id: thread_id)
+    return unless @recovered_target_digests.include?(digest)
+
+    unless @listed_recovered_target_digests.add?(digest)
+      @stats[:recovered_target_duplicate_listings] += 1
+      raise ThreadError, :duplicate_recovered_target
+    end
+    @stats[:recovered_targets_listed] += 1
+    @stats[:instagram_recovered_targets_listed] += 1
+    digest
+  end
+
+  def record_recovered_target_cursor_exhausted!(platform, digest)
+    return unless digest
+
+    @cursor_exhausted_recovered_target_digests.add(digest)
+    @stats[:recovered_targets_message_cursor_exhausted] += 1
+    @stats[:"#{platform}_recovered_targets_message_cursor_exhausted"] += 1
+  end
+
+  def record_recovered_target_in_scope_mids!(platform, digest, count)
+    return unless digest
+
+    @stats[:recovered_targets_in_scope_mids] += count
+    @stats[:"#{platform}_recovered_targets_in_scope_mids"] += count
+  end
+
+  def compare_recovered_targets!(platform)
+    expected = platform == 'instagram' ? @recovered_target_digests.size : 0
+    listed = platform == 'instagram' ? @listed_recovered_target_digests.size : 0
+    exhausted = platform == 'instagram' ? @cursor_exhausted_recovered_target_digests.size : 0
+    return if [listed, exhausted] == [expected, expected] && @stats[:recovered_target_duplicate_listings].zero?
+
+    @stats[:recovered_target_mismatches] += 1
+    fail_write!
+    @abort_scan = true unless @dry_run
   end
 
   def increment_platform_stat(platform, stat)

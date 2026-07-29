@@ -63,6 +63,7 @@ class Umi::Fbig::HistoryImportGraphClient
   PROFILE_UNAVAILABLE_CODES = [10, 230, 9010].freeze
   PROFILE_UNAVAILABLE_SUBCODES = [33, 2_018_218].freeze
   MESSAGE_CONNECTION_UNAVAILABLE_SUBCODE = 2_207_085
+  INITIAL_MESSAGE_CLIENT_ERROR_RETRY_DELAYS = [5, 30].freeze
   RATE_LIMIT_CODES = [4, 17, 32, 613, 80_004].freeze
   MAX_ATTEMPTS = 3
   MAX_BACKOFF_SECONDS = 30
@@ -143,18 +144,9 @@ class Umi::Fbig::HistoryImportGraphClient
   private
 
   def initial_message_page(platform, thread_id)
-    request(kind: :message) do
+    request(kind: :message, retry_initial_message_client_errors: true, message_platform: platform) do
       api.get_connections(thread_id, 'messages', { fields: MESSAGE_FIELDS, limit: 50 })
     end
-  rescue Koala::Facebook::ClientError => e
-    raise unless message_connection_unavailable?(platform, e)
-
-    raise MessageConnectionUnavailableError.new(
-      http_status: e.http_status.to_i,
-      error_code: e.fb_error_code.to_i,
-      error_subcode: e.fb_error_subcode.to_i,
-      error_type: e.fb_error_type.to_s
-    )
   end
 
   def message_connection_unavailable?(platform, error)
@@ -201,9 +193,10 @@ class Umi::Fbig::HistoryImportGraphClient
     pages
   end
 
-  def request(kind:)
+  def request(kind:, retry_initial_message_client_errors: false, message_platform: nil)
     attempts = 0
     transport_failures = 0
+    failures = []
     begin
       attempts += 1
       @stats[:"#{kind}_http_attempts"] += 1
@@ -217,12 +210,26 @@ class Umi::Fbig::HistoryImportGraphClient
       raise RequestError, :invalid_usage_metadata
     rescue StandardError => e
       raise AuthenticationError, e.class.name if e.is_a?(Koala::Facebook::APIError) && authentication_error?(e)
-      raise unless retryable?(e)
 
+      ordinarily_retryable = retryable?(e)
+      initial_message_client_error = retry_initial_message_client_errors && e.is_a?(Koala::Facebook::ClientError)
+      raise unless ordinarily_retryable || initial_message_client_error
+
+      failures << e
       transport_failures += 1 if transport_failure?(e)
-      maximum_attempts = @rate_controller ? 4 : MAX_ATTEMPTS
+      maximum_attempts = if retry_initial_message_client_errors
+                           MAX_ATTEMPTS
+                         else
+                           (@rate_controller ? 4 : MAX_ATTEMPTS)
+                         end
       exhausted = attempts >= maximum_attempts || transport_failures >= MAX_ATTEMPTS
-      raise RequestError, request_error_reason(e) if exhausted
+      if exhausted
+        raise message_connection_unavailable_error(e) if
+          retry_initial_message_client_errors &&
+          failures.all? { |failure| message_connection_unavailable?(message_platform, failure) }
+
+        raise RequestError, request_error_reason(e)
+      end
 
       if @rate_controller && rate_limit_failure?(e)
         begin
@@ -233,6 +240,8 @@ class Umi::Fbig::HistoryImportGraphClient
         rescue Umi::Fbig::ProfileRateLimitController::WaitBudgetError
           raise RequestError, :rate_wait_budget_exhausted
         end
+      elsif initial_message_client_error && !ordinarily_retryable
+        @sleeper.sleep(INITIAL_MESSAGE_CLIENT_ERROR_RETRY_DELAYS.fetch(attempts - 1))
       else
         @sleeper.sleep(backoff_seconds(attempts))
       end
@@ -240,6 +249,15 @@ class Umi::Fbig::HistoryImportGraphClient
     ensure
       sleep_graph_delay!
     end
+  end
+
+  def message_connection_unavailable_error(error)
+    MessageConnectionUnavailableError.new(
+      http_status: error.http_status.to_i,
+      error_code: error.fb_error_code.to_i,
+      error_subcode: error.fb_error_subcode.to_i,
+      error_type: error.fb_error_type.to_s
+    )
   end
 
   def retryable?(error)

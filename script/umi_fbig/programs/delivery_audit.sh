@@ -5,13 +5,41 @@ readonly PROGRAM_PATH
 readonly PROGRAM_CHECKSUM="${PROGRAM_PATH}.sha256"
 
 readonly BINDING_FIELDS=(
-  schema_version label candidate_commit candidate_image acceptance_sha256
+  schema_version authorization_mode authorization_manifest
+  authorization_checksum authorization_sha256 label candidate_commit
+  candidate_image acceptance_sha256
   audit_root attempt_result attempt_result_checksum before_checkpoint
   before_checkpoint_checksum after_checkpoint after_checkpoint_checksum
   predecessor_audit predecessor_audit_checksum production_lock
 )
+readonly PRODUCTION_FIRST_AUTHORIZATION_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 unrecoverable_inspector_sha256
+  coordinated_backup_manifest_sha256
+  history_program_sha256 profile_program_sha256 final_audit_program_sha256
+  delivery_audit_program_sha256 delivery_checkpoint_program_sha256
+  profile_wrapper_sha256 storage_helper_sha256
+  recovered_target_generator_sha256 authorization_generator_sha256
+  history_revision_generator_sha256 profile_approval_generator_sha256
+  normal_terminal_acceptance_sha256
+  normal_dry_pair_sha256 predecessor_authorization_sha256
+  predecessor_history_result_sha256 predecessor_terminal_summary_sha256
+  predecessor_delta_sha256 predecessor_expanded_baseline_sha256
+  current_state_backup_sha256 approved_by created_at
+)
 readonly PROFILE_RESULT_FIELDS=(
-  schema_version label profile_phase program_sha256 binding_sha256
+  schema_version authorization_mode authorization_sha256 label profile_phase
+  program_sha256 binding_sha256
   profile_wrapper_sha256 storage_helper_sha256 candidate_commit candidate_image
   production_database
   inbox_id acceptance_sha256 profile_approval_sha256
@@ -37,7 +65,8 @@ readonly CHECKPOINT_FIELDS=(
   instagram_caps_hit predecessor_manifest_sha256 sealed_at
 )
 readonly AUDIT_FIELDS=(
-  schema_version label program_sha256 binding_sha256 candidate_commit
+  schema_version authorization_mode authorization_sha256 label program_sha256
+  binding_sha256 candidate_commit
   candidate_image acceptance_sha256 attempt_result_sha256
   attempt_manifest_sha256 attempt_started_at attempt_finished_at
   before_checkpoint_sha256 after_checkpoint_sha256
@@ -57,6 +86,10 @@ require_ordered_manifest "$BINDING_MANIFEST" "${BINDING_FIELDS[@]}"
 test "$(manifest_value "$BINDING_MANIFEST" schema_version)" = 1
 
 LABEL="$(manifest_value "$BINDING_MANIFEST" label)"
+AUTHORIZATION_MODE="$(manifest_value "$BINDING_MANIFEST" authorization_mode)"
+AUTHORIZATION_MANIFEST="$(manifest_value "$BINDING_MANIFEST" authorization_manifest)"
+AUTHORIZATION_CHECKSUM="$(manifest_value "$BINDING_MANIFEST" authorization_checksum)"
+AUTHORIZATION_SHA256="$(manifest_value "$BINDING_MANIFEST" authorization_sha256)"
 CANDIDATE_COMMIT="$(manifest_value "$BINDING_MANIFEST" candidate_commit)"
 CANDIDATE_IMAGE="$(manifest_value "$BINDING_MANIFEST" candidate_image)"
 ACCEPTANCE_SHA256="$(manifest_value "$BINDING_MANIFEST" acceptance_sha256)"
@@ -78,7 +111,9 @@ PREDECESSOR_AUDIT_CHECKSUM="$(
   manifest_value "$BINDING_MANIFEST" predecessor_audit_checksum
 )"
 PRODUCTION_LOCK="$(manifest_value "$BINDING_MANIFEST" production_lock)"
-readonly LABEL CANDIDATE_COMMIT CANDIDATE_IMAGE ACCEPTANCE_SHA256 AUDIT_ROOT
+readonly LABEL AUTHORIZATION_MODE AUTHORIZATION_MANIFEST AUTHORIZATION_CHECKSUM
+readonly AUTHORIZATION_SHA256
+readonly CANDIDATE_COMMIT CANDIDATE_IMAGE ACCEPTANCE_SHA256 AUDIT_ROOT
 readonly ATTEMPT_RESULT ATTEMPT_RESULT_CHECKSUM BEFORE_CHECKPOINT
 readonly BEFORE_CHECKPOINT_CHECKSUM AFTER_CHECKPOINT AFTER_CHECKPOINT_CHECKSUM
 readonly PREDECESSOR_AUDIT PREDECESSOR_AUDIT_CHECKSUM PRODUCTION_LOCK
@@ -86,7 +121,24 @@ readonly PREDECESSOR_AUDIT PREDECESSOR_AUDIT_CHECKSUM PRODUCTION_LOCK
 require_safe_token label "$LABEL"
 [[ "$CANDIDATE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ "$CANDIDATE_IMAGE" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]
-[[ "$ACCEPTANCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+[[ "$AUTHORIZATION_MODE" = clone_authorized ||
+  "$AUTHORIZATION_MODE" = production_first ]]
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  [[ "$AUTHORIZATION_SHA256" =~ ^[0-9a-f]{64}$ && "$ACCEPTANCE_SHA256" = none ]]
+  verify_checksum "$AUTHORIZATION_MANIFEST" "$AUTHORIZATION_CHECKSUM"
+  require_ordered_manifest \
+    "$AUTHORIZATION_MANIFEST" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
+  test "$(sha256_file "$AUTHORIZATION_MANIFEST")" = "$AUTHORIZATION_SHA256"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" repository_commit)" = \
+    "$CANDIDATE_COMMIT"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" image_digest)" = "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$AUTHORIZATION_MANIFEST" delivery_audit_program_sha256)" = \
+    "$(sha256_file "$PROGRAM_PATH")"
+else
+  [[ "$AUTHORIZATION_SHA256" = none && "$ACCEPTANCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+  test "$AUTHORIZATION_MANIFEST" = none
+  test "$AUTHORIZATION_CHECKSUM" = none
+fi
 test "$BEFORE_CHECKPOINT_CHECKSUM" = "${BEFORE_CHECKPOINT}.sha256"
 test "$AFTER_CHECKPOINT_CHECKSUM" = "${AFTER_CHECKPOINT}.sha256"
 require_root_directory "$AUDIT_ROOT"
@@ -132,6 +184,10 @@ validate_checkpoint() {
 validate_profile_result() {
   verify_checksum "$ATTEMPT_RESULT" "$ATTEMPT_RESULT_CHECKSUM"
   require_ordered_manifest "$ATTEMPT_RESULT" "${PROFILE_RESULT_FIELDS[@]}"
+  test "$(manifest_value "$ATTEMPT_RESULT" authorization_mode)" = \
+    "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$ATTEMPT_RESULT" authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$ATTEMPT_RESULT" candidate_commit)" = "$CANDIDATE_COMMIT"
   test "$(manifest_value "$ATTEMPT_RESULT" candidate_image)" = "$CANDIDATE_IMAGE"
   test "$(manifest_value "$ATTEMPT_RESULT" acceptance_sha256)" = \
@@ -146,6 +202,10 @@ if [[ "$PREDECESSOR_AUDIT" = none ]]; then
 else
   verify_checksum "$PREDECESSOR_AUDIT" "$PREDECESSOR_AUDIT_CHECKSUM"
   require_ordered_manifest "$PREDECESSOR_AUDIT" "${AUDIT_FIELDS[@]}"
+  test "$(manifest_value "$PREDECESSOR_AUDIT" authorization_mode)" = \
+    "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$PREDECESSOR_AUDIT" authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$PREDECESSOR_AUDIT" candidate_commit)" = \
     "$CANDIDATE_COMMIT"
   test "$(manifest_value "$PREDECESSOR_AUDIT" acceptance_sha256)" = \
@@ -160,6 +220,8 @@ validate_audit() {
   verify_checksum "$manifest" "${manifest}.sha256"
   require_ordered_manifest "$manifest" "${AUDIT_FIELDS[@]}"
   test "$(manifest_value "$manifest" schema_version)" = 1
+  test "$(manifest_value "$manifest" authorization_mode)" = "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$manifest" authorization_sha256)" = "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$manifest" label)" = "$LABEL"
   test "$(manifest_value "$manifest" program_sha256)" = \
     "$(sha256_file "$PROGRAM_PATH")"
@@ -237,6 +299,8 @@ chmod 0700 "$STAGING_DIRECTORY"
 readonly TEMPORARY="$STAGING_DIRECTORY/fbig-profile-delivery-audit-v1.tsv"
 {
   printf 'schema_version\t1\n'
+  printf 'authorization_mode\t%s\n' "$AUTHORIZATION_MODE"
+  printf 'authorization_sha256\t%s\n' "$AUTHORIZATION_SHA256"
   printf 'label\t%s\n' "$LABEL"
   printf 'program_sha256\t%s\n' "$(sha256_file "$PROGRAM_PATH")"
   printf 'binding_sha256\t%s\n' "$(sha256_file "$BINDING_MANIFEST")"

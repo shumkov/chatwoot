@@ -770,7 +770,7 @@ describe Umi::Fbig::HistoryImportService do
     expect(result.degraded).to be(true)
   end
 
-  it 'accepts exact release-bound unavailable Instagram message connections without creating empty rows' do
+  it 'rejects nonzero unavailable Instagram message acceptance before scanning or writing' do
     unavailable_threads = %w[instagram-thread-2 instagram-thread-1].map do |thread_id|
       {
         'id' => thread_id,
@@ -814,38 +814,22 @@ describe Umi::Fbig::HistoryImportService do
     }
 
     counts_before = [Contact.count, ContactInbox.count, Conversation.count, Message.count]
-    result = described_class.new(
-      inbox,
-      since: nil,
-      before: before_time,
-      dry_run: false,
-      platforms: ['instagram'],
-      outbound_policy: 'pre_presence',
-      graph_client: graph_client,
-      max_download_bytes: max_download_bytes,
-      accepted_unavailable_message_threads: accepted,
-      profile_mode: 'defer'
-    ).perform
-
+    expect do
+      described_class.new(
+        inbox,
+        since: nil,
+        before: before_time,
+        dry_run: false,
+        platforms: ['instagram'],
+        outbound_policy: 'pre_presence',
+        graph_client: graph_client,
+        max_download_bytes: max_download_bytes,
+        accepted_unavailable_message_threads: accepted,
+        profile_mode: 'defer'
+      ).perform
+    end.to raise_error(described_class::ConfigurationError, /invalid accepted unavailable/)
     expect([Contact.count, ContactInbox.count, Conversation.count, Message.count]).to eq(counts_before)
-    expect(result.stats).to include(
-      listed_threads: 2,
-      instagram_listed_threads: 2,
-      message_cursor_exhausted_threads: 0,
-      instagram_message_cursor_exhausted_threads: 0,
-      unavailable_message_threads: 2,
-      instagram_unavailable_message_threads: 2,
-      classified_omitted_threads: 2,
-      instagram_classified_omitted_threads: 2,
-      failed_threads: 0,
-      unavailable_message_thread_acceptance_mismatches: 0,
-      instagram_unavailable_message_thread_count: 2,
-      instagram_unavailable_message_thread_fingerprint: accepted.fetch('instagram').fingerprint,
-      exit_failures: 0
-    )
-    expect(result.scan_complete).to be(true)
-    expect(result).to be_success
-    expect(result.degraded).to be(true)
+    expect(graph_client).not_to have_received(:each_thread)
   end
 
   it 'reports an unaccepted unavailable-message set without creating rows' do
@@ -950,7 +934,7 @@ describe Umi::Fbig::HistoryImportService do
     expect(result).not_to be_success
   end
 
-  it 'preserves an existing archive when its accepted Instagram message connection becomes unavailable' do
+  it 'rejects nonzero unavailable acceptance without changing an existing archive' do
     thread['participants']['data'][0]['id'] = 'instagram-1'
     listings.last['from']['id'] = 'instagram-1'
     details['mid-in']['to']['data'][0]['id'] = 'instagram-1'
@@ -993,30 +977,21 @@ describe Umi::Fbig::HistoryImportService do
         )
       )
 
-    result = described_class.new(
-      inbox,
-      since: nil,
-      before: before_time,
-      dry_run: false,
-      platforms: ['instagram'],
-      outbound_policy: 'pre_presence',
-      graph_client: graph_client,
-      max_download_bytes: max_download_bytes,
-      accepted_unavailable_message_threads: accepted,
-      profile_mode: 'defer'
-    ).perform
-
+    expect do
+      described_class.new(
+        inbox,
+        since: nil,
+        before: before_time,
+        dry_run: false,
+        platforms: ['instagram'],
+        outbound_policy: 'pre_presence',
+        graph_client: graph_client,
+        max_download_bytes: max_download_bytes,
+        accepted_unavailable_message_threads: accepted,
+        profile_mode: 'defer'
+      ).perform
+    end.to raise_error(described_class::ConfigurationError, /invalid accepted unavailable/)
     expect([Contact.count, ContactInbox.count, Conversation.count, Message.count]).to eq(counts_before)
-    expect(result.stats).to include(
-      unavailable_message_threads: 1,
-      classified_omitted_threads: 1,
-      unavailable_message_thread_acceptance_mismatches: 0,
-      instagram_unavailable_message_thread_fingerprint: accepted.fetch('instagram').fingerprint,
-      platforms_history_complete: 1,
-      exit_failures: 0
-    )
-    expect(result).to be_success
-    expect(result.degraded).to be(true)
   end
 
   it 'does not request a profile or create rows for a new thread without an absent message candidate' do
@@ -2550,6 +2525,121 @@ describe Umi::Fbig::HistoryImportService do
 
     expect(logger).to have_received(:info).once
     expect(result.stats[:detail_logs_suppressed]).to eq(1)
+  end
+
+  it 'proves exact recovered Instagram targets were listed and fully paginated' do
+    target = Umi::Fbig::RecoveredThreadTargets::Result.new(
+      platform: 'instagram',
+      digests: [Umi::Fbig::RecoveredThreadTargets.digest(platform: 'instagram', thread_id: 'thread-1')],
+      sha256: 'a' * 64,
+      values: {}
+    )
+    thread['participants']['data'][0]['id'] = 'instagram-1'
+    listings.last['from']['id'] = 'instagram-1'
+    details['mid-in']['to']['data'][0]['id'] = 'instagram-1'
+    details['mid-out']['from']['id'] = 'instagram-1'
+
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      recovered_thread_targets: target,
+      profile_mode: 'defer'
+    ).perform
+
+    expect(result).to be_success
+    expect(result.stats).to include(
+      recovered_targets_expected: 1,
+      recovered_targets_listed: 1,
+      recovered_targets_message_cursor_exhausted: 1,
+      recovered_targets_in_scope_mids: 2,
+      instagram_recovered_targets_expected: 1,
+      instagram_recovered_targets_listed: 1,
+      instagram_recovered_targets_message_cursor_exhausted: 1,
+      recovered_target_mismatches: 0,
+      recovered_target_duplicate_listings: 0
+    )
+  end
+
+  it 'fails when an exact recovered target is missing or duplicated' do
+    target = Umi::Fbig::RecoveredThreadTargets::Result.new(
+      platform: 'instagram',
+      digests: [Umi::Fbig::RecoveredThreadTargets.digest(platform: 'instagram', thread_id: 'thread-1')],
+      sha256: 'a' * 64,
+      values: {}
+    )
+    thread['participants']['data'][0]['id'] = 'instagram-1'
+    allow(graph_client).to receive(:each_thread).and_return(1)
+
+    missing = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      recovered_thread_targets: target,
+      profile_mode: 'defer'
+    ).perform
+
+    allow(graph_client).to receive(:each_thread) do |_platform, **, &block|
+      2.times { block.call(thread) }
+      1
+    end
+    duplicate = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      recovered_thread_targets: target,
+      profile_mode: 'defer'
+    ).perform
+
+    expect(missing.stats).to include(recovered_target_mismatches: 1, exit_failures: 1)
+    expect(duplicate.stats).to include(recovered_target_duplicate_listings: 1)
+    expect(duplicate.stats[:exit_failures]).to be_positive
+    expect(missing).not_to be_success
+    expect(duplicate).not_to be_success
+  end
+
+  it 'counts a recovered target as listed but not cursor-exhausted after a message failure' do
+    target = Umi::Fbig::RecoveredThreadTargets::Result.new(
+      platform: 'instagram',
+      digests: [Umi::Fbig::RecoveredThreadTargets.digest(platform: 'instagram', thread_id: 'thread-1')],
+      sha256: 'a' * 64,
+      values: {}
+    )
+    thread['participants']['data'][0]['id'] = 'instagram-1'
+    allow(graph_client).to receive(:messages).and_raise(
+      Umi::Fbig::HistoryImportGraphClient::RequestError.new(:retry_exhausted)
+    )
+
+    result = described_class.new(
+      inbox,
+      since: nil,
+      before: before_time,
+      dry_run: true,
+      platforms: ['instagram'],
+      outbound_policy: 'pre_presence',
+      graph_client: graph_client,
+      recovered_thread_targets: target,
+      profile_mode: 'defer'
+    ).perform
+
+    expect(result.stats).to include(
+      recovered_targets_listed: 1,
+      recovered_targets_message_cursor_exhausted: 0,
+      recovered_target_mismatches: 1
+    )
+    expect(result).not_to be_success
   end
 
   describe 'profile read caching' do

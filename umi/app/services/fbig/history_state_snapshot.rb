@@ -38,6 +38,8 @@ class Umi::Fbig::HistoryStateSnapshot
   ALLOWED_BASENAMES = %w[
     fbig-history-production-prestate-v1.tsv
     fbig-history-production-poststate-v1.tsv
+    fbig-history-backup-messenger-state-v1.tsv
+    fbig-history-backup-instagram-state-v1.tsv
   ].freeze
 
   def self.capture(inbox, platforms:, renewer: nil)

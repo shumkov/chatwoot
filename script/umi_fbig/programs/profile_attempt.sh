@@ -32,6 +32,46 @@ readonly PROFILE_APPROVAL_FIELDS=(
   clone_profile_apply_summary_sha256 clone_profile_idempotency_log_sha256
   clone_profile_idempotency_summary_sha256 approved_by approved_at
 )
+readonly PRODUCTION_FIRST_PROFILE_APPROVAL_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database_name account_id inbox_id facebook_page_id
+  instagram_business_id production_first_authorization_sha256
+  coordinated_pre_profile_backup_sha256 history_manifest_sha256
+  messenger_terminal_history_result_sha256
+  instagram_terminal_history_result_sha256 source_profile_state_sha256
+  messenger_stable_target_count messenger_stable_target_fingerprint
+  instagram_stable_target_count instagram_stable_target_fingerprint
+  placeholder_targets_sha256 placeholder_target_count
+  recovered_thread_targets_sha256 platforms graph_delay_ms
+  max_conversation_pages max_rate_limit_wait_seconds
+  max_avatar_download_bytes clone_terminal_acceptance_sha256
+  clone_profile_evidence_sha256 approved_by approved_at
+)
+readonly PRODUCTION_FIRST_AUTHORIZATION_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 unrecoverable_inspector_sha256
+  coordinated_backup_manifest_sha256
+  history_program_sha256 profile_program_sha256 final_audit_program_sha256
+  delivery_audit_program_sha256 delivery_checkpoint_program_sha256
+  profile_wrapper_sha256 storage_helper_sha256
+  recovered_target_generator_sha256 authorization_generator_sha256
+  history_revision_generator_sha256 profile_approval_generator_sha256
+  normal_terminal_acceptance_sha256
+  normal_dry_pair_sha256 predecessor_authorization_sha256
+  predecessor_history_result_sha256 predecessor_terminal_summary_sha256
+  predecessor_delta_sha256 predecessor_expanded_baseline_sha256
+  current_state_backup_sha256 approved_by created_at
+)
 readonly ACCEPTANCE_FIELDS=(
   schema_version acceptance_id candidate_commit candidate_image
   clone_database_name production_database_name account_id inbox_id
@@ -62,7 +102,8 @@ readonly CHECKPOINT_FIELDS=(
   instagram_caps_hit predecessor_manifest_sha256 sealed_at
 )
 readonly RESULT_FIELDS=(
-  schema_version label profile_phase program_sha256 binding_sha256
+  schema_version authorization_mode authorization_sha256 label profile_phase
+  program_sha256 binding_sha256
   profile_wrapper_sha256 storage_helper_sha256 candidate_commit candidate_image
   production_database
   inbox_id acceptance_sha256 profile_approval_sha256
@@ -153,13 +194,23 @@ readonly PROFILE_BACKUP_ROOT PREDECESSOR_RESULT PREDECESSOR_CHECKSUM
 readonly PREDECESSOR_AUDIT PREDECESSOR_AUDIT_CHECKSUM BEFORE_CHECKPOINT
 readonly BEFORE_CHECKPOINT_CHECKSUM PRODUCTION_LOCK
 
+AUTHORIZATION_MODE=clone_authorized
+AUTHORIZATION_SHA256=none
+if [[ "$(basename "$PROFILE_APPROVAL")" = fbig-production-first-profile-approval-v1.tsv ]]; then
+  AUTHORIZATION_MODE=production_first
+fi
+readonly AUTHORIZATION_MODE
+
 require_safe_token label "$LABEL"
 [[ "${#LABEL}" -le 32 ]]
 [[ "$PROFILE_PHASE" =~ ^(dry|apply|idempotency)$ ]]
 [[ "$PLATFORMS" = messenger,instagram ]]
 [[ "$DRY_RUN" =~ ^(true|false)$ ]]
 [[ "$REQUIRE_ZERO_WRITES" =~ ^(true|false)$ ]]
-if [[ "$PROFILE_PHASE" = dry ]]; then
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  [[ "$PROFILE_PHASE" =~ ^(apply|idempotency)$ && "$DRY_RUN" = false ]] ||
+    die "production-first profiles are apply-only"
+elif [[ "$PROFILE_PHASE" = dry ]]; then
   [[ "$DRY_RUN" = true && "$REQUIRE_ZERO_WRITES" = false ]]
 else
   [[ "$DRY_RUN" = false ]]
@@ -182,7 +233,47 @@ test "$PRODUCTION_LOCK" = /run/lock/umi-fbig/production.lock
 verify_checksum "$HISTORY_APPROVAL" "$HISTORY_APPROVAL_CHECKSUM"
 test "$(sha256_file "$HISTORY_APPROVAL")" = "$HISTORY_APPROVAL_SHA256"
 verify_checksum "$PROFILE_APPROVAL" "$PROFILE_APPROVAL_CHECKSUM"
-require_ordered_manifest "$PROFILE_APPROVAL" "${PROFILE_APPROVAL_FIELDS[@]}"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  require_ordered_manifest \
+    "$PROFILE_APPROVAL" "${PRODUCTION_FIRST_PROFILE_APPROVAL_FIELDS[@]}"
+  PRODUCTION_FIRST_AUTHORIZATION="$(
+    dirname "$PROFILE_APPROVAL"
+  )/fbig-production-first-authorization-v1.tsv"
+  PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM="${PRODUCTION_FIRST_AUTHORIZATION}.sha256"
+  readonly PRODUCTION_FIRST_AUTHORIZATION PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM
+  verify_checksum \
+    "$PRODUCTION_FIRST_AUTHORIZATION" "$PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM"
+  require_ordered_manifest \
+    "$PRODUCTION_FIRST_AUTHORIZATION" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
+  AUTHORIZATION_SHA256="$(sha256_file "$PRODUCTION_FIRST_AUTHORIZATION")"
+  readonly AUTHORIZATION_SHA256
+  test "$(manifest_value "$PROFILE_APPROVAL" authorization_mode)" = production_first
+  test "$(manifest_value "$PROFILE_APPROVAL" production_first_authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256"
+  test "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" repository_commit)" = \
+    "$CANDIDATE_COMMIT"
+  test "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" image_digest)" = \
+    "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" production_database)" = \
+    "$PRODUCTION_DATABASE"
+  test "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" inbox_id)" = "$INBOX_ID"
+  [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" profile_program_sha256)" = \
+    "$(sha256_file "$PROGRAM_PATH")" ]] ||
+    die "production-first authorization does not bind this profile program"
+  [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" profile_wrapper_sha256)" = \
+    "$PROFILE_WRAPPER_SHA256" ]] ||
+    die "production-first authorization does not bind this profile wrapper"
+  [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" storage_helper_sha256)" = \
+    "$STORAGE_HELPER_SHA256" ]] ||
+    die "production-first authorization does not bind this storage helper"
+  test "$(manifest_value "$PROFILE_APPROVAL" clone_terminal_acceptance_sha256)" = none
+  test "$(manifest_value "$PROFILE_APPROVAL" clone_profile_evidence_sha256)" = none
+  test "$ACCEPTANCE_MANIFEST" = none
+  test "$ACCEPTANCE_CHECKSUM" = none
+  test "$ACCEPTANCE_SHA256" = none
+else
+  require_ordered_manifest "$PROFILE_APPROVAL" "${PROFILE_APPROVAL_FIELDS[@]}"
+fi
 test "$(sha256_file "$PROFILE_APPROVAL")" = "$PROFILE_APPROVAL_SHA256"
 test "$(manifest_value "$PROFILE_APPROVAL" history_manifest_sha256)" = \
   "$HISTORY_APPROVAL_SHA256"
@@ -196,18 +287,20 @@ test "$(sha256_file "$PROFILE_TARGETS")" = "$PROFILE_TARGETS_SHA256"
 test "$(manifest_value "$PROFILE_APPROVAL" placeholder_targets_sha256)" = \
   "$PROFILE_TARGETS_SHA256"
 
-verify_checksum "$ACCEPTANCE_MANIFEST" "$ACCEPTANCE_CHECKSUM"
-require_ordered_manifest "$ACCEPTANCE_MANIFEST" "${ACCEPTANCE_FIELDS[@]}"
-test "$(sha256_file "$ACCEPTANCE_MANIFEST")" = "$ACCEPTANCE_SHA256"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_commit)" = \
-  "$CANDIDATE_COMMIT"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_image)" = \
-  "$CANDIDATE_IMAGE"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" profile_approval_sha256)" = \
-  "$PROFILE_APPROVAL_SHA256"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" profile_targets_sha256)" = \
-  "$PROFILE_TARGETS_SHA256"
-test "$(manifest_value "$ACCEPTANCE_MANIFEST" exit_status)" = 0
+if [[ "$AUTHORIZATION_MODE" = clone_authorized ]]; then
+  verify_checksum "$ACCEPTANCE_MANIFEST" "$ACCEPTANCE_CHECKSUM"
+  require_ordered_manifest "$ACCEPTANCE_MANIFEST" "${ACCEPTANCE_FIELDS[@]}"
+  test "$(sha256_file "$ACCEPTANCE_MANIFEST")" = "$ACCEPTANCE_SHA256"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_commit)" = \
+    "$CANDIDATE_COMMIT"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_image)" = \
+    "$CANDIDATE_IMAGE"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" profile_approval_sha256)" = \
+    "$PROFILE_APPROVAL_SHA256"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" profile_targets_sha256)" = \
+    "$PROFILE_TARGETS_SHA256"
+  test "$(manifest_value "$ACCEPTANCE_MANIFEST" exit_status)" = 0
+fi
 
 verify_checksum "$BEFORE_CHECKPOINT" "$BEFORE_CHECKPOINT_CHECKSUM"
 require_ordered_manifest "$BEFORE_CHECKPOINT" "${CHECKPOINT_FIELDS[@]}"
@@ -222,7 +315,11 @@ test "$(manifest_value "$BEFORE_CHECKPOINT" inbox_id)" = "$INBOX_ID"
 predecessor_result_sha=none
 predecessor_audit_sha=none
 if [[ "$PREDECESSOR_RESULT" = none ]]; then
-  [[ "$PROFILE_PHASE" = dry ]]
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    [[ "$PROFILE_PHASE" = apply ]]
+  else
+    [[ "$PROFILE_PHASE" = dry ]]
+  fi
   [[ "$PREDECESSOR_CHECKSUM" = none ]]
   [[ "$PREDECESSOR_AUDIT" = none && "$PREDECESSOR_AUDIT_CHECKSUM" = none ]]
 else
@@ -233,6 +330,10 @@ else
     "$CANDIDATE_COMMIT"
   test "$(manifest_value "$PREDECESSOR_RESULT" acceptance_sha256)" = \
     "$ACCEPTANCE_SHA256"
+  test "$(manifest_value "$PREDECESSOR_RESULT" authorization_mode)" = \
+    "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$PREDECESSOR_RESULT" authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256"
   predecessor_result_sha="$(sha256_file "$PREDECESSOR_RESULT")"
   predecessor_audit_sha="$(sha256_file "$PREDECESSOR_AUDIT")"
 fi
@@ -260,6 +361,8 @@ validate_result() {
   verify_checksum "$manifest" "${manifest}.sha256"
   require_ordered_manifest "$manifest" "${RESULT_FIELDS[@]}"
   test "$(manifest_value "$manifest" schema_version)" = 1
+  test "$(manifest_value "$manifest" authorization_mode)" = "$AUTHORIZATION_MODE"
+  test "$(manifest_value "$manifest" authorization_sha256)" = "$AUTHORIZATION_SHA256"
   test "$(manifest_value "$manifest" label)" = "$LABEL"
   test "$(manifest_value "$manifest" profile_phase)" = "$PROFILE_PHASE"
   test "$(manifest_value "$manifest" program_sha256)" = \
@@ -358,6 +461,13 @@ start_attempt() {
         FBIG_ATTEMPT_ROOT="$PROFILE_ATTEMPT_ROOT" \
         FBIG_BACKUP_ROOT="$PROFILE_BACKUP_ROOT" \
         FBIG_STORAGE_HELPER="$STORAGE_HELPER" \
+        FBIG_PROFILE_AUDIT_ROOT="$AUDIT_ROOT" \
+        FBIG_PROFILE_AUTHORIZATION_MODE="$AUTHORIZATION_MODE" \
+        FBIG_PROFILE_AUTHORIZATION_SHA256="$AUTHORIZATION_SHA256" \
+        FBIG_PROFILE_APPROVAL_SHA256="$PROFILE_APPROVAL_SHA256" \
+        FBIG_PROFILE_ACCEPTANCE_SHA256="$ACCEPTANCE_SHA256" \
+        FBIG_PROFILE_PREDECESSOR_RESULT="$PREDECESSOR_RESULT" \
+        FBIG_PROFILE_PREDECESSOR_AUDIT="$PREDECESSOR_AUDIT" \
         /bin/bash "$PROFILE_WRAPPER" \
         "$INBOX_ID" "$DRY_RUN" "$PLATFORMS" \
         "$HISTORY_APPROVAL" "$HISTORY_APPROVAL_CHECKSUM" \
@@ -374,6 +484,8 @@ start_attempt() {
     set -o noclobber
     {
       printf 'schema_version\t1\n'
+      printf 'authorization_mode\t%s\n' "$AUTHORIZATION_MODE"
+      printf 'authorization_sha256\t%s\n' "$AUTHORIZATION_SHA256"
       printf 'label\t%s\n' "$LABEL"
       printf 'profile_phase\t%s\n' "$PROFILE_PHASE"
       printf 'program_sha256\t%s\n' "$(sha256_file "$PROGRAM_PATH")"
@@ -569,6 +681,8 @@ finalize_attempt() {
     set -o noclobber
     {
       printf 'schema_version\t1\n'
+      printf 'authorization_mode\t%s\n' "$AUTHORIZATION_MODE"
+      printf 'authorization_sha256\t%s\n' "$AUTHORIZATION_SHA256"
       printf 'label\t%s\n' "$LABEL"
       printf 'profile_phase\t%s\n' "$PROFILE_PHASE"
       printf 'program_sha256\t%s\n' "$(sha256_file "$PROGRAM_PATH")"

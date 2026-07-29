@@ -28,6 +28,7 @@ namespace :umi do
       puts [
         '[UMI-FBIG] stage=history_import_start',
         "approval_mode=#{options.approval_mode}",
+        "authorization_sha256=#{options.authorization_sha256 || 'none'}",
         "inbox_id=#{inbox.id}",
         "dry_run=#{options.dry_run}",
         "platforms=#{options.platforms.join(',')}",
@@ -52,6 +53,7 @@ namespace :umi do
         profile_mode: options.profile_mode,
         accepted_contentless: options.accepted_contentless,
         accepted_unavailable_message_threads: options.accepted_unavailable_message_threads,
+        recovered_thread_targets: options.recovered_thread_targets,
         ack_expand_existing: options.ack_expand_existing,
         max_download_bytes: options.max_download_bytes,
         graph_options: graph_options

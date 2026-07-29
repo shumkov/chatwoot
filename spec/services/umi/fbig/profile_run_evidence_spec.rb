@@ -61,6 +61,59 @@ RSpec.describe Umi::Fbig::ProfileRunEvidence do
     end
   end
 
+  it 'rejects production-first profile work when live state drifted after approval' do
+    source_state = Umi::Fbig::ProfileStateSnapshot.capture(inbox)
+    contact.update_columns(name: 'Profile Name')
+    Dir.mktmpdir do |attempt_directory|
+      File.chmod(0o700, attempt_directory)
+      intent_directory = Pathname.new(attempt_directory).join('avatar-intents')
+      intent_directory.mkdir(0o700)
+      evidence = described_class.new(
+        inbox: inbox,
+        mode: 'production_first',
+        source_state: source_state,
+        attempt_directory: attempt_directory,
+        intent_store: Umi::Fbig::AvatarIntentStore.new(directory: intent_directory, expected_uid: Process.uid),
+        expected_uid: Process.uid
+      )
+
+      expect { evidence.start!(renewer: -> { true }) }.to raise_error(described_class::InvalidEvidence)
+    end
+  end
+
+  it 'admits a production-first zero-write successor from the exact preceding poststate' do
+    source_state = Umi::Fbig::ProfileStateSnapshot.capture(inbox)
+    contact.update_columns(name: 'Profile Name')
+    predecessor_state = Umi::Fbig::ProfileStateSnapshot.capture(inbox)
+    Dir.mktmpdir do |attempt_directory|
+      File.chmod(0o700, attempt_directory)
+      intent_directory = Pathname.new(attempt_directory).join('avatar-intents')
+      intent_directory.mkdir(0o700)
+      evidence = described_class.new(
+        inbox: inbox,
+        mode: 'production_first',
+        source_state: source_state,
+        predecessor_state: predecessor_state,
+        attempt_directory: attempt_directory,
+        intent_store: Umi::Fbig::AvatarIntentStore.new(directory: intent_directory, expected_uid: Process.uid),
+        expected_uid: Process.uid
+      )
+
+      expect(evidence.start!(renewer: -> { true }).sha256).to eq(predecessor_state.sha256)
+      result = evidence.finish!(
+        stats: {
+          name_changes_applied: 0,
+          username_changes_applied: 0,
+          optional_changes_applied: 0,
+          avatars_attached: 0
+        },
+        dry_run: false,
+        renewer: -> { true }
+      )
+      expect(result.prestate.sha256).to eq(result.poststate.sha256)
+    end
+  end
+
   it 'seals production prestate, staging, and poststate and accepts only counter-attributed transitions' do
     Dir.mktmpdir do |attempt_directory|
       File.chmod(0o700, attempt_directory)
