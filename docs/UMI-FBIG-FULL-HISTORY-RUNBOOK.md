@@ -2895,10 +2895,10 @@ for SERVICE in rails sidekiq; do
     docker compose exec -T "$SERVICE" sh -c 'tr -d "\r\n" </app/.git_sha'
   )" = "$APP_COMMIT"
 done
-test "$(
-  docker compose run --rm --no-deps -T rails \
-    sh -c 'tr -d "\r\n" </app/.git_sha'
-)" = "$APP_COMMIT"
+docker compose run --rm --no-deps -T \
+  -e UMI_FBIG_EXPECTED_COMMIT="$APP_COMMIT" \
+  rails sh -c \
+    'test "$(tr -d "\r\n" </app/.git_sha)" = "$UMI_FBIG_EXPECTED_COMMIT"'
 
 docker compose run --rm --no-deps rails bundle exec rails db:migrate
 docker compose run --rm --no-deps -T \

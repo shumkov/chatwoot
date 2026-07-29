@@ -198,6 +198,18 @@ RSpec.describe 'UMI FB/IG full-history runbook' do
     )
   end
 
+  it 'validates the migration one-off commit without capturing compose progress output' do
+    deployment = runbook.match(/## 8\. Pin and deploy the accepted merged digest\n(?<body>.*?)(?=^## 9\.)/m)[:body]
+
+    expect(deployment).to include(
+      '-e UMI_FBIG_EXPECTED_COMMIT="$APP_COMMIT"',
+      'test "$(tr -d "\\r\\n" </app/.git_sha)" = "$UMI_FBIG_EXPECTED_COMMIT"'
+    )
+    expect(deployment).not_to include(
+      "test \"$(\n  docker compose run --rm --no-deps -T rails"
+    )
+  end
+
   it 'validates and skips sealed production history stages on resume' do
     production = runbook.match(/## 9\. Production history\n(?<body>.*?)(?=^## 10\.)/m)[:body]
     resume_gate = production.index('if [[ -e "$log" || -e "$summary" ]]')
