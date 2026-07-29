@@ -172,9 +172,14 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
         'candidate_outbound' => '10',
         'outbound_pre_presence_import' => '8',
         'outbound_pre_presence_skip' => '2',
+        'imported_contacts' => '2',
+        'imported_archives' => '3',
         'imported_messages' => '14',
         'imported_incoming' => '10',
         'imported_outgoing' => '4',
+        'imported_attachments' => '0',
+        'marker_normalizations' => '0',
+        'history_evidence_changes_applied' => '0',
         'late_already_present' => '1',
         'content_unavailable' => '8',
         'ambiguous_senders' => '0',
@@ -204,11 +209,28 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
         invalid_summary_fields.map { |key, value| "#{key}=#{value}" }.join(' ')
       }\n"
       summary_path = seal(attempt_directory, 'history-summary.tsv', summary_bytes)
-      delta_bytes = <<~LOG
-        [UMI-FBIG] stage=history_state_comparison protected_changes=0 deleted_rows=0 unattributed_changes=0 counter_mismatches=none
-      LOG
+      delta_fields = {
+        'active_storage_attachments_created' => '0',
+        'active_storage_blobs_created' => '0',
+        'archive_activity_changed' => '0',
+        'archive_configuration_changed' => '0',
+        'archives_created' => '3',
+        'attachments_created' => '0',
+        'contact_activity_changed' => '0',
+        'contact_inboxes_created' => '2',
+        'contact_inboxes_reused' => '1',
+        'contact_profile_changed' => '0',
+        'contacts_created' => '2',
+        'contacts_reused' => '1',
+        'incoming_created' => '10',
+        'messages_created' => '14',
+        'outgoing_created' => '4'
+      }
+      delta_bytes = "[UMI-FBIG] stage=history_state_delta platform=instagram #{
+        delta_fields.map { |key, value| "#{key}=#{value}" }.join(' ')
+      }\n"
       delta_path = seal(attempt_directory, 'history-delta.tsv', delta_bytes)
-      result_bytes = {
+      result_values = {
         'authorization_mode' => 'production_first',
         'authorization_sha256' => authorization.sha256,
         'history_approval_sha256' => approval.sha256,
@@ -222,7 +244,8 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
         'deleted_rows' => '0',
         'unattributed_changes' => '0',
         'counter_mismatches' => 'none'
-      }.map { |key, value| "#{key}\t#{value}\n" }.join
+      }.merge(delta_fields.transform_keys { |key| "instagram_#{key}" })
+      result_bytes = result_values.map { |key, value| "#{key}\t#{value}\n" }.join
       result_path = seal(attempt_directory, 'fbig-history-attempt-result-v1.tsv', result_bytes)
       env = {
         'UMI_FBIG_EXPECTED_UID' => Process.uid.to_s,
@@ -247,7 +270,7 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
         summary_fields.map { |key, value| "#{key}=#{value}" }.join(' ')
       }\n"
       reseal(summary_path, summary_bytes)
-      result_bytes = {
+      result_values = {
         'authorization_mode' => 'production_first',
         'authorization_sha256' => authorization.sha256,
         'history_approval_sha256' => approval.sha256,
@@ -261,9 +284,53 @@ RSpec.describe 'UMI FB/IG production-first history revision generator' do
         'deleted_rows' => '0',
         'unattributed_changes' => '0',
         'counter_mismatches' => 'none'
-      }.map { |key, value| "#{key}\t#{value}\n" }.join
+      }.merge(delta_fields.transform_keys { |key| "instagram_#{key}" })
+      result_bytes = result_values.map { |key, value| "#{key}\t#{value}\n" }.join
       reseal(result_path, result_bytes)
 
+      prefixed_delta_bytes = delta_bytes.sub('[UMI-FBIG]', 'prefix [UMI-FBIG]')
+      reseal(delta_path, prefixed_delta_bytes)
+      prefixed_result_values = result_values.merge('delta_sha256' => Digest::SHA256.hexdigest(prefixed_delta_bytes))
+      reseal(result_path, prefixed_result_values.map { |key, value| "#{key}\t#{value}\n" }.join)
+      _stdout, _stderr, prefixed_status = Open3.capture3(
+        env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root
+      )
+      expect(prefixed_status).not_to be_success
+
+      crlf_delta_bytes = delta_bytes.sub("\n", "\r\n")
+      reseal(delta_path, crlf_delta_bytes)
+      crlf_result_values = result_values.merge('delta_sha256' => Digest::SHA256.hexdigest(crlf_delta_bytes))
+      reseal(result_path, crlf_result_values.map { |key, value| "#{key}\t#{value}\n" }.join)
+      _stdout, _stderr, crlf_status = Open3.capture3(
+        env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root
+      )
+      expect(crlf_status).not_to be_success
+
+      mismatched_delta_fields = delta_fields.merge('messages_created' => '15')
+      mismatched_delta_bytes = "[UMI-FBIG] stage=history_state_delta platform=instagram #{
+        mismatched_delta_fields.map { |key, value| "#{key}=#{value}" }.join(' ')
+      }\n"
+      reseal(delta_path, mismatched_delta_bytes)
+      counter_unbound_result_values = result_values.merge(
+        'delta_sha256' => Digest::SHA256.hexdigest(mismatched_delta_bytes)
+      )
+      reseal(result_path, counter_unbound_result_values.map { |key, value| "#{key}\t#{value}\n" }.join)
+      _stdout, _stderr, counter_binding_status = Open3.capture3(
+        env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root
+      )
+      expect(counter_binding_status).not_to be_success
+
+      mismatched_result_values = result_values
+                                 .merge('delta_sha256' => Digest::SHA256.hexdigest(mismatched_delta_bytes))
+                                 .merge('instagram_messages_created' => '15')
+      reseal(result_path, mismatched_result_values.map { |key, value| "#{key}\t#{value}\n" }.join)
+      _stdout, _stderr, mismatched_status = Open3.capture3(
+        env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root
+      )
+      expect(mismatched_status).not_to be_success
+
+      reseal(delta_path, delta_bytes)
+      reseal(result_path, result_bytes)
       _stdout, stderr, status = Open3.capture3(env, Gem.ruby, 'bin/rails', 'runner', program, chdir: repository_root)
 
       expect(status).to be_success, stderr
