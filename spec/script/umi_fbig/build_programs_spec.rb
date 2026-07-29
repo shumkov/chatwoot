@@ -1015,6 +1015,28 @@ RSpec.describe 'UMI FB/IG production program builder' do
   end
   # rubocop:enable RSpec/ExampleLength
 
+  it 'accepts bounded numeric importer exit statuses for finalization' do
+    common = File.join(repository_root, 'script/umi_fbig/programs/common.sh')
+    command = 'source "$1"; valid_importer_exit_status "$2"'
+
+    %w[0 1 2 255].each do |value|
+      _stdout, stderr, status = Open3.capture3('bash', '-c', command, 'bash', common, value)
+      expect(status).to be_success, "#{value}: #{stderr}"
+    end
+    %w[01 256 999 x].each do |value|
+      _stdout, _stderr, status = Open3.capture3('bash', '-c', command, 'bash', common, value)
+      expect(status).not_to be_success, value
+    end
+
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+      bytes = File.binread(File.join(directory, 'fbig-history-attempt.sh'))
+      expect(bytes).to include('valid_importer_exit_status "$exit_status"')
+      expect(bytes).not_to include('=~ ^(?:0|[1-9][0-9]{0,2})$')
+    end
+  end
+
   # rubocop:disable RSpec/ExampleLength
   it 'builds a crash-adoptable history program around sealed Rails graph evidence' do
     Dir.mktmpdir do |directory|
