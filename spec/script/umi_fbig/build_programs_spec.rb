@@ -1076,6 +1076,21 @@ RSpec.describe 'UMI FB/IG production program builder' do
     end
   end
 
+  it 'keeps the history revision projection separate from validator locals' do
+    Dir.mktmpdir do |directory|
+      _stdout, stderr, status = Open3.capture3('ruby', builder, directory)
+      expect(status).to be_success, stderr
+      bytes = File.binread(File.join(directory, 'fbig-history-attempt.sh'))
+
+      expect(bytes).to include(
+        'HISTORY_REVISION_PLATFORM="$(',
+        'manifest_value "$HISTORY_APPROVAL" revision_platform',
+        'readonly HISTORY_REVISION_PLATFORM'
+      )
+      expect(bytes).not_to include('readonly revision_platform')
+    end
+  end
+
   # rubocop:disable RSpec/ExampleLength
   it 'builds a crash-adoptable history program around sealed Rails graph evidence' do
     Dir.mktmpdir do |directory|
@@ -1116,7 +1131,7 @@ RSpec.describe 'UMI FB/IG production program builder' do
       expect(lock_index).to be < head_index
       expect(bytes.scan('acquire_descriptor_verified_lock "$PRODUCTION_LOCK"').size).to eq(1)
       expect(bytes).to include(
-        'revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"',
+        'readonly HISTORY_REVISION_PLATFORM',
         'production-first revision changed the unselected contentless projection',
         'production_first_history_head_sha',
         'history predecessor is not the global production-first head',
