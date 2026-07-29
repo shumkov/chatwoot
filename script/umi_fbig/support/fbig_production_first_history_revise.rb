@@ -20,6 +20,21 @@ REVISION_ZERO_FIELDS = %w[
   download_budget_exhaustions recovered_target_mismatches recovered_target_duplicate_listings
   ambiguous_senders predecessor_archive_not_returned
 ].freeze
+REVISION_DELTA_FIELDS = %w[
+  active_storage_attachments_created active_storage_blobs_created archive_activity_changed
+  archive_configuration_changed archives_created attachments_created contact_activity_changed
+  contact_inboxes_created contact_inboxes_reused contact_profile_changed contacts_created
+  contacts_reused incoming_created messages_created outgoing_created
+].freeze
+REVISION_SUMMARY_DELTA_FIELDS = {
+  'imported_contacts' => 'contacts_created',
+  'imported_archives' => 'archives_created',
+  'imported_incoming' => 'incoming_created',
+  'imported_outgoing' => 'outgoing_created',
+  'imported_messages' => 'messages_created',
+  'imported_attachments' => 'attachments_created',
+  'marker_normalizations' => 'archive_configuration_changed'
+}.freeze
 
 def invalid!
   raise 'production-first history revision inputs are invalid'
@@ -66,18 +81,24 @@ end
 
 def stage_values(bytes, stage)
   text = bytes.dup.force_encoding(Encoding::UTF_8)
-  invalid! unless text.valid_encoding?
+  invalid! unless
+    text.valid_encoding? && text.end_with?("\n") && text.lines.size == 1 &&
+    text.exclude?("\r") && text.exclude?("\0")
   marker = "[UMI-FBIG] stage=#{stage} "
-  rows = text.lines.filter_map do |line|
-    offset = line.index(marker)
-    next unless offset
-
-    pairs = line.byteslice(offset + marker.bytesize..).to_s.strip.split.map { |field| field.split('=', 2) }
-    invalid! unless pairs.all? { |pair| pair.size == 2 } && pairs.map(&:first).uniq.size == pairs.size
-    pairs.to_h
+  line = text.chomp
+  invalid! unless line.start_with?(marker)
+  payload = line.delete_prefix(marker)
+  fields = payload.split
+  invalid! unless fields.join(' ') == payload
+  pairs = fields.map do |field|
+    pair = field.split('=', 2)
+    invalid! unless
+      pair.size == 2 && pair.first.match?(/\A[a-z0-9_]+\z/) &&
+      !pair.last.empty?
+    pair
   end
-  invalid! unless rows.one?
-  rows.first
+  invalid! unless pairs.map(&:first).uniq.size == pairs.size
+  pairs.to_h
 end
 
 def publish!(directory, basename, bytes)
@@ -146,7 +167,7 @@ begin
   delta_bytes = protected_bytes(ENV.fetch('UMI_FBIG_FAILED_HISTORY_DELTA_PATH'), expected_uid)
   result = manifest_values(result_bytes)
   summary = stage_values(summary_bytes, 'history_import_summary')
-  delta = stage_values(delta_bytes, 'history_state_comparison')
+  delta = stage_values(delta_bytes, 'history_state_delta')
   platform = result.fetch('platforms')
   invalid! unless %w[messenger instagram].include?(platform)
   invalid! unless
@@ -170,11 +191,18 @@ begin
     summary['contentless_acceptance_mismatches'] == '1' &&
     summary['exit_failures'] == '1' &&
     REVISION_ZERO_FIELDS.all? { |field| summary.fetch(field) == '0' }
+  delta_matches = REVISION_DELTA_FIELDS.all? do |field|
+    delta.fetch(field).match?(/\A(?:0|[1-9][0-9]*)\z/) &&
+      delta.fetch(field) == result.fetch("#{platform}_#{field}")
+  end
+  summary_delta_matches = REVISION_SUMMARY_DELTA_FIELDS.all? do |summary_field, delta_field|
+    summary.fetch(summary_field) == delta.fetch(delta_field)
+  end
   invalid! unless
-    delta['protected_changes'] == '0' &&
-    delta['deleted_rows'] == '0' &&
-    delta['unattributed_changes'] == '0' &&
-    delta['counter_mismatches'] == 'none'
+    delta.keys.sort == (REVISION_DELTA_FIELDS + ['platform']).sort &&
+    delta['platform'] == platform &&
+    delta_matches &&
+    summary_delta_matches
 
   expected_target_sha = platform == 'instagram' ? predecessor.recovered_thread_targets_sha256 : 'none'
   expected_target_count = platform == 'instagram' ? '2' : '0'
