@@ -281,8 +281,10 @@ if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
       "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" "$field")" ]] ||
       die "production-first approval differs from authorization: $field"
   done
-  revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"
-  readonly revision_platform
+  HISTORY_REVISION_PLATFORM="$(
+    manifest_value "$HISTORY_APPROVAL" revision_platform
+  )"
+  readonly HISTORY_REVISION_PLATFORM
   validate_production_first_contentless_relation \
     "$PRODUCTION_FIRST_AUTHORIZATION" "$HISTORY_APPROVAL"
   [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" history_program_sha256)" = \
@@ -751,8 +753,7 @@ else
       "$(manifest_value "$PREDECESSOR_RESULT" unattributed_changes)" = 0 &&
       "$(manifest_value "$PREDECESSOR_RESULT" counter_mismatches)" = none ]] ||
       die "successor-release predecessor mismatch"
-    revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"
-    if [[ "$revision_platform" = none ]]; then
+    if [[ "$HISTORY_REVISION_PLATFORM" = none ]]; then
       for field in \
         predecessor_approval_sha256 predecessor_attempt_result_sha256 \
         predecessor_run_summary_sha256 predecessor_delta_sha256; do
@@ -760,7 +761,7 @@ else
           die "ordinary successor release carries revision lineage"
       done
     else
-      [[ "$revision_platform" = "$PLATFORMS" &&
+      [[ "$HISTORY_REVISION_PLATFORM" = "$PLATFORMS" &&
         "$(manifest_value "$HISTORY_APPROVAL" predecessor_approval_sha256)" = \
           "$(manifest_value "$PREDECESSOR_RESULT" history_approval_sha256)" &&
         "$(manifest_value "$HISTORY_APPROVAL" predecessor_attempt_result_sha256)" = \
@@ -769,20 +770,21 @@ else
           "$(sha256_file "$predecessor_summary")" &&
         "$(manifest_value "$HISTORY_APPROVAL" predecessor_delta_sha256)" = \
           "$(sha256_file "$predecessor_delta")" &&
-        "$(manifest_value "$HISTORY_APPROVAL" "${revision_platform}_count")" = \
+        "$(manifest_value "$HISTORY_APPROVAL" "${HISTORY_REVISION_PLATFORM}_count")" = \
           "$(stage_value "$predecessor_summary" history_import_summary \
-            "${revision_platform}_contentless_details")" &&
-        "$(manifest_value "$HISTORY_APPROVAL" "${revision_platform}_fingerprint")" = \
+            "${HISTORY_REVISION_PLATFORM}_contentless_details")" &&
+        "$(manifest_value "$HISTORY_APPROVAL" "${HISTORY_REVISION_PLATFORM}_fingerprint")" = \
           "$(stage_value "$predecessor_summary" history_import_summary \
-            "${revision_platform}_contentless_fingerprint")" &&
+            "${HISTORY_REVISION_PLATFORM}_contentless_fingerprint")" &&
         "$(stage_value "$predecessor_summary" history_import_summary \
           contentless_acceptance_mismatches)" = 1 &&
         "$(manifest_value "$PREDECESSOR_RESULT" exit_status)" = 1 &&
         "$(manifest_value "$PREDECESSOR_RESULT" termination)" = normal ]] ||
         die "successor-release revision lineage mismatch"
       for suffix in count fingerprint; do
-        [[ "$(manifest_value "$HISTORY_APPROVAL" "${revision_platform}_${suffix}")" = \
-          "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" "${revision_platform}_${suffix}")" ]] ||
+        [[ "$(manifest_value "$HISTORY_APPROVAL" "${HISTORY_REVISION_PLATFORM}_${suffix}")" = \
+          "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" \
+            "${HISTORY_REVISION_PLATFORM}_${suffix}")" ]] ||
           die "successor-release revision is not bound into its authorization"
       done
     fi
