@@ -42,8 +42,8 @@ PY
     [[ "$(stat -Lc '%u:%g' "$current")" = '0:0' ]] ||
       die "path ancestor must be root-owned: $current"
     mode="$(stat -Lc '%a' "$current")"
-    (( (8#$mode & 8#022) == 0 )) ||
-      die "path ancestor must not be group/world writable: $current"
+    (( (8#$mode & 8#022) == 0 || (8#$mode & 8#1000) != 0 )) ||
+      die "writable path ancestor must have the sticky bit: $current"
     current="$(dirname "$current")"
   done
 }
