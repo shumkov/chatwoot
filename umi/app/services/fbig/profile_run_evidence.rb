@@ -9,13 +9,16 @@ class Umi::Fbig::ProfileRunEvidence
 
   def initialize(inbox:, mode:, source_state:, attempt_directory:, intent_store:, clone_phase: nil,
                  predecessor_state: nil, expected_uid: 0)
-    raise InvalidEvidence unless mode.in?(%w[clone_evidence production])
+    raise InvalidEvidence unless mode.in?(%w[clone_evidence production production_first])
     raise InvalidEvidence if mode == 'clone_evidence' && source_state.nil?
     raise InvalidEvidence if mode == 'production' && source_state
+    raise InvalidEvidence if mode == 'production_first' && source_state.nil?
 
     if mode == 'clone_evidence'
       raise InvalidEvidence unless clone_phase.in?(%w[dry apply idempotency])
       raise InvalidEvidence if clone_phase == 'idempotency' ? predecessor_state.nil? : predecessor_state
+    elsif mode == 'production_first'
+      raise InvalidEvidence if clone_phase
     elsif clone_phase || predecessor_state
       raise InvalidEvidence
     end
@@ -33,7 +36,7 @@ class Umi::Fbig::ProfileRunEvidence
   def start!(renewer:)
     raise InvalidEvidence if @started
 
-    basename = @mode == 'production' ? 'fbig-profile-production-prestate-v1.tsv' : 'fbig-profile-clone-prestate-v1.tsv'
+    basename = production_mode? ? 'fbig-profile-production-prestate-v1.tsv' : 'fbig-profile-clone-prestate-v1.tsv'
     @run_prestate = Umi::Fbig::ProfileStateSnapshot.capture_and_seal!(
       @inbox,
       directory: @attempt_directory,
@@ -42,7 +45,8 @@ class Umi::Fbig::ProfileRunEvidence
       renewer: renewer
     )
     validate_clone_lineage! if @mode == 'clone_evidence'
-    @staging_source_sha256 = @mode == 'production' ? @run_prestate.sha256 : @source_state.sha256
+    validate_production_first_source! if @mode == 'production_first'
+    @staging_source_sha256 = production_mode? ? @run_prestate.sha256 : @source_state.sha256
     @started = true
     @run_prestate
   rescue Umi::Fbig::ProfileStateSnapshot::LeaseLost
@@ -86,6 +90,10 @@ class Umi::Fbig::ProfileRunEvidence
 
   private
 
+  def production_mode?
+    @mode.in?(%w[production production_first])
+  end
+
   def validate_clone_lineage!
     if @clone_phase.in?(%w[dry apply])
       raise InvalidEvidence unless @source_state.sha256 == @run_prestate.sha256
@@ -102,6 +110,30 @@ class Umi::Fbig::ProfileRunEvidence
       enforce_counters: false
     )
     raise InvalidEvidence unless comparison.success?
+  end
+
+  def validate_production_first_source!
+    if @predecessor_state
+      raise InvalidEvidence unless @predecessor_state.sha256 == @run_prestate.sha256
+
+      comparison = Umi::Fbig::ProfileStateComparator.compare(
+        before: @source_state,
+        after: @predecessor_state,
+        applied_counters: {},
+        enforce_counters: false
+      )
+      raise InvalidEvidence unless comparison.success?
+
+      return
+    end
+
+    comparison = Umi::Fbig::ProfileStateComparator.compare(
+      before: @source_state,
+      after: @run_prestate,
+      applied_counters: {},
+      enforce_counters: false
+    )
+    raise InvalidEvidence unless comparison.success? && comparison.eligible_counts.values.all?(&:zero?)
   end
 
   def capture_poststate(renewer)

@@ -1,5 +1,6 @@
 require 'rails_helper'
 
+# rubocop:disable RSpec/ExampleLength
 RSpec.describe Umi::Fbig::ProfileTaskConfiguration do
   let(:commit) { 'a' * 40 }
   let(:image) { "ghcr.io/shumkov/chatwoot@sha256:#{'b' * 64}" }
@@ -151,6 +152,112 @@ RSpec.describe Umi::Fbig::ProfileTaskConfiguration do
         pre_attempt_backup: backup,
         attempt_directory: attempt_directory
       )
+    end
+  end
+
+  it 'admits production-first profile work only through the bound live history chain' do
+    production_history = instance_double(
+      Umi::Fbig::ProductionFirstHistoryApproval,
+      sha256: '1' * 64,
+      repository_commit: commit,
+      image_digest: image,
+      production_database: 'chatwoot_production',
+      recovered_thread_targets_sha256: '2' * 64,
+      placeholder_targets_sha256: '3' * 64
+    )
+    authorization = instance_double(Umi::Fbig::ProductionFirstAuthorization, sha256: '4' * 64)
+    profile = instance_double(
+      Umi::Fbig::ProductionFirstProfileApproval,
+      production_first_authorization_sha256: authorization.sha256,
+      history_manifest_sha256: production_history.sha256,
+      repository_commit: commit,
+      image_digest: image,
+      production_database_name: 'chatwoot_production',
+      recovered_thread_targets_sha256: production_history.recovered_thread_targets_sha256,
+      placeholder_targets_sha256: production_history.placeholder_targets_sha256,
+      account_id: 1,
+      inbox_id: 2,
+      facebook_page_id: 3,
+      instagram_business_id: 4,
+      messenger_terminal_history_result_sha256: '5' * 64,
+      instagram_terminal_history_result_sha256: '6' * 64,
+      coordinated_pre_profile_backup_sha256: '7' * 64,
+      source_profile_state_sha256: '8' * 64,
+      placeholder_target_count: 0,
+      platforms: %w[messenger instagram],
+      graph_delay_ms: 250,
+      max_conversation_pages: 10_000,
+      max_rate_limit_wait_seconds: 1800,
+      max_avatar_download_bytes: 50.megabytes
+    )
+    production_source = instance_double(Umi::Fbig::ProfileStateSnapshot::Artifact, sha256: '8' * 64)
+    production_predecessor = instance_double(Umi::Fbig::ProfileStateSnapshot::Artifact, sha256: '9' * 64)
+    backup = instance_double(Umi::Fbig::ProfilePreAttemptBackupManifest)
+    coordinated_backup = instance_double(
+      Umi::Fbig::CoordinatedBackupManifest,
+      sha256: profile.coordinated_pre_profile_backup_sha256,
+      production_database_name: profile.production_database_name,
+      image_digest: profile.image_digest,
+      account_id: profile.account_id,
+      inbox_id: profile.inbox_id,
+      facebook_page_id: profile.facebook_page_id,
+      instagram_business_id: profile.instagram_business_id
+    )
+    allow(Umi::Fbig::ProductionFirstHistoryApproval).to receive(:load).and_return(production_history)
+    allow(Umi::Fbig::ProductionFirstAuthorization).to receive(:load).and_return(authorization)
+    allow(Umi::Fbig::ProductionFirstProfileApproval).to receive(:load).and_return(profile)
+    allow(Umi::Fbig::ProfileStateSnapshot).to receive(:load).and_return(
+      production_source,
+      production_predecessor
+    )
+    allow(Umi::Fbig::ProfilePreAttemptBackupManifest).to receive(:load).and_return(backup)
+    allow(Umi::Fbig::CoordinatedBackupManifest).to receive(:load).and_return(coordinated_backup)
+    allow(described_class).to receive(:verify_bound_artifact!)
+
+    with_attempt_directories do |attempt_directory, intent_directory|
+      env = common_env(attempt_directory, intent_directory).except(
+        'UMI_FBIG_APPROVAL_MANIFEST_PATH',
+        'UMI_FBIG_APPROVAL_CHECKSUM_PATH'
+      ).merge(
+        'UMI_FBIG_PROFILE_APPROVAL_MODE' => 'production_first',
+        'UMI_FBIG_HISTORY_EXPECTED_DATABASE' => 'chatwoot_production',
+        'DRY_RUN' => 'false',
+        'PLATFORMS' => 'messenger,instagram',
+        'ACK_PRODUCTION_FIRST_LIVE_IMPORT' => 'true',
+        'UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_PATH' => '/approval/history.tsv',
+        'UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_CHECKSUM_PATH' => '/approval/history.tsv.sha256',
+        'UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_PATH' => '/approval/authorization.tsv',
+        'UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM_PATH' => '/approval/authorization.tsv.sha256',
+        'UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_SHA256' => authorization.sha256,
+        'UMI_FBIG_PRODUCTION_FIRST_PROFILE_APPROVAL_PATH' => '/approval/profile.tsv',
+        'UMI_FBIG_PRODUCTION_FIRST_PROFILE_APPROVAL_CHECKSUM_PATH' => '/approval/profile.tsv.sha256',
+        'UMI_FBIG_PROFILE_STATE_PATH' => '/approval/fbig-profile-state-v1.tsv',
+        'UMI_FBIG_PROFILE_STATE_CHECKSUM_PATH' => '/approval/fbig-profile-state-v1.tsv.sha256',
+        'UMI_FBIG_PROFILE_PREDECESSOR_STATE_PATH' =>
+          '/attempt/fbig-profile-production-poststate-v1.tsv',
+        'UMI_FBIG_PROFILE_PREDECESSOR_STATE_CHECKSUM_PATH' =>
+          '/attempt/fbig-profile-production-poststate-v1.tsv.sha256',
+        'UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_PATH' => '/backup/attempt.tsv',
+        'UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_CHECKSUM_PATH' => '/backup/attempt.tsv.sha256'
+      )
+
+      options = described_class.build(
+        env: env,
+        actual_database: 'chatwoot_production',
+        expected_uid: Process.uid
+      )
+
+      expect(options).to have_attributes(
+        approval_mode: 'production_first',
+        dry_run: false,
+        history_manifest: production_history,
+        profile_approval: profile,
+        source_state: production_source,
+        predecessor_state: production_predecessor,
+        pre_attempt_backup: backup
+      )
+      expect(described_class).to have_received(:verify_bound_artifact!).exactly(2).times
+      expect(Umi::Fbig::CoordinatedBackupManifest).to have_received(:load)
     end
   end
 
@@ -308,3 +415,4 @@ RSpec.describe Umi::Fbig::ProfileTaskConfiguration do
     end
   end
 end
+# rubocop:enable RSpec/ExampleLength

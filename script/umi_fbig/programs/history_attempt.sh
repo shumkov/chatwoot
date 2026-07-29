@@ -31,6 +31,48 @@ readonly HISTORY_APPROVAL_FIELDS=(
   placeholder_targets_sha256 source_dry_log_sha256 source_dry_summary_sha256
   approved_by approved_at
 )
+readonly PRODUCTION_FIRST_HISTORY_APPROVAL_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  coordinated_backup_manifest_sha256 production_first_authorization_sha256
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 revision_platform predecessor_approval_sha256
+  predecessor_attempt_result_sha256 predecessor_run_summary_sha256
+  predecessor_delta_sha256 approved_by approved_at
+)
+readonly PRODUCTION_FIRST_AUTHORIZATION_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 unrecoverable_inspector_sha256
+  coordinated_backup_manifest_sha256
+  history_program_sha256 profile_program_sha256 final_audit_program_sha256
+  delivery_audit_program_sha256 delivery_checkpoint_program_sha256
+  profile_wrapper_sha256 storage_helper_sha256
+  recovered_target_generator_sha256 authorization_generator_sha256
+  history_revision_generator_sha256 profile_approval_generator_sha256
+  normal_terminal_acceptance_sha256
+  normal_dry_pair_sha256 predecessor_authorization_sha256
+  predecessor_history_result_sha256 predecessor_terminal_summary_sha256
+  predecessor_delta_sha256 predecessor_expanded_baseline_sha256
+  current_state_backup_sha256 approved_by created_at
+)
 readonly ACCEPTANCE_FIELDS=(
   schema_version acceptance_id candidate_commit candidate_image
   clone_database_name production_database_name account_id inbox_id
@@ -50,8 +92,15 @@ readonly UNRECOVERABLE_SIDECAR_FIELDS=(
   instagram_business_id before platform count fingerprint
   inspector_script_sha256 approved_by approved_at
 )
+readonly COORDINATED_BACKUP_FIELDS=(
+  schema_version backup_id production_database_name image_digest account_id
+  inbox_id facebook_page_id instagram_business_id database_dump_sha256
+  database_restore_list_sha256 storage_archive_sha256 storage_manifest_sha256
+  messenger_history_state_sha256 instagram_history_state_sha256 created_at
+)
 readonly RESULT_FIELDS=(
-  schema_version label operation platforms require_zero_writes program_sha256
+  schema_version authorization_mode authorization_sha256 label operation
+  platforms require_zero_writes program_sha256
   binding_sha256 candidate_commit candidate_image production_database inbox_id
   history_approval_sha256 acceptance_sha256 pre_history_backup_sha256
   dry_pair_sha256 attempt_identity_sha256 compose_override_sha256
@@ -138,6 +187,13 @@ readonly GRAPH_DELAY_MS MAX_CONVERSATION_PAGES MAX_MESSAGE_PAGES
 readonly DRY_RESULT_1 DRY_RESULT_1_CHECKSUM DRY_RESULT_2 DRY_RESULT_2_CHECKSUM
 readonly PREDECESSOR_RESULT PREDECESSOR_CHECKSUM PRODUCTION_LOCK
 
+AUTHORIZATION_MODE=clone_authorized
+AUTHORIZATION_SHA256=none
+if [[ "$(basename "$HISTORY_APPROVAL")" = fbig-production-first-history-approval-v1.tsv ]]; then
+  AUTHORIZATION_MODE=production_first
+fi
+readonly AUTHORIZATION_MODE
+
 require_safe_token label "$LABEL"
 [[ "${#LABEL}" -le 32 ]] || die "history label is too long"
 [[ "$OPERATION" = dry || "$OPERATION" = apply ]] || die "invalid history operation"
@@ -154,7 +210,17 @@ for number in "$GRAPH_DELAY_MS" "$MAX_CONVERSATION_PAGES" "$MAX_MESSAGE_PAGES"; 
 done
 [[ "$ACK_SINGLE_CONVERSATION_REOPEN" = true ]] ||
   die "single-conversation reopen acknowledgement is required"
-if [[ "$OPERATION" = dry ]]; then
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  [[ "$OPERATION" = apply ]] || die "production-first history is apply-only"
+  [[ "$MAX_DOWNLOAD_BYTES" =~ ^[1-9][0-9]*$ ]] ||
+    die "production-first attempts require a positive download budget"
+  [[ "$DRY_RESULT_1" = none && "$DRY_RESULT_1_CHECKSUM" = none &&
+    "$DRY_RESULT_2" = none && "$DRY_RESULT_2_CHECKSUM" = none ]] ||
+    die "production-first attempts cannot consume clone dry results"
+  [[ "$ACCEPTANCE_MANIFEST" = none && "$ACCEPTANCE_CHECKSUM" = none &&
+    "$ACCEPTANCE_SHA256" = none ]] ||
+    die "production-first attempts cannot consume terminal clone acceptance"
+elif [[ "$OPERATION" = dry ]]; then
   [[ "$REQUIRE_ZERO_WRITES" = true && "$MAX_DOWNLOAD_BYTES" = none ]] ||
     die "dry attempts must require zero writes and no download budget"
   [[ "$DRY_RESULT_1" = none && "$DRY_RESULT_1_CHECKSUM" = none &&
@@ -178,9 +244,71 @@ require_root_readonly_file "$COMPOSE_FILE"
 require_root_directory "$AUDIT_ROOT"
 
 verify_checksum "$HISTORY_APPROVAL" "$HISTORY_APPROVAL_CHECKSUM"
-require_ordered_manifest "$HISTORY_APPROVAL" "${HISTORY_APPROVAL_FIELDS[@]}"
-[[ "$(manifest_value "$HISTORY_APPROVAL" schema_version)" = 2 ]] ||
-  die "unsupported history approval schema"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  require_ordered_manifest \
+    "$HISTORY_APPROVAL" "${PRODUCTION_FIRST_HISTORY_APPROVAL_FIELDS[@]}"
+  [[ "$(manifest_value "$HISTORY_APPROVAL" schema_version)" = 1 &&
+    "$(manifest_value "$HISTORY_APPROVAL" authorization_mode)" = production_first ]] ||
+    die "unsupported production-first history approval"
+  PRODUCTION_FIRST_AUTHORIZATION="$(
+    dirname "$HISTORY_APPROVAL"
+  )/fbig-production-first-authorization-v1.tsv"
+  PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM="${PRODUCTION_FIRST_AUTHORIZATION}.sha256"
+  readonly PRODUCTION_FIRST_AUTHORIZATION PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM
+  verify_checksum \
+    "$PRODUCTION_FIRST_AUTHORIZATION" "$PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM"
+  require_ordered_manifest \
+    "$PRODUCTION_FIRST_AUTHORIZATION" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
+  AUTHORIZATION_SHA256="$(sha256_file "$PRODUCTION_FIRST_AUTHORIZATION")"
+  readonly AUTHORIZATION_SHA256
+  [[ "$(manifest_value "$HISTORY_APPROVAL" production_first_authorization_sha256)" = \
+    "$AUTHORIZATION_SHA256" ]] || die "production-first authorization mismatch"
+  [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" authorization_mode)" = \
+    production_first ]] || die "invalid production-first authorization mode"
+  for field in \
+    repository_commit image_digest production_database account_id inbox_id \
+    facebook_page_id instagram_business_id since before outbound_policy \
+    profile_mode coordinated_backup_manifest_sha256 \
+    recovered_thread_targets_sha256 placeholder_targets_sha256 \
+    unrecoverable_sidecar_sha256 \
+    messenger_unavailable_message_thread_count \
+    messenger_unavailable_message_thread_fingerprint \
+    instagram_unavailable_message_thread_count \
+    instagram_unavailable_message_thread_fingerprint \
+    r2_acceptance_binding_sha256 r2_launch_manifest_sha256 \
+    r2_probe_log_sha256 r2_probe_summary_sha256; do
+    [[ "$(manifest_value "$HISTORY_APPROVAL" "$field")" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" "$field")" ]] ||
+      die "production-first approval differs from authorization: $field"
+  done
+  revision_platform="$(manifest_value "$HISTORY_APPROVAL" revision_platform)"
+  readonly revision_platform
+  for platform in messenger instagram; do
+    contentless_matches=true
+    for suffix in count fingerprint; do
+      [[ "$(manifest_value "$HISTORY_APPROVAL" "${platform}_${suffix}")" = \
+        "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" "${platform}_${suffix}")" ]] ||
+        contentless_matches=false
+    done
+    if [[ "$revision_platform" = none || "$platform" != "$revision_platform" ]]; then
+      [[ "$contentless_matches" = true ]] ||
+        die "production-first revision changed the unselected contentless projection"
+    else
+      [[ "$contentless_matches" = false ]] ||
+        die "production-first revision did not change its selected contentless projection"
+    fi
+  done
+  [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" history_program_sha256)" = \
+    "$(sha256_file "$PROGRAM_PATH")" ]] ||
+    die "production-first authorization does not bind this history program"
+  [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" normal_terminal_acceptance_sha256)" = none &&
+    "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" normal_dry_pair_sha256)" = none ]] ||
+    die "production-first authorization mixes clone evidence"
+else
+  require_ordered_manifest "$HISTORY_APPROVAL" "${HISTORY_APPROVAL_FIELDS[@]}"
+  [[ "$(manifest_value "$HISTORY_APPROVAL" schema_version)" = 2 ]] ||
+    die "unsupported history approval schema"
+fi
 [[ "$(sha256_file "$HISTORY_APPROVAL")" = "$HISTORY_APPROVAL_SHA256" ]] ||
   die "history approval SHA mismatch"
 [[ "$(manifest_value "$HISTORY_APPROVAL" repository_commit)" = "$CANDIDATE_COMMIT" ]] ||
@@ -192,32 +320,47 @@ require_ordered_manifest "$HISTORY_APPROVAL" "${HISTORY_APPROVAL_FIELDS[@]}"
 [[ "$(manifest_value "$HISTORY_APPROVAL" profile_mode)" = defer ]] ||
   die "history approval must defer profiles"
 
-verify_checksum "$ACCEPTANCE_MANIFEST" "$ACCEPTANCE_CHECKSUM"
-require_ordered_manifest "$ACCEPTANCE_MANIFEST" "${ACCEPTANCE_FIELDS[@]}"
-[[ "$(sha256_file "$ACCEPTANCE_MANIFEST")" = "$ACCEPTANCE_SHA256" ]] ||
-  die "terminal acceptance SHA mismatch"
-[[ "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_commit)" = "$CANDIDATE_COMMIT" ]] ||
-  die "terminal acceptance commit mismatch"
-[[ "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_image)" = "$CANDIDATE_IMAGE" ]] ||
-  die "terminal acceptance image mismatch"
-[[ "$(manifest_value "$ACCEPTANCE_MANIFEST" production_database_name)" = \
-  "$PRODUCTION_DATABASE" ]] || die "terminal acceptance database mismatch"
-[[ "$(manifest_value "$ACCEPTANCE_MANIFEST" history_approval_sha256)" = \
-  "$HISTORY_APPROVAL_SHA256" ]] || die "terminal acceptance approval mismatch"
-[[ "$(manifest_value "$ACCEPTANCE_MANIFEST" inbox_id)" = "$INBOX_ID" ]] ||
-  die "terminal acceptance inbox mismatch"
-[[ "$(manifest_value "$ACCEPTANCE_MANIFEST" exit_status)" = 0 ]] ||
-  die "terminal acceptance did not succeed"
+if [[ "$AUTHORIZATION_MODE" = clone_authorized ]]; then
+  verify_checksum "$ACCEPTANCE_MANIFEST" "$ACCEPTANCE_CHECKSUM"
+  require_ordered_manifest "$ACCEPTANCE_MANIFEST" "${ACCEPTANCE_FIELDS[@]}"
+  [[ "$(sha256_file "$ACCEPTANCE_MANIFEST")" = "$ACCEPTANCE_SHA256" ]] ||
+    die "terminal acceptance SHA mismatch"
+  [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_commit)" = "$CANDIDATE_COMMIT" ]] ||
+    die "terminal acceptance commit mismatch"
+  [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" candidate_image)" = "$CANDIDATE_IMAGE" ]] ||
+    die "terminal acceptance image mismatch"
+  [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" production_database_name)" = \
+    "$PRODUCTION_DATABASE" ]] || die "terminal acceptance database mismatch"
+  [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" history_approval_sha256)" = \
+    "$HISTORY_APPROVAL_SHA256" ]] || die "terminal acceptance approval mismatch"
+  [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" inbox_id)" = "$INBOX_ID" ]] ||
+    die "terminal acceptance inbox mismatch"
+  [[ "$(manifest_value "$ACCEPTANCE_MANIFEST" exit_status)" = 0 ]] ||
+    die "terminal acceptance did not succeed"
+fi
 
 UNRECOVERABLE_SIDECAR="$(dirname "$HISTORY_APPROVAL")/fbig-unrecoverable-envelope-v1.tsv"
 UNRECOVERABLE_SIDECAR_CHECKSUM="${UNRECOVERABLE_SIDECAR}.sha256"
-UNRECOVERABLE_INSPECTOR="$(dirname "$(dirname "$HISTORY_APPROVAL")")/fbig-unrecoverable-envelope-inspector.rb"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  UNRECOVERABLE_INSPECTOR="$(dirname "$HISTORY_APPROVAL")/fbig-unrecoverable-envelope-inspector.rb"
+else
+  UNRECOVERABLE_INSPECTOR="$(dirname "$(dirname "$HISTORY_APPROVAL")")/fbig-unrecoverable-envelope-inspector.rb"
+fi
 readonly UNRECOVERABLE_SIDECAR UNRECOVERABLE_SIDECAR_CHECKSUM UNRECOVERABLE_INSPECTOR
 verify_checksum "$UNRECOVERABLE_SIDECAR" "$UNRECOVERABLE_SIDECAR_CHECKSUM"
 require_ordered_manifest "$UNRECOVERABLE_SIDECAR" "${UNRECOVERABLE_SIDECAR_FIELDS[@]}"
 require_root_artifact "$UNRECOVERABLE_INSPECTOR"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  [[ "$(sha256_file "$UNRECOVERABLE_INSPECTOR")" = \
+    "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" unrecoverable_inspector_sha256)" ]] ||
+    die "unrecoverable inspector authorization mismatch"
+fi
 [[ "$(sha256_file "$UNRECOVERABLE_SIDECAR")" = \
-  "$(manifest_value "$ACCEPTANCE_MANIFEST" unrecoverable_sidecar_sha256)" ]] ||
+  "$(if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+      manifest_value "$HISTORY_APPROVAL" unrecoverable_sidecar_sha256
+    else
+      manifest_value "$ACCEPTANCE_MANIFEST" unrecoverable_sidecar_sha256
+    fi)" ]] ||
   die "unrecoverable sidecar SHA mismatch"
 [[ "$(manifest_value "$UNRECOVERABLE_SIDECAR" repository_commit)" = "$CANDIDATE_COMMIT" &&
   "$(manifest_value "$UNRECOVERABLE_SIDECAR" image_digest)" = "$CANDIDATE_IMAGE" &&
@@ -246,6 +389,36 @@ else
   verify_checksum "$PRE_HISTORY_BACKUP_MANIFEST" "$PRE_HISTORY_BACKUP_CHECKSUM"
   [[ "$(sha256_file "$PRE_HISTORY_BACKUP_MANIFEST")" = "$PRE_HISTORY_BACKUP_SHA256" ]] ||
     die "pre-history backup SHA mismatch"
+fi
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  require_ordered_manifest "$PRE_HISTORY_BACKUP_MANIFEST" "${COORDINATED_BACKUP_FIELDS[@]}"
+  BACKUP_HISTORY_STATE="$(
+    dirname "$PRE_HISTORY_BACKUP_MANIFEST"
+  )/fbig-history-backup-${PLATFORMS}-state-v1.tsv"
+  BACKUP_HISTORY_STATE_CHECKSUM="${BACKUP_HISTORY_STATE}.sha256"
+  require_root_artifact "$BACKUP_HISTORY_STATE"
+  verify_checksum "$BACKUP_HISTORY_STATE" "$BACKUP_HISTORY_STATE_CHECKSUM"
+  [[ "$(sha256_file "$BACKUP_HISTORY_STATE")" = \
+    "$(manifest_value "$PRE_HISTORY_BACKUP_MANIFEST" "${PLATFORMS}_history_state_sha256")" ]] ||
+    die "coordinated backup history state mismatch"
+  readonly BACKUP_HISTORY_STATE BACKUP_HISTORY_STATE_CHECKSUM
+  [[ "$PRE_HISTORY_BACKUP_SHA256" = \
+    "$(manifest_value "$HISTORY_APPROVAL" coordinated_backup_manifest_sha256)" ]] ||
+    die "production-first backup does not match history approval"
+  if [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_authorization_sha256)" != none ]]; then
+    [[ "$PRE_HISTORY_BACKUP_SHA256" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" current_state_backup_sha256)" ]] ||
+      die "successor release does not bind the expanded-state backup"
+  fi
+  if [[ "$PLATFORMS" = instagram ]]; then
+    RECOVERED_TARGETS="$(dirname "$HISTORY_APPROVAL")/fbig-recovered-thread-targets-v1.tsv"
+    RECOVERED_TARGETS_CHECKSUM="${RECOVERED_TARGETS}.sha256"
+    readonly RECOVERED_TARGETS RECOVERED_TARGETS_CHECKSUM
+    verify_checksum "$RECOVERED_TARGETS" "$RECOVERED_TARGETS_CHECKSUM"
+    [[ "$(sha256_file "$RECOVERED_TARGETS")" = \
+      "$(manifest_value "$HISTORY_APPROVAL" recovered_thread_targets_sha256)" ]] ||
+      die "recovered-thread targets do not match history approval"
+  fi
 fi
 
 validate_history_terminal_summary() {
@@ -299,6 +472,25 @@ validate_history_terminal_summary() {
     "$failed_count" -eq 0 &&
     "$listed_count" -eq "$((cursor_exhausted_count + classified_count + failed_count))" ]] ||
     die "history terminal summary violates thread conservation"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    local recovered_expected=0
+    local recovered_sha=none
+    if [[ "$PLATFORMS" = instagram ]]; then
+      recovered_expected=2
+      recovered_sha="$(manifest_value "$HISTORY_APPROVAL" recovered_thread_targets_sha256)"
+    fi
+    [[ "$(stage_value "$summary" history_import_summary recovered_thread_targets_sha256)" = \
+      "$recovered_sha" &&
+      "$(stage_value "$summary" history_import_summary recovered_targets_expected)" = \
+      "$recovered_expected" &&
+      "$(stage_value "$summary" history_import_summary recovered_targets_listed)" = \
+      "$recovered_expected" &&
+      "$(stage_value "$summary" history_import_summary recovered_targets_message_cursor_exhausted)" = \
+      "$recovered_expected" &&
+      "$(stage_value "$summary" history_import_summary recovered_target_mismatches)" = 0 &&
+      "$(stage_value "$summary" history_import_summary recovered_target_duplicate_listings)" = 0 ]] ||
+      die "production-first recovered-thread proof is incomplete"
+  fi
 }
 
 validate_authorizing_dry_result() {
@@ -345,7 +537,7 @@ validate_authorizing_dry_result() {
 }
 
 dry_pair_sha=none
-if [[ "$OPERATION" = apply ]]; then
+if [[ "$OPERATION" = apply && "$AUTHORIZATION_MODE" = clone_authorized ]]; then
   validate_authorizing_dry_result "$DRY_RESULT_1" "$DRY_RESULT_1_CHECKSUM"
   validate_authorizing_dry_result "$DRY_RESULT_2" "$DRY_RESULT_2_CHECKSUM"
   cmp -s \
@@ -359,23 +551,6 @@ if [[ "$OPERATION" = apply ]]; then
   )"
 fi
 readonly dry_pair_sha
-
-predecessor_sha=none
-if [[ "$PREDECESSOR_RESULT" = none ]]; then
-  [[ "$PREDECESSOR_CHECKSUM" = none ]] || die "orphan predecessor checksum"
-  [[ "$OPERATION" = dry ]] || die "apply attempts require a predecessor result"
-else
-  [[ "$PREDECESSOR_CHECKSUM" = "${PREDECESSOR_RESULT}.sha256" ]] ||
-    die "predecessor checksum path mismatch"
-  verify_checksum "$PREDECESSOR_RESULT" "$PREDECESSOR_CHECKSUM"
-  require_ordered_manifest "$PREDECESSOR_RESULT" "${RESULT_FIELDS[@]}"
-  [[ "$(manifest_value "$PREDECESSOR_RESULT" candidate_commit)" = "$CANDIDATE_COMMIT" ]] ||
-    die "history predecessor candidate mismatch"
-  [[ "$(manifest_value "$PREDECESSOR_RESULT" history_approval_sha256)" = \
-    "$HISTORY_APPROVAL_SHA256" ]] || die "history predecessor approval mismatch"
-  predecessor_sha="$(sha256_file "$PREDECESSOR_RESULT")"
-fi
-readonly predecessor_sha
 
 readonly RESULT_DIRECTORY="$AUDIT_ROOT/$LABEL"
 readonly IN_PROGRESS_DIRECTORY="$AUDIT_ROOT/.${LABEL}.in-progress"
@@ -397,6 +572,253 @@ readonly EXIT_STATUS_ARTIFACT="$IN_PROGRESS_DIRECTORY/history-exit-status.tsv"
 readonly COMPARISON_LOG="$IN_PROGRESS_DIRECTORY/history-comparison.log"
 readonly DELTA="$IN_PROGRESS_DIRECTORY/history-delta.tsv"
 readonly CONTAINER_NAME="umi-fbig-history-$LABEL"
+
+reject_other_in_progress_history_attempts() {
+  local candidate
+
+  while IFS= read -r -d '' candidate; do
+    [[ "$candidate" = "$IN_PROGRESS_DIRECTORY" ]] && continue
+    require_root_directory "$candidate"
+    die "another history attempt must be finalized before continuing: $candidate"
+  done < <(
+    find "$AUDIT_ROOT" -mindepth 1 -maxdepth 1 -type d \
+      -name '.*.in-progress' -print0
+  )
+}
+
+production_first_history_head_sha() {
+  local excluded_result="$1"
+  local excluded_in_progress_result="$2"
+  local candidate
+  local checksum
+  local predecessor
+  local possible_head
+  local referenced
+  local -a result_shas=()
+  local -a predecessor_shas=()
+  local -a heads=()
+
+  while IFS= read -r -d '' candidate; do
+    [[ "$candidate" != "$excluded_result" &&
+      "$candidate" != "$excluded_in_progress_result" ]] || continue
+    checksum="${candidate}.sha256"
+    verify_checksum "$candidate" "$checksum"
+    require_ordered_manifest "$candidate" "${RESULT_FIELDS[@]}"
+    if [[ "$(manifest_value "$candidate" authorization_mode)" = production_first ]]; then
+      result_shas+=("$(sha256_file "$candidate")")
+      predecessor="$(manifest_value "$candidate" predecessor_result_sha256)"
+      if [[ "$predecessor" != none ]]; then
+        predecessor_shas+=("$predecessor")
+      fi
+    fi
+  done < <(
+    find "$AUDIT_ROOT" -mindepth 2 -maxdepth 2 -type f \
+      -name fbig-history-attempt-result-v1.tsv -print0
+  )
+
+  for possible_head in "${result_shas[@]}"; do
+    referenced=false
+    for predecessor in "${predecessor_shas[@]}"; do
+      if [[ "$possible_head" = "$predecessor" ]]; then
+        referenced=true
+        break
+      fi
+    done
+    if [[ "$referenced" = false ]]; then
+      heads+=("$possible_head")
+    fi
+  done
+  [[ "${#heads[@]}" -le 1 ]] || die "production-first history chain has multiple global heads"
+  if [[ "${#heads[@]}" -eq 1 ]]; then
+    printf '%s\n' "${heads[0]}"
+  else
+    printf 'none\n'
+  fi
+}
+
+validate_initial_messenger_predecessor() {
+  local result="$1"
+  local summary="$2"
+  local unavailable_count
+  local classified_count
+  local listed_count
+  local exhausted_count
+
+  unavailable_count="$(
+    manifest_value "$HISTORY_APPROVAL" messenger_unavailable_message_thread_count
+  )"
+  classified_count="$(stage_value "$summary" history_import_summary classified_omitted_threads)"
+  listed_count="$(stage_value "$summary" history_import_summary listed_threads)"
+  exhausted_count="$(
+    stage_value "$summary" history_import_summary message_cursor_exhausted_threads
+  )"
+  [[ "$(manifest_value "$result" platforms)" = messenger &&
+    "$(manifest_value "$result" operation)" = apply &&
+    "$(manifest_value "$result" require_zero_writes)" = true &&
+    "$(manifest_value "$result" zero_write_observed)" = true &&
+    "$(manifest_value "$result" exit_status)" = 0 &&
+    "$(manifest_value "$result" termination)" = normal &&
+    "$(manifest_value "$result" protected_changes)" = 0 &&
+    "$(manifest_value "$result" deleted_rows)" = 0 &&
+    "$(manifest_value "$result" unattributed_changes)" = 0 &&
+    "$(manifest_value "$result" counter_mismatches)" = none &&
+    "$(manifest_value "$result" run_summary_sha256)" = "$(sha256_file "$summary")" &&
+    "$(stage_value "$summary" history_import_summary platforms)" = messenger &&
+    "$(stage_value "$summary" history_import_summary dry_run)" = false &&
+    "$(stage_value "$summary" history_import_summary scan_complete)" = true &&
+    "$(stage_value "$summary" history_import_summary write_complete)" = true &&
+    "$(stage_value "$summary" history_import_summary contentless_acceptance_mismatches)" = 0 &&
+    "$(stage_value "$summary" history_import_summary unavailable_message_thread_acceptance_mismatches)" = 0 &&
+    "$(stage_value "$summary" history_import_summary exit_failures)" = 0 &&
+    "$(stage_value "$summary" history_import_summary failed_threads)" = 0 &&
+    "$(stage_value "$summary" history_import_summary partially_paginated_threads)" = 0 &&
+    "$(stage_value "$summary" history_import_summary uncategorized_threads)" = 0 &&
+    "$(stage_value "$summary" history_import_summary structural_unrecoverable_threads)" = 0 &&
+    "$(stage_value "$summary" history_import_summary ambiguous_participants)" = 0 &&
+    "$(stage_value "$summary" history_import_summary unavailable_message_threads)" = "$unavailable_count" &&
+    "$(stage_value "$summary" history_import_summary messenger_unavailable_message_threads)" = "$unavailable_count" &&
+    "$(stage_value "$summary" history_import_summary messenger_unavailable_message_thread_count)" = "$unavailable_count" &&
+    "$(stage_value "$summary" history_import_summary messenger_unavailable_message_thread_fingerprint)" = \
+      "$(manifest_value "$HISTORY_APPROVAL" messenger_unavailable_message_thread_fingerprint)" &&
+    "$(stage_value "$summary" history_import_summary recovered_thread_targets_sha256)" = none &&
+    "$(stage_value "$summary" history_import_summary recovered_targets_expected)" = 0 &&
+    "$(stage_value "$summary" history_import_summary recovered_targets_listed)" = 0 &&
+    "$(stage_value "$summary" history_import_summary recovered_targets_message_cursor_exhausted)" = 0 &&
+    "$classified_count" = "$unavailable_count" &&
+    "$listed_count" -eq "$((exhausted_count + classified_count))" ]] ||
+    die "initial Instagram predecessor is not a successful terminal zero-write Messenger result"
+}
+
+acquire_descriptor_verified_lock "$PRODUCTION_LOCK"
+reject_other_in_progress_history_attempts
+
+global_head_sha=none
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  global_head_sha="$(
+    production_first_history_head_sha \
+      "$RESULT_MANIFEST" "$IN_PROGRESS_DIRECTORY/$RESULT_MANIFEST_NAME"
+  )"
+fi
+readonly global_head_sha
+
+predecessor_sha=none
+cross_release_predecessor=false
+predecessor_baseline=none
+if [[ "$PREDECESSOR_RESULT" = none ]]; then
+  [[ "$PREDECESSOR_CHECKSUM" = none ]] || die "orphan predecessor checksum"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    [[ "$global_head_sha" = none ]] ||
+      die "production-first history attempt omitted the global history head"
+    [[ "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_authorization_sha256)" = none ]] ||
+      die "a successor release requires its exact predecessor result"
+    [[ "$(manifest_value "$HISTORY_APPROVAL" revision_platform)" = none ]] ||
+      die "a revised production-first approval requires its exact failed predecessor"
+    [[ "$PLATFORMS" = messenger ]] ||
+      die "initial production-first Instagram attempt requires the Messenger predecessor"
+  else
+    [[ "$OPERATION" = dry ]] || die "apply attempts require a predecessor result"
+  fi
+else
+  [[ "$PREDECESSOR_CHECKSUM" = "${PREDECESSOR_RESULT}.sha256" ]] ||
+    die "predecessor checksum path mismatch"
+  verify_checksum "$PREDECESSOR_RESULT" "$PREDECESSOR_CHECKSUM"
+  require_ordered_manifest "$PREDECESSOR_RESULT" "${RESULT_FIELDS[@]}"
+  predecessor_sha="$(sha256_file "$PREDECESSOR_RESULT")"
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    predecessor_baseline="$(
+      dirname "$PREDECESSOR_RESULT"
+    )/fbig-history-production-poststate-v1.tsv"
+    verify_checksum "$predecessor_baseline" "${predecessor_baseline}.sha256"
+    [[ "$(manifest_value "$PREDECESSOR_RESULT" poststate_sha256)" = \
+      "$(sha256_file "$predecessor_baseline")" ]] ||
+      die "history predecessor poststate mismatch"
+  fi
+  if [[ "$AUTHORIZATION_MODE" = production_first &&
+    "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_authorization_sha256)" != none &&
+    "$predecessor_sha" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_history_result_sha256)" ]]; then
+    [[ "$predecessor_sha" = "$global_head_sha" ]] ||
+      die "successor release predecessor is not the global history head"
+    predecessor_summary="$(dirname "$PREDECESSOR_RESULT")/history-summary.tsv"
+    predecessor_delta="$(dirname "$PREDECESSOR_RESULT")/history-delta.tsv"
+    verify_checksum "$predecessor_summary" "${predecessor_summary}.sha256"
+    verify_checksum "$predecessor_delta" "${predecessor_delta}.sha256"
+    [[ "$(manifest_value "$PREDECESSOR_RESULT" authorization_mode)" = production_first &&
+      "$(manifest_value "$PREDECESSOR_RESULT" authorization_sha256)" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_authorization_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" platforms)" = "$PLATFORMS" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" run_summary_sha256)" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_terminal_summary_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" delta_sha256)" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_delta_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" poststate_sha256)" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_expanded_baseline_sha256)" &&
+      "$(sha256_file "$predecessor_summary")" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_terminal_summary_sha256)" &&
+      "$(sha256_file "$predecessor_delta")" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_delta_sha256)" &&
+      "$(sha256_file "$predecessor_baseline")" = \
+      "$(manifest_value "$PRODUCTION_FIRST_AUTHORIZATION" predecessor_expanded_baseline_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" protected_changes)" = 0 &&
+      "$(manifest_value "$PREDECESSOR_RESULT" deleted_rows)" = 0 &&
+      "$(manifest_value "$PREDECESSOR_RESULT" unattributed_changes)" = 0 &&
+      "$(manifest_value "$PREDECESSOR_RESULT" counter_mismatches)" = none ]] ||
+      die "successor-release predecessor mismatch"
+    cross_release_predecessor=true
+  else
+    [[ "$(manifest_value "$PREDECESSOR_RESULT" candidate_commit)" = "$CANDIDATE_COMMIT" ]] ||
+      die "history predecessor candidate mismatch"
+    [[ "$(manifest_value "$PREDECESSOR_RESULT" authorization_mode)" = \
+      "$AUTHORIZATION_MODE" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" authorization_sha256)" = \
+      "$AUTHORIZATION_SHA256" ]] || die "history predecessor authorization mismatch"
+    if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+      [[ "$predecessor_sha" = "$global_head_sha" ]] ||
+        die "history predecessor is not the global production-first head"
+    fi
+  fi
+  if [[ "$cross_release_predecessor" = false &&
+    "$AUTHORIZATION_MODE" = production_first &&
+    "$(manifest_value "$HISTORY_APPROVAL" revision_platform)" != none &&
+    "$predecessor_sha" = \
+      "$(manifest_value "$HISTORY_APPROVAL" predecessor_attempt_result_sha256)" ]]; then
+    predecessor_summary="$(dirname "$PREDECESSOR_RESULT")/history-summary.tsv"
+    predecessor_delta="$(dirname "$PREDECESSOR_RESULT")/history-delta.tsv"
+    verify_checksum "$predecessor_summary" "${predecessor_summary}.sha256"
+    verify_checksum "$predecessor_delta" "${predecessor_delta}.sha256"
+    [[ "$(manifest_value "$PREDECESSOR_RESULT" history_approval_sha256)" = \
+      "$(manifest_value "$HISTORY_APPROVAL" predecessor_approval_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" platforms)" = \
+      "$(manifest_value "$HISTORY_APPROVAL" revision_platform)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" run_summary_sha256)" = \
+      "$(manifest_value "$HISTORY_APPROVAL" predecessor_run_summary_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" delta_sha256)" = \
+      "$(manifest_value "$HISTORY_APPROVAL" predecessor_delta_sha256)" &&
+      "$(sha256_file "$predecessor_summary")" = \
+      "$(manifest_value "$HISTORY_APPROVAL" predecessor_run_summary_sha256)" &&
+      "$(sha256_file "$predecessor_delta")" = \
+      "$(manifest_value "$HISTORY_APPROVAL" predecessor_delta_sha256)" &&
+      "$(manifest_value "$PREDECESSOR_RESULT" exit_status)" = 1 &&
+      "$(manifest_value "$PREDECESSOR_RESULT" termination)" = normal ]] ||
+      die "history revision predecessor mismatch"
+    [[ "$PLATFORMS" = "$(manifest_value "$HISTORY_APPROVAL" revision_platform)" ]] ||
+      die "the first revised attempt must resume the revised platform"
+  elif [[ "$cross_release_predecessor" = false ]]; then
+    [[ "$(manifest_value "$PREDECESSOR_RESULT" history_approval_sha256)" = \
+      "$HISTORY_APPROVAL_SHA256" ]] || die "history predecessor approval mismatch"
+    predecessor_platform="$(manifest_value "$PREDECESSOR_RESULT" platforms)"
+    if [[ "$PLATFORMS" = instagram && "$predecessor_platform" = messenger ]]; then
+      predecessor_summary="$(dirname "$PREDECESSOR_RESULT")/history-summary.tsv"
+      verify_checksum "$predecessor_summary" "${predecessor_summary}.sha256"
+      validate_initial_messenger_predecessor "$PREDECESSOR_RESULT" "$predecessor_summary"
+    else
+      [[ "$predecessor_platform" = "$PLATFORMS" ]] ||
+        die "ordinary history successors must remain on the predecessor platform"
+    fi
+  fi
+fi
+readonly predecessor_sha
+readonly cross_release_predecessor predecessor_baseline
 
 compose=(
   docker compose
@@ -606,6 +1028,8 @@ write_attempt_identity() {
   process_start_ticks="$(awk '{ print $22 }' "/proc/$$/stat")"
   {
     printf 'schema_version\t1\n'
+    printf 'authorization_mode\t%s\n' "$AUTHORIZATION_MODE"
+    printf 'authorization_sha256\t%s\n' "$AUTHORIZATION_SHA256"
     printf 'label\t%s\n' "$LABEL"
     printf 'operation\t%s\n' "$OPERATION"
     printf 'platforms\t%s\n' "$PLATFORMS"
@@ -627,13 +1051,14 @@ write_attempt_identity() {
 }
 
 run_importer() {
+  local dry_run_value=false
+  if [[ "$OPERATION" = dry ]]; then
+    dry_run_value=true
+  fi
   local arguments=(
     --rm --no-deps -T
     --name "$CONTAINER_NAME"
     --volume "$(dirname "$HISTORY_APPROVAL"):/run/fbig/history:ro"
-    -e UMI_FBIG_HISTORY_APPROVAL_MODE=approved
-    -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv
-    -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256
     -e UMI_FBIG_HISTORY_EXPECTED_DATABASE="$PRODUCTION_DATABASE"
     -e UMI_FBIG_RUNTIME_REPOSITORY_COMMIT="$CANDIDATE_COMMIT"
     -e UMI_FBIG_RUNTIME_IMAGE_DIGEST="$CANDIDATE_IMAGE"
@@ -642,11 +1067,36 @@ run_importer() {
     -e UMI_FBIG_HISTORY_MAX_CONVERSATION_PAGES="$MAX_CONVERSATION_PAGES"
     -e UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES="$MAX_MESSAGE_PAGES"
     -e PLATFORMS="$PLATFORMS"
-    -e DRY_RUN=false
+    -e DRY_RUN="$dry_run_value"
   )
-  if [[ "$OPERATION" = dry ]]; then
-    arguments[-1]='DRY_RUN=true'
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    arguments+=(
+      --volume "$(dirname "$PRE_HISTORY_BACKUP_MANIFEST"):/run/fbig/backup:ro"
+      -e UMI_FBIG_HISTORY_APPROVAL_MODE=production_first
+      -e UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_PATH=/run/fbig/history/fbig-production-first-history-approval-v1.tsv
+      -e UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-production-first-history-approval-v1.tsv.sha256
+      -e UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_PATH=/run/fbig/history/fbig-production-first-authorization-v1.tsv
+      -e UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM_PATH=/run/fbig/history/fbig-production-first-authorization-v1.tsv.sha256
+      -e UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_SHA256="$AUTHORIZATION_SHA256"
+      -e UMI_FBIG_PRE_HISTORY_BACKUP_MANIFEST_PATH="/run/fbig/backup/$(basename "$PRE_HISTORY_BACKUP_MANIFEST")"
+      -e UMI_FBIG_PRE_HISTORY_BACKUP_MANIFEST_CHECKSUM_PATH="/run/fbig/backup/$(basename "$PRE_HISTORY_BACKUP_CHECKSUM")"
+      -e ACK_PRODUCTION_FIRST_LIVE_IMPORT=true
+    )
+    if [[ "$PLATFORMS" = instagram ]]; then
+      arguments+=(
+        -e UMI_FBIG_RECOVERED_THREAD_TARGETS_PATH=/run/fbig/history/fbig-recovered-thread-targets-v1.tsv
+        -e UMI_FBIG_RECOVERED_THREAD_TARGETS_CHECKSUM_PATH=/run/fbig/history/fbig-recovered-thread-targets-v1.tsv.sha256
+        -e UMI_FBIG_RECOVERED_THREAD_TARGETS_SHA256="$(manifest_value "$HISTORY_APPROVAL" recovered_thread_targets_sha256)"
+      )
+    fi
   else
+    arguments+=(
+      -e UMI_FBIG_HISTORY_APPROVAL_MODE=approved
+      -e UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv
+      -e UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256
+    )
+  fi
+  if [[ "$OPERATION" != dry ]]; then
     arguments+=(
       -e ACK_EXPAND_EXISTING=true
       -e UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES="$MAX_DOWNLOAD_BYTES"
@@ -683,6 +1133,49 @@ process_is_still_live() {
   [[ "$(awk '{ print $22 }' "/proc/$pid/stat")" = "$start_ticks" ]]
 }
 
+history_state_content_sha256() {
+  local snapshot="$1"
+
+  awk -F '\t' '
+    NR == 5 {
+      if (NF != 2 || $1 != "captured_at") exit 1
+      next
+    }
+    NR == 6 {
+      if (NF != 2 || $1 != "row_count") exit 1
+      print "row_count\tplatform-owned"
+      next
+    }
+    $1 == "contact" || $1 == "contact_inbox" { next }
+    { print }
+  ' "$snapshot" | sha256sum --binary | awk '{ print $1 }'
+}
+
+validate_successor_live_baseline() {
+  local live_prestate="$1"
+  local predecessor_platform
+
+  [[ "$AUTHORIZATION_MODE" = production_first ]] || return
+  predecessor_platform=none
+  if [[ "$PREDECESSOR_RESULT" != none ]]; then
+    predecessor_platform="$(manifest_value "$PREDECESSOR_RESULT" platforms)"
+  fi
+  if [[ "$predecessor_platform" = "$PLATFORMS" ]]; then
+    [[ "$(history_state_content_sha256 "$predecessor_baseline")" = \
+      "$(history_state_content_sha256 "$live_prestate")" ]] ||
+      die "successor live prestate differs from its predecessor poststate"
+  else
+    [[ "$(history_state_content_sha256 "$BACKUP_HISTORY_STATE")" = \
+      "$(history_state_content_sha256 "$live_prestate")" ]] ||
+      die "successor live prestate differs from its coordinated backup state"
+  fi
+  if [[ "$cross_release_predecessor" = true ]]; then
+    [[ "$(history_state_content_sha256 "$predecessor_baseline")" = \
+      "$(history_state_content_sha256 "$BACKUP_HISTORY_STATE")" ]] ||
+      die "successor backup state differs from its predecessor expanded baseline"
+  fi
+}
+
 delta_value() {
   local platform="$1"
   local key="$2"
@@ -709,6 +1202,9 @@ validate_history_result() {
 
   verify_checksum "$manifest" "${manifest}.sha256"
   require_ordered_manifest "$manifest" "${RESULT_FIELDS[@]}"
+  [[ "$(manifest_value "$manifest" authorization_mode)" = "$AUTHORIZATION_MODE" &&
+    "$(manifest_value "$manifest" authorization_sha256)" = "$AUTHORIZATION_SHA256" ]] ||
+    die "history result authorization mismatch"
   [[ "$(manifest_value "$manifest" label)" = "$LABEL" ]] || die "history result label mismatch"
   [[ "$(manifest_value "$manifest" operation)" = "$OPERATION" ]] ||
     die "history result operation mismatch"
@@ -852,6 +1348,7 @@ finalize_attempt() {
       "$IN_PROGRESS_DIRECTORY/prestate-capture-resume.log" pre-resume
   fi
   verify_checksum "$PRESTATE" "${PRESTATE}.sha256"
+  validate_successor_live_baseline "$PRESTATE"
 
   if [[ "$PLATFORMS" = instagram ]]; then
     if [[ ! -e "${UNRECOVERABLE_BEFORE}.sha256" ]]; then
@@ -975,6 +1472,8 @@ finalize_attempt() {
   temporary="$IN_PROGRESS_DIRECTORY/.result.$$.tmp"
   {
     printf 'schema_version\t1\n'
+    printf 'authorization_mode\t%s\n' "$AUTHORIZATION_MODE"
+    printf 'authorization_sha256\t%s\n' "$AUTHORIZATION_SHA256"
     printf 'label\t%s\n' "$LABEL"
     printf 'operation\t%s\n' "$OPERATION"
     printf 'platforms\t%s\n' "$PLATFORMS"
@@ -1067,7 +1566,6 @@ if [[ -e "$RESULT_DIRECTORY" ]]; then
   exit 0
 fi
 
-acquire_descriptor_verified_lock "$PRODUCTION_LOCK"
 if [[ "$ACTION" = start ]]; then
   [[ ! -e "$IN_PROGRESS_DIRECTORY" ]] ||
     die "history attempt already exists; run the finalizer instead"
@@ -1081,6 +1579,7 @@ if [[ "$ACTION" = start ]]; then
   state_capture \
     fbig-history-production-prestate-v1.tsv \
     "$IN_PROGRESS_DIRECTORY/prestate-capture.log" pre
+  validate_successor_live_baseline "$PRESTATE"
   if [[ "$PLATFORMS" = instagram ]]; then
     inspect_unrecoverable_envelopes "$UNRECOVERABLE_BEFORE" before
   fi

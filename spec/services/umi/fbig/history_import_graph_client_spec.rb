@@ -81,7 +81,7 @@ describe Umi::Fbig::HistoryImportGraphClient do
       .to raise_error(described_class::PaginationError, /message page ceiling reached/)
   end
 
-  it 'classifies only the exact initial Instagram unavailable-message response without exposing it' do
+  it 'retries the exact initial Instagram unavailable-message response before classifying it without exposure' do
     allow(api).to receive(:get_connections)
       .and_raise(
         Koala::Facebook::ClientError.new(
@@ -106,10 +106,99 @@ describe Umi::Fbig::HistoryImportGraphClient do
         )
         expect(error.message).not_to include('secret')
       end
-    expect(api).to have_received(:get_connections).once
+    expect(api).to have_received(:get_connections).exactly(3).times
+    expect(sleeper).to have_received(:sleep).with(5).once
+    expect(sleeper).to have_received(:sleep).with(30).once
+    expect(client.stats).to include(message_http_attempts: 3)
   end
 
-  it 'keeps the exact unavailable-message response fatal for Messenger' do
+  it 'retries a changed initial client error and returns a later readable collection' do
+    error = Koala::Facebook::ClientError.new(
+      400,
+      '',
+      { 'type' => 'OAuthException', 'code' => -1, 'error_subcode' => 2_207_086 }
+    )
+    attempts = 0
+    allow(api).to receive(:get_connections) do
+      attempts += 1
+      raise error if attempts == 1
+
+      page([{ 'id' => 'mid-1' }])
+    end
+
+    result = client.messages('instagram', 'thread-1')
+
+    expect(result.items.pluck('id')).to eq(['mid-1'])
+    expect(api).to have_received(:get_connections).twice
+    expect(sleeper).to have_received(:sleep).with(5).once
+    expect(client.stats).to include(message_http_attempts: 2)
+  end
+
+  it 'classifies persistent changed initial client errors as sanitized retry exhaustion' do
+    error = Koala::Facebook::ClientError.new(
+      400,
+      'secret response',
+      { 'type' => 'OAuthException', 'code' => -1, 'error_subcode' => 2_207_086, 'message' => 'secret message' }
+    )
+    allow(api).to receive(:get_connections).and_raise(error)
+
+    expect { client.messages('instagram', 'thread-1') }
+      .to raise_error(described_class::RequestError) do |raised|
+        expect(raised.reason).to eq(:retry_exhausted)
+        expect(raised.message).not_to include('secret')
+      end
+    expect(api).to have_received(:get_connections).exactly(3).times
+    expect(sleeper).to have_received(:sleep).with(5).once
+    expect(sleeper).to have_received(:sleep).with(30).once
+    expect(client.stats).to include(message_http_attempts: 3)
+  end
+
+  it 'does not classify a mixed initial failure sequence as unavailable' do
+    exact = Koala::Facebook::ClientError.new(
+      400,
+      '',
+      { 'type' => 'OAuthException', 'code' => -1, 'error_subcode' => 2_207_085 }
+    )
+    changed = Koala::Facebook::ClientError.new(
+      400,
+      '',
+      { 'type' => 'OAuthException', 'code' => -1, 'error_subcode' => 2_207_086 }
+    )
+    failures = [changed, exact, exact]
+    allow(api).to receive(:get_connections) { raise failures.shift }
+
+    expect { client.messages('instagram', 'thread-1') }
+      .to raise_error(described_class::RequestError) do |raised|
+        expect(raised.reason).to eq(:retry_exhausted)
+      end
+    expect(api).to have_received(:get_connections).exactly(3).times
+    expect(client.stats).to include(message_http_attempts: 3)
+  end
+
+  it 'shares one attempt budget across newly and already retryable initial failures' do
+    changed = Koala::Facebook::ClientError.new(
+      400,
+      '',
+      { 'type' => 'OAuthException', 'code' => -1, 'error_subcode' => 2_207_086 }
+    )
+    server = Koala::Facebook::ServerError.new(503, '', {})
+    failures = [changed, server]
+    allow(api).to receive(:get_connections) do
+      raise failures.shift if failures.present?
+
+      page([{ 'id' => 'mid-1' }])
+    end
+
+    result = client.messages('instagram', 'thread-1')
+
+    expect(result.items.pluck('id')).to eq(['mid-1'])
+    expect(api).to have_received(:get_connections).exactly(3).times
+    expect(sleeper).to have_received(:sleep).with(5).once
+    expect(sleeper).to have_received(:sleep).with(1.0).once
+    expect(client.stats).to include(message_http_attempts: 3)
+  end
+
+  it 'keeps the exact unavailable-message response blocking for Messenger after one bounded budget' do
     error = Koala::Facebook::ClientError.new(
       400,
       '',
@@ -117,22 +206,26 @@ describe Umi::Fbig::HistoryImportGraphClient do
     )
     allow(api).to receive(:get_connections).and_raise(error)
 
-    expect { client.messages('messenger', 'thread-1') }.to raise_error(error.class) do |raised|
-      expect(raised).to equal(error)
-    end
+    expect { client.messages('messenger', 'thread-1') }
+      .to raise_error(described_class::RequestError) do |raised|
+        expect(raised.reason).to eq(:retry_exhausted)
+      end
+    expect(api).to have_received(:get_connections).exactly(3).times
+    expect(client.stats).to include(message_http_attempts: 3)
   end
 
-  it 'keeps changed initial Instagram client errors fatal' do
+  it 'does not retry code-190 initial message authentication failures' do
     error = Koala::Facebook::ClientError.new(
       400,
       '',
-      { 'type' => 'OAuthException', 'code' => -1, 'error_subcode' => 2_207_086 }
+      { 'type' => 'OAuthException', 'code' => 190 }
     )
     allow(api).to receive(:get_connections).and_raise(error)
 
-    expect { client.messages('instagram', 'thread-1') }.to raise_error(error.class) do |raised|
-      expect(raised).to equal(error)
-    end
+    expect { client.messages('instagram', 'thread-1') }
+      .to raise_error(described_class::AuthenticationError)
+    expect(api).to have_received(:get_connections).once
+    expect(client.stats).to include(message_http_attempts: 1)
   end
 
   it 'keeps the exact response fatal after the initial message page' do

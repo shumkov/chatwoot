@@ -7,11 +7,38 @@ readonly PROGRAM_PATH
 readonly PROGRAM_CHECKSUM="${PROGRAM_PATH}.sha256"
 
 readonly BINDING_FIELDS=(
-  schema_version candidate_commit candidate_image service_source_sha256
+  schema_version authorization_mode authorization_manifest
+  authorization_checksum authorization_sha256
+  candidate_commit candidate_image service_source_sha256
   stack_dir compose_file compose_file_sha256 compose_project rails_service
   sidekiq_service production_database audit_root inbox_id page_id
   instagram_business_id history_cutoff predecessor_manifest
   predecessor_checksum production_lock
+)
+readonly PRODUCTION_FIRST_AUTHORIZATION_FIELDS=(
+  schema_version authorization_mode repository_commit image_digest
+  production_database account_id inbox_id facebook_page_id
+  instagram_business_id since before outbound_policy profile_mode
+  r2_acceptance_binding_sha256 r2_launch_manifest_sha256 r2_probe_log_sha256
+  r2_probe_summary_sha256 messenger_count messenger_fingerprint
+  instagram_count instagram_fingerprint
+  messenger_unavailable_message_thread_count
+  messenger_unavailable_message_thread_fingerprint
+  instagram_unavailable_message_thread_count
+  instagram_unavailable_message_thread_fingerprint
+  recovered_thread_targets_sha256 placeholder_targets_sha256
+  unrecoverable_sidecar_sha256 unrecoverable_inspector_sha256
+  coordinated_backup_manifest_sha256
+  history_program_sha256 profile_program_sha256 final_audit_program_sha256
+  delivery_audit_program_sha256 delivery_checkpoint_program_sha256
+  profile_wrapper_sha256 storage_helper_sha256
+  recovered_target_generator_sha256 authorization_generator_sha256
+  history_revision_generator_sha256 profile_approval_generator_sha256
+  normal_terminal_acceptance_sha256
+  normal_dry_pair_sha256 predecessor_authorization_sha256
+  predecessor_history_result_sha256 predecessor_terminal_summary_sha256
+  predecessor_delta_sha256 predecessor_expanded_baseline_sha256
+  current_state_backup_sha256 approved_by created_at
 )
 readonly CHECKPOINT_FIELDS=(
   schema_version label program_sha256 binding_sha256 candidate_commit
@@ -37,6 +64,10 @@ require_ordered_manifest "$BINDING_MANIFEST" "${BINDING_FIELDS[@]}"
   die "unsupported binding schema"
 require_safe_token label "$LABEL"
 
+AUTHORIZATION_MODE="$(manifest_value "$BINDING_MANIFEST" authorization_mode)"
+AUTHORIZATION_MANIFEST="$(manifest_value "$BINDING_MANIFEST" authorization_manifest)"
+AUTHORIZATION_CHECKSUM="$(manifest_value "$BINDING_MANIFEST" authorization_checksum)"
+AUTHORIZATION_SHA256="$(manifest_value "$BINDING_MANIFEST" authorization_sha256)"
 CANDIDATE_COMMIT="$(manifest_value "$BINDING_MANIFEST" candidate_commit)"
 CANDIDATE_IMAGE="$(manifest_value "$BINDING_MANIFEST" candidate_image)"
 SERVICE_SOURCE_SHA256="$(manifest_value "$BINDING_MANIFEST" service_source_sha256)"
@@ -55,7 +86,8 @@ HISTORY_CUTOFF="$(manifest_value "$BINDING_MANIFEST" history_cutoff)"
 PREDECESSOR_MANIFEST="$(manifest_value "$BINDING_MANIFEST" predecessor_manifest)"
 PREDECESSOR_CHECKSUM="$(manifest_value "$BINDING_MANIFEST" predecessor_checksum)"
 PRODUCTION_LOCK="$(manifest_value "$BINDING_MANIFEST" production_lock)"
-readonly CANDIDATE_COMMIT CANDIDATE_IMAGE SERVICE_SOURCE_SHA256
+readonly AUTHORIZATION_MODE AUTHORIZATION_MANIFEST AUTHORIZATION_CHECKSUM
+readonly AUTHORIZATION_SHA256 CANDIDATE_COMMIT CANDIDATE_IMAGE SERVICE_SOURCE_SHA256
 readonly STACK_DIR COMPOSE_FILE COMPOSE_FILE_SHA256 COMPOSE_PROJECT
 readonly RAILS_SERVICE SIDEKIQ_SERVICE PRODUCTION_DATABASE
 readonly AUDIT_ROOT INBOX_ID PAGE_ID INSTAGRAM_BUSINESS_ID HISTORY_CUTOFF
@@ -71,6 +103,22 @@ readonly PREDECESSOR_MANIFEST PREDECESSOR_CHECKSUM PRODUCTION_LOCK
   die "invalid Instagram business id"
 [[ "$HISTORY_CUTOFF" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
   die "history cutoff must be canonical UTC"
+[[ "$AUTHORIZATION_MODE" = clone_authorized ||
+  "$AUTHORIZATION_MODE" = production_first ]] || die "invalid authorization mode"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  verify_checksum "$AUTHORIZATION_MANIFEST" "$AUTHORIZATION_CHECKSUM"
+  require_ordered_manifest \
+    "$AUTHORIZATION_MANIFEST" "${PRODUCTION_FIRST_AUTHORIZATION_FIELDS[@]}"
+  [[ "$(sha256_file "$AUTHORIZATION_MANIFEST")" = "$AUTHORIZATION_SHA256" &&
+    "$(manifest_value "$AUTHORIZATION_MANIFEST" repository_commit)" = "$CANDIDATE_COMMIT" &&
+    "$(manifest_value "$AUTHORIZATION_MANIFEST" image_digest)" = "$CANDIDATE_IMAGE" &&
+    "$(manifest_value "$AUTHORIZATION_MANIFEST" delivery_checkpoint_program_sha256)" = \
+      "$(sha256_file "$PROGRAM_PATH")" ]] ||
+    die "production-first authorization does not bind this delivery checkpoint"
+else
+  [[ "$AUTHORIZATION_MANIFEST" = none && "$AUTHORIZATION_CHECKSUM" = none &&
+    "$AUTHORIZATION_SHA256" = none ]] || die "clone checkpoint contains production-first authorization"
+fi
 require_safe_token compose_project "$COMPOSE_PROJECT"
 require_safe_token rails_service "$RAILS_SERVICE"
 require_safe_token sidekiq_service "$SIDEKIQ_SERVICE"

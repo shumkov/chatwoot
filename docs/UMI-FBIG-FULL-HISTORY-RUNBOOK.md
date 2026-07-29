@@ -38,13 +38,26 @@ the exact concatenated bytes before publishing:
   invoked by `fbig-profile-attempt.sh`)
 - `fbig-storage-artifact.py` (the exact reviewed storage manifest, archive
   verification, and durability helper used by acceptance and profile attempts)
+- `fbig-recovered-thread-targets.rb` (creates the two digest-only Instagram
+  recovery targets from retained R2 evidence)
+- `fbig-production-first-request.rb` (derives the exact fixed-order operator
+  request from protected release, R2, target, and backup artifacts)
+- `fbig-production-first-binding.rb` (publishes every protected
+  production-first history/profile/delivery/final-audit binding in the exact
+  field order consumed by its program)
+- `fbig-production-first-authorize.rb` (validates the operator request and
+  publishes a self-contained production-first history approval package)
+- `fbig-production-first-history-revise.rb` (permits only a proven
+  contentless-set correction after a fully scanned live attempt)
+- `fbig-production-first-profile-approve.rb` (binds the final history results,
+  live profile source snapshot, backup, and exact placeholder targets)
 
 Every invocation consumes a strict, ordered, checksummed binding manifest.
 Protect the output directory as root-owned `0700` and every program, checksum,
 binding, and binding checksum as root-owned `0400`, single-link regular files.
 Never assemble a production program by concatenating runbook fences.
 
-The execution order is:
+The normal clone-authorized execution order is:
 
 1. start cutoff-to-completion read-only delivery checkpoints from the exact
    candidate image;
@@ -69,6 +82,190 @@ An interrupted history or profile host process is finalized through its
 program's `finalize` action before a successor can start. The current R4 clone
 invocation predates this protected launch contract and is rehearsal evidence
 only; it cannot authorize production.
+
+### Current operator-authorized production-first path
+
+For this migration only, the operator explicitly replaced another exhaustive
+clone/dry cycle with a resumable first apply on production. The production-first
+path is a separate authorization mode; it never labels retained R2 evidence as
+accepted and never fills clone-evidence fields with synthetic values.
+
+Before the first write, all of the following are mandatory:
+
+1. merge the reviewed commit, resolve its immutable registry digest, and prove
+   the image architecture and `/app/.git_sha`;
+2. run the schema migration, quiesce Rails and Sidekiq, and seal a fresh
+   coordinated PostgreSQL/storage backup;
+3. use `fbig-recovered-thread-targets.rb` to derive exactly two sorted,
+   unique, digest-only Instagram targets from the retained R2 failure log;
+4. run the generated `fbig-production-first-request.rb` through `rails runner`
+   with the exact release/scope values and protected input paths below. Do not
+   hand-write or reorder the request. The generator validates the backup's
+   database/storage components, recovered-target provenance, source sidecar,
+   R2 summary, placeholder targets, and every bound program before publishing
+   `fbig-production-first-request-v1.tsv` plus checksum; and
+5. run `fbig-production-first-authorize.rb` through `rails runner` against
+   that exact request and the same protected inputs. Its empty
+   root-owned `0700` output directory becomes the immutable history approval
+   package. It contains the authorization, initial history approval, recovered
+   targets, unrecoverable-envelope sidecar, inspector, and checksums as
+   root-owned `0400`, single-link files.
+
+The request generator consumes these fixed environment names:
+
+```text
+UMI_FBIG_EXPECTED_UID
+UMI_FBIG_PRODUCTION_FIRST_REQUEST_MODE
+UMI_FBIG_REPOSITORY_COMMIT
+UMI_FBIG_IMAGE_DIGEST
+UMI_FBIG_PRODUCTION_DATABASE
+UMI_FBIG_ACCOUNT_ID
+UMI_FBIG_INBOX_ID
+UMI_FBIG_FACEBOOK_PAGE_ID
+UMI_FBIG_INSTAGRAM_BUSINESS_ID
+UMI_FBIG_BEFORE
+UMI_FBIG_APPROVED_BY
+UMI_FBIG_APPROVED_AT
+UMI_FBIG_R2_ACCEPTANCE_BINDING_PATH
+UMI_FBIG_R2_LAUNCH_MANIFEST_PATH
+UMI_FBIG_R2_PROBE_LOG_PATH
+UMI_FBIG_R2_PROBE_SUMMARY_PATH
+UMI_FBIG_RECOVERED_THREAD_TARGETS_PATH
+UMI_FBIG_PLACEHOLDER_TARGETS_PATH
+UMI_FBIG_UNRECOVERABLE_SIDECAR_PATH
+UMI_FBIG_UNRECOVERABLE_INSPECTOR_PATH
+UMI_FBIG_COORDINATED_BACKUP_MANIFEST_PATH
+UMI_FBIG_COORDINATED_BACKUP_MANIFEST_CHECKSUM_PATH
+UMI_FBIG_HISTORY_PROGRAM_PATH
+UMI_FBIG_PROFILE_PROGRAM_PATH
+UMI_FBIG_FINAL_AUDIT_PROGRAM_PATH
+UMI_FBIG_DELIVERY_AUDIT_PROGRAM_PATH
+UMI_FBIG_DELIVERY_CHECKPOINT_PROGRAM_PATH
+UMI_FBIG_PROFILE_WRAPPER_PATH
+UMI_FBIG_STORAGE_HELPER_PATH
+UMI_FBIG_RECOVERED_TARGET_GENERATOR_PATH
+UMI_FBIG_AUTHORIZATION_GENERATOR_PATH
+UMI_FBIG_HISTORY_REVISION_GENERATOR_PATH
+UMI_FBIG_PROFILE_APPROVAL_GENERATOR_PATH
+UMI_FBIG_PRODUCTION_FIRST_REQUEST_OUTPUT_DIR
+```
+
+Set `UMI_FBIG_PRODUCTION_FIRST_REQUEST_MODE=initial` for the first release.
+Set it to `successor` only after attributed live writes require a corrected
+release. Successor mode additionally requires:
+
+```text
+UMI_FBIG_PREDECESSOR_AUTHORIZATION_PATH
+UMI_FBIG_PREDECESSOR_AUTHORIZATION_CHECKSUM_PATH
+UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_PATH
+UMI_FBIG_PREDECESSOR_HISTORY_APPROVAL_CHECKSUM_PATH
+UMI_FBIG_PREDECESSOR_HISTORY_RESULT_PATH
+UMI_FBIG_PREDECESSOR_TERMINAL_SUMMARY_PATH
+UMI_FBIG_PREDECESSOR_DELTA_PATH
+UMI_FBIG_PREDECESSOR_EXPANDED_BASELINE_PATH
+UMI_FBIG_PREDECESSOR_UNRECOVERABLE_SIDECAR_PATH
+```
+
+The generator checksum-validates that complete predecessor chain, carries
+forward the latest approved contentless pairs (including a contentless-only
+revision), binds the fresh expanded-state backup, and regenerates the
+release-specific unrecoverable sidecar. The sidecar's scope, cutoff,
+structural count, and fingerprint must remain identical; its commit, image,
+inspector, approver, timestamp, and therefore SHA may change with the release.
+
+Run it as the deployed candidate's Rails environment so its UMI manifest
+classes are the same exact code bound into the request:
+
+```bash
+bundle exec rails runner /opt/umi/fbig-ops/<candidate-id>/fbig-production-first-request.rb
+```
+
+Generate each attempt binding with `fbig-production-first-binding.rb`, setting
+`UMI_FBIG_BINDING_KIND` to `history`, `profile`, `delivery_audit`,
+`delivery_checkpoint`, or `final_audit`; set
+`UMI_FBIG_BIND_<UPPERCASE_FIELD>` once for every non-schema field consumed by
+that selected program. The generator fails on a missing, blank, multiline,
+unknown-kind, or pre-existing output and publishes the ordered manifest plus
+checksum with no replacement. Never hand-write a production binding.
+
+Then execute protected `fbig-history-attempt.sh` bindings in this order:
+
+1. Messenger apply with no predecessor;
+2. Messenger successors until a separate complete zero-write result exists;
+3. Instagram apply with that Messenger result as predecessor;
+4. Instagram successors until a separate complete zero-write result exists.
+
+Every run scans the complete selected platform. Instagram must report
+`recovered_targets_expected/listed/message_cursor_exhausted=2/2/2`; Messenger
+must report `0/0/0`. Both platforms must report zero unavailable and failed
+threads. A successful writeful pass is progress, not terminal evidence.
+
+Maintain one immutable history index for every sealed attempt in execution
+order. Each row has exactly seven tab-separated fields:
+
+```text
+sequence	result_path	result_sha256	authorization_path	authorization_sha256	approval_path	approval_sha256
+```
+
+The first result has predecessor `none`; every later result binds the exact
+preceding result. A release transition must continue the same platform from
+the predecessor authorization's exact result/summary/delta/poststate and
+expanded-state backup. A same-release approval transition must bind the exact
+contentless-only failed result/summary/delta. The sole platform transition is
+from a successful terminal zero-write Messenger result to Instagram.
+
+If and only if a fully scanned live attempt fails solely because its
+contentless count/fingerprint changed, preserve its sealed result, summary,
+and delta and run `fbig-production-first-history-revise.rb`. The generator
+copies every invariant field, changes only that platform's observed
+contentless pair, and binds the failed artifacts. The first attempt under the
+revised approval must resume that exact platform from that exact failed
+result. Continue until both final-approval platform passes are complete and
+zero-write. Any Graph, authentication, pagination, target, persistence,
+attachment, storage, identity, lock, attribution, deletion, or conservation
+failure is not revision-authorizable.
+
+After final history evidence, quiesce writers again, seal the coordinated
+pre-profile backup and a fresh PII-free profile source snapshot, and run
+`fbig-production-first-profile-approve.rb`. Its output directory bundles the
+profile approval, authorization, complete history index, both terminal history
+results, coordinated-backup manifest and all six bound database/storage/history-state
+components, source-state, and exact placeholder targets with checksums. Run protected
+profile apply windows for `messenger,instagram`, with a delivery checkpoint
+and audit after every writeful window, until a final pass reports zero scalar
+changes, zero avatar writes, and no transient/unclassified failures. Finish
+with the production-first final-audit binding; clone acceptance and dry-result
+fields are literal `none`.
+
+The first production-first profile window has no predecessor. Every later
+window supplies the immediately preceding sealed result and its delivery
+audit. The protected wrapper validates the unique result/audit head while it
+holds the production operation lock, proves the audit belongs to that result
+and reports zero unrecovered deliveries, loads the predecessor attempt's
+exact sealed poststate, and passes it to Rails as the successor baseline.
+Rails requires that poststate to equal the new live prestate before any
+profile mutation. This permits a writeful window followed by the mandatory
+zero-write proof without treating the approved original source snapshot as
+live drift.
+
+If a code correction is required after attributed live writes, do not edit the
+authorization. Build and review a new release, seal the old result/summary/
+delta and expanded live baseline, take a fresh coordinated backup, and create
+a successor production-first authorization whose predecessor fields bind
+those exact artifacts. If the predecessor chain or coordinated state cannot
+be proven, restore the corresponding coordinated database/storage backup.
+
+Every coordinated backup used by production-first history includes sealed
+single-platform `fbig-history-backup-messenger-state-v1.tsv` and
+`fbig-history-backup-instagram-state-v1.tsv` snapshots captured while Rails
+and Sidekiq remain stopped. Their digests are ordered fields in the coordinated
+backup manifest, so its SHA transitively binds the exact importer-owned state
+inside the dump. Before any import write, the protected history wrapper holds
+the production lock, rejects any other unpublished `.*.in-progress` attempt,
+requires the supplied predecessor to be the unique global history-result head,
+and compares the selected platform's live prestate with the backup snapshot.
+A same-platform continuation must also equal its predecessor poststate; a
+cross-release continuation proves `backup == predecessor == live`.
 
 Before clone acceptance starts, `fbig-acceptance-control.sh` runs a disposable
 same-host systemd probe. It proves that `RefuseManualStop=yes` rejects an
@@ -103,7 +300,8 @@ Stop immediately if any of these is true:
 - either approved dry run differs from the acceptance probe;
 - an apply binding does not carry two distinct, successful, byte-identical
   dry-result artifacts for its selected platform;
-- a history run reports a new contentless count/fingerprint;
+- a history run reports a new contentless count/fingerprint and the strict
+  production-first contentless-only revision gate does not accept it;
 - a history run reports a different unavailable-message thread
   count/fingerprint or violates thread conservation;
 - the exact unrecoverable-envelope count/fingerprint differs before or after
@@ -436,6 +634,16 @@ test -f "$BACKUP_DIR/fbig-coordinated-backup-v1.tsv"
 (
   cd "$BACKUP_DIR"
   sha256sum --check fbig-coordinated-backup-v1.tsv.sha256
+  for platform in messenger instagram; do
+    sha256sum --check "fbig-history-backup-${platform}-state-v1.tsv.sha256"
+    test "$(
+      sha256sum --binary "fbig-history-backup-${platform}-state-v1.tsv" |
+        awk '{ print $1 }'
+    )" = "$(
+      awk -F '\t' -v field="${platform}_history_state_sha256" \
+        '$1 == field { print $2 }' fbig-coordinated-backup-v1.tsv
+    )"
+  done
 )
 
 cd "$STACK_DIR"
@@ -3611,6 +3819,18 @@ require_root_artifact \
   "${PRE_HISTORY_BACKUP_MANIFEST}.sha256" \
   fbig-coordinated-backup-v1.tsv.sha256
 verify_checksum "$PRE_HISTORY_BACKUP_MANIFEST" "${PRE_HISTORY_BACKUP_MANIFEST}.sha256"
+for platform in messenger instagram; do
+  BACKUP_HISTORY_STATE="$(
+    dirname "$PRE_HISTORY_BACKUP_MANIFEST"
+  )/fbig-history-backup-${platform}-state-v1.tsv"
+  require_root_artifact "$BACKUP_HISTORY_STATE" "$(basename "$BACKUP_HISTORY_STATE")"
+  require_root_artifact \
+    "${BACKUP_HISTORY_STATE}.sha256" "$(basename "$BACKUP_HISTORY_STATE").sha256"
+  verify_checksum "$BACKUP_HISTORY_STATE" "${BACKUP_HISTORY_STATE}.sha256"
+  test "$(sha256_file "$BACKUP_HISTORY_STATE")" = "$(
+    manifest_value "$PRE_HISTORY_BACKUP_MANIFEST" "${platform}_history_state_sha256"
+  )"
+done
 test "$(
   stage_value "$PRE_HISTORY_BACKUP_LOG" \
     coordinated_backup_complete manifest_sha256

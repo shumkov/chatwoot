@@ -11,6 +11,42 @@ readonly DATABASE_USER="${CHATWOOT_DATABASE_USER:-chatwoot}"
 readonly DATABASE_NAME="${CHATWOOT_DATABASE_NAME:-chatwoot_production}"
 readonly MAX_WRITER_OUTAGE_SECONDS="${FBIG_MAX_WRITER_OUTAGE_SECONDS:-3300}"
 readonly LOCK_PATH="/run/lock/umi-fbig/production.lock"
+readonly PROFILE_AUDIT_ROOT="${FBIG_PROFILE_AUDIT_ROOT:-none}"
+readonly EXPECTED_AUTHORIZATION_MODE="${FBIG_PROFILE_AUTHORIZATION_MODE:-none}"
+readonly EXPECTED_AUTHORIZATION_SHA256="${FBIG_PROFILE_AUTHORIZATION_SHA256:-none}"
+readonly EXPECTED_PROFILE_APPROVAL_SHA256="${FBIG_PROFILE_APPROVAL_SHA256:-none}"
+readonly EXPECTED_ACCEPTANCE_SHA256="${FBIG_PROFILE_ACCEPTANCE_SHA256:-none}"
+readonly PROFILE_PREDECESSOR_RESULT="${FBIG_PROFILE_PREDECESSOR_RESULT:-none}"
+readonly PROFILE_PREDECESSOR_AUDIT="${FBIG_PROFILE_PREDECESSOR_AUDIT:-none}"
+readonly PROFILE_RESULT_FIELDS=(
+  schema_version authorization_mode authorization_sha256 label profile_phase
+  program_sha256 binding_sha256 profile_wrapper_sha256 storage_helper_sha256
+  candidate_commit candidate_image production_database inbox_id acceptance_sha256
+  profile_approval_sha256 predecessor_result_sha256 predecessor_audit_sha256
+  before_checkpoint_sha256 attempt_identity_sha256 attempt_directory
+  attempt_manifest_sha256 pre_attempt_backup_directory pre_attempt_backup_sha256
+  wrapper_log_sha256 wrapper_exit_status_sha256 platforms dry_run
+  zero_write_observed termination started_at finished_at sealed_at
+)
+readonly PROFILE_AUDIT_FIELDS=(
+  schema_version authorization_mode authorization_sha256 label program_sha256
+  binding_sha256 candidate_commit candidate_image acceptance_sha256
+  attempt_result_sha256 attempt_manifest_sha256 attempt_started_at
+  attempt_finished_at before_checkpoint_sha256 after_checkpoint_sha256
+  audit_window_started_at audit_window_finished_at page_identity_sha256
+  instagram_identity_sha256 page_subscription_evidence_sha256
+  instagram_subscription_evidence_sha256 messenger_recon_summary_sha256
+  instagram_recon_summary_sha256 messenger_missing instagram_missing
+  messenger_threads_failed instagram_threads_failed messenger_caps_hit
+  instagram_caps_hit zero_unrecovered_deliveries predecessor_audit_sha256
+  audited_at
+)
+readonly PROFILE_ATTEMPT_FIELDS=(
+  schema_version profile_approval_sha256 image_digest production_database_name
+  platforms dry_run pre_attempt_backup_sha256 prestate_sha256 poststate_sha256
+  avatar_staging_sha256 run_log_sha256 run_summary_sha256 exit_status started_at
+  finished_at
+)
 
 usage() {
   cat >&2 <<'USAGE'
@@ -152,6 +188,128 @@ validate_root_paths() {
     done
   done
   ! paths_overlap "$BACKUP_ROOT" "$ATTEMPT_ROOT" || die "backup and attempt roots overlap"
+}
+
+validate_profile_predecessor_chain() {
+  PROFILE_PREDECESSOR_STATE_PATH=none
+  [[ "$AUTHORIZATION_MODE" = production_first ]] || return
+  [[ "$EXPECTED_AUTHORIZATION_MODE" = production_first &&
+     "$EXPECTED_AUTHORIZATION_SHA256" =~ ^[0-9a-f]{64}$ &&
+     "$EXPECTED_PROFILE_APPROVAL_SHA256" =~ ^[0-9a-f]{64}$ &&
+     "$EXPECTED_ACCEPTANCE_SHA256" = none ]] ||
+    die "production-first profile predecessor scope is invalid"
+  [[ "$PROFILE_AUDIT_ROOT" = /* &&
+     "$(realpath -e -- "$PROFILE_AUDIT_ROOT")" = "$PROFILE_AUDIT_ROOT" &&
+     -d "$PROFILE_AUDIT_ROOT" && ! -L "$PROFILE_AUDIT_ROOT" &&
+     "$(stat -c '%u:%a' "$PROFILE_AUDIT_ROOT")" = "0:700" ]] ||
+    die "production-first profile audit root is invalid"
+
+  local candidate predecessor possible_head referenced
+  local current_head=none
+  local -a result_shas=()
+  local -a predecessor_shas=()
+  local -a heads=()
+  while IFS= read -r -d '' candidate; do
+    require_root_artifact "$candidate" fbig-profile-attempt-result-v1.tsv
+    require_root_artifact "${candidate}.sha256" fbig-profile-attempt-result-v1.tsv.sha256
+    verify_checksum "$candidate" "${candidate}.sha256"
+    require_ordered_fields "$candidate" "${PROFILE_RESULT_FIELDS[@]}"
+    if [[ "$(manifest_value "$candidate" authorization_mode)" = production_first &&
+       "$(manifest_value "$candidate" authorization_sha256)" = "$EXPECTED_AUTHORIZATION_SHA256" &&
+       "$(manifest_value "$candidate" profile_approval_sha256)" = "$EXPECTED_PROFILE_APPROVAL_SHA256" ]]; then
+      result_shas+=("$(sha256 "$candidate")")
+      predecessor="$(manifest_value "$candidate" predecessor_result_sha256)"
+      [[ "$predecessor" = none ]] || predecessor_shas+=("$predecessor")
+    fi
+  done < <(
+    find "$PROFILE_AUDIT_ROOT" -mindepth 2 -maxdepth 2 -type f \
+      -name fbig-profile-attempt-result-v1.tsv -print0
+  )
+  for possible_head in "${result_shas[@]}"; do
+    referenced=false
+    for predecessor in "${predecessor_shas[@]}"; do
+      if [[ "$possible_head" = "$predecessor" ]]; then
+        referenced=true
+        break
+      fi
+    done
+    [[ "$referenced" = true ]] || heads+=("$possible_head")
+  done
+  [[ "${#heads[@]}" -le 1 ]] || die "production-first profile chain has multiple heads"
+  [[ "${#heads[@]}" -eq 0 ]] || current_head="${heads[0]}"
+
+  if [[ "$PROFILE_PREDECESSOR_RESULT" = none ]]; then
+    [[ "$PROFILE_PREDECESSOR_AUDIT" = none && "$current_head" = none ]] ||
+      die "initial production-first profile attempt has a predecessor head"
+    return
+  fi
+
+  require_root_artifact "$PROFILE_PREDECESSOR_RESULT" fbig-profile-attempt-result-v1.tsv
+  require_root_artifact "${PROFILE_PREDECESSOR_RESULT}.sha256" fbig-profile-attempt-result-v1.tsv.sha256
+  require_root_artifact "$PROFILE_PREDECESSOR_AUDIT" fbig-profile-delivery-audit-v1.tsv
+  require_root_artifact "${PROFILE_PREDECESSOR_AUDIT}.sha256" fbig-profile-delivery-audit-v1.tsv.sha256
+  verify_checksum "$PROFILE_PREDECESSOR_RESULT" "${PROFILE_PREDECESSOR_RESULT}.sha256"
+  verify_checksum "$PROFILE_PREDECESSOR_AUDIT" "${PROFILE_PREDECESSOR_AUDIT}.sha256"
+  require_ordered_fields "$PROFILE_PREDECESSOR_RESULT" "${PROFILE_RESULT_FIELDS[@]}"
+  require_ordered_fields "$PROFILE_PREDECESSOR_AUDIT" "${PROFILE_AUDIT_FIELDS[@]}"
+  local result_sha audit_sha audit_matches=0 matching_audit_sha=none
+  result_sha="$(sha256 "$PROFILE_PREDECESSOR_RESULT")"
+  audit_sha="$(sha256 "$PROFILE_PREDECESSOR_AUDIT")"
+  [[ "$result_sha" = "$current_head" ]] ||
+    die "profile predecessor is not the unique current result head"
+  while IFS= read -r -d '' candidate; do
+    require_root_artifact "$candidate" fbig-profile-delivery-audit-v1.tsv
+    require_root_artifact "${candidate}.sha256" fbig-profile-delivery-audit-v1.tsv.sha256
+    verify_checksum "$candidate" "${candidate}.sha256"
+    require_ordered_fields "$candidate" "${PROFILE_AUDIT_FIELDS[@]}"
+    if [[ "$(manifest_value "$candidate" authorization_mode)" = production_first &&
+       "$(manifest_value "$candidate" authorization_sha256)" = "$EXPECTED_AUTHORIZATION_SHA256" &&
+       "$(manifest_value "$candidate" attempt_result_sha256)" = "$current_head" ]]; then
+      audit_matches=$((audit_matches + 1))
+      matching_audit_sha="$(sha256 "$candidate")"
+    fi
+  done < <(
+    find "$PROFILE_AUDIT_ROOT" -mindepth 2 -maxdepth 2 -type f \
+      -name fbig-profile-delivery-audit-v1.tsv -print0
+  )
+  [[ "$audit_matches" -eq 1 && "$matching_audit_sha" = "$audit_sha" ]] ||
+    die "profile predecessor audit is not the unique current audit head"
+  [[ "$(manifest_value "$PROFILE_PREDECESSOR_RESULT" authorization_sha256)" = \
+       "$EXPECTED_AUTHORIZATION_SHA256" &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_RESULT" profile_approval_sha256)" = \
+       "$EXPECTED_PROFILE_APPROVAL_SHA256" &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_RESULT" acceptance_sha256)" = \
+       "$EXPECTED_ACCEPTANCE_SHA256" &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_RESULT" dry_run)" = false &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_AUDIT" authorization_sha256)" = \
+       "$EXPECTED_AUTHORIZATION_SHA256" &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_AUDIT" attempt_result_sha256)" = "$result_sha" &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_AUDIT" zero_unrecovered_deliveries)" = true &&
+     "$(manifest_value "$PROFILE_PREDECESSOR_AUDIT" predecessor_audit_sha256)" = \
+       "$(manifest_value "$PROFILE_PREDECESSOR_RESULT" predecessor_audit_sha256)" ]] ||
+    die "profile predecessor result and delivery audit do not match"
+
+  local attempt_directory attempt_manifest poststate
+  attempt_directory="$(manifest_value "$PROFILE_PREDECESSOR_RESULT" attempt_directory)"
+  [[ "$(dirname "$attempt_directory")" = "$ATTEMPT_ROOT" &&
+     "$(realpath -e -- "$attempt_directory")" = "$attempt_directory" &&
+     -d "$attempt_directory" && ! -L "$attempt_directory" &&
+     "$(stat -c '%u:%a' "$attempt_directory")" = "0:700" ]] ||
+    die "profile predecessor attempt directory is invalid"
+  attempt_manifest="$attempt_directory/fbig-profile-production-attempt-v1.tsv"
+  poststate="$attempt_directory/fbig-profile-production-poststate-v1.tsv"
+  require_root_artifact "$attempt_manifest" fbig-profile-production-attempt-v1.tsv
+  require_root_artifact "${attempt_manifest}.sha256" fbig-profile-production-attempt-v1.tsv.sha256
+  require_root_artifact "$poststate" fbig-profile-production-poststate-v1.tsv
+  require_root_artifact "${poststate}.sha256" fbig-profile-production-poststate-v1.tsv.sha256
+  verify_checksum "$attempt_manifest" "${attempt_manifest}.sha256"
+  verify_checksum "$poststate" "${poststate}.sha256"
+  require_ordered_fields "$attempt_manifest" "${PROFILE_ATTEMPT_FIELDS[@]}"
+  [[ "$(manifest_value "$PROFILE_PREDECESSOR_RESULT" attempt_manifest_sha256)" = \
+       "$(sha256 "$attempt_manifest")" &&
+     "$(manifest_value "$attempt_manifest" poststate_sha256)" = "$(sha256 "$poststate")" ]] ||
+    die "profile predecessor poststate binding is invalid"
+  PROFILE_PREDECESSOR_STATE_PATH="$poststate"
 }
 
 postgres() {
@@ -534,14 +692,22 @@ validate_sealed_attempt() {
   local profile_directory
   profile_directory="$(dirname "$PROFILE_APPROVAL")"
   compose run --rm --no-deps \
+    --env UMI_FBIG_PROFILE_AUTHORIZATION_MODE="$AUTHORIZATION_MODE" \
     --volume "${profile_directory}:/run/fbig/profile:ro" \
     --volume "${BACKUP_FINAL}:/run/fbig/backup:ro" \
     --volume "${ATTEMPT_DIRECTORY}:/run/fbig/attempt:ro" \
     rails bundle exec rails runner '
-      approval = Umi::Fbig::ProfileApprovalManifest.load(
-        manifest_path: "/run/fbig/profile/fbig-profile-approval-v1.tsv",
-        checksum_path: "/run/fbig/profile/fbig-profile-approval-v1.tsv.sha256"
-      )
+      approval = if ENV.fetch("UMI_FBIG_PROFILE_AUTHORIZATION_MODE") == "production_first"
+                   Umi::Fbig::ProductionFirstProfileApproval.load(
+                     manifest_path: "/run/fbig/profile/fbig-production-first-profile-approval-v1.tsv",
+                     checksum_path: "/run/fbig/profile/fbig-production-first-profile-approval-v1.tsv.sha256"
+                   )
+                 else
+                   Umi::Fbig::ProfileApprovalManifest.load(
+                     manifest_path: "/run/fbig/profile/fbig-profile-approval-v1.tsv",
+                     checksum_path: "/run/fbig/profile/fbig-profile-approval-v1.tsv.sha256"
+                   )
+                 end
       backup = Umi::Fbig::ProfilePreAttemptBackupManifest.load(
         manifest_path: "/run/fbig/backup/fbig-profile-pre-attempt-backup-v1.tsv",
         checksum_path: "/run/fbig/backup/fbig-profile-pre-attempt-backup-v1.tsv.sha256"
@@ -575,8 +741,10 @@ validate_sealed_attempt() {
 }
 
 run_profile_task() {
-  local history_directory profile_directory target_directory
+  local history_directory profile_directory target_directory predecessor_directory
   local target_arguments=()
+  local authorization_arguments=()
+  local predecessor_arguments=()
   history_directory="$(dirname "$HISTORY_MANIFEST")"
   profile_directory="$(dirname "$PROFILE_APPROVAL")"
   if [[ -n "$PROFILE_TARGETS" ]]; then
@@ -584,6 +752,43 @@ run_profile_task() {
     target_arguments=(
       --volume "${target_directory}:/run/fbig/targets:ro"
       --env UMI_FBIG_PROFILE_TARGETS_PATH=/run/fbig/targets/fbig-profile-targets-v1.tsv
+    )
+  fi
+  if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+    authorization_arguments=(
+      --env UMI_FBIG_PROFILE_APPROVAL_MODE=production_first
+      --env UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_PATH=/run/fbig/history/fbig-production-first-history-approval-v1.tsv
+      --env UMI_FBIG_PRODUCTION_FIRST_HISTORY_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-production-first-history-approval-v1.tsv.sha256
+      --env UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_PATH=/run/fbig/profile/fbig-production-first-authorization-v1.tsv
+      --env UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_CHECKSUM_PATH=/run/fbig/profile/fbig-production-first-authorization-v1.tsv.sha256
+      --env UMI_FBIG_PRODUCTION_FIRST_AUTHORIZATION_SHA256="$(manifest_value "$PROFILE_APPROVAL" production_first_authorization_sha256)"
+      --env UMI_FBIG_PRODUCTION_FIRST_PROFILE_APPROVAL_PATH=/run/fbig/profile/fbig-production-first-profile-approval-v1.tsv
+      --env UMI_FBIG_PRODUCTION_FIRST_PROFILE_APPROVAL_CHECKSUM_PATH=/run/fbig/profile/fbig-production-first-profile-approval-v1.tsv.sha256
+      --env UMI_FBIG_MESSENGER_TERMINAL_HISTORY_RESULT_PATH=/run/fbig/profile/fbig-messenger-terminal-history-result-v1.tsv
+      --env UMI_FBIG_MESSENGER_TERMINAL_HISTORY_RESULT_CHECKSUM_PATH=/run/fbig/profile/fbig-messenger-terminal-history-result-v1.tsv.sha256
+      --env UMI_FBIG_INSTAGRAM_TERMINAL_HISTORY_RESULT_PATH=/run/fbig/profile/fbig-instagram-terminal-history-result-v1.tsv
+      --env UMI_FBIG_INSTAGRAM_TERMINAL_HISTORY_RESULT_CHECKSUM_PATH=/run/fbig/profile/fbig-instagram-terminal-history-result-v1.tsv.sha256
+      --env UMI_FBIG_COORDINATED_PRE_PROFILE_BACKUP_PATH=/run/fbig/profile/fbig-coordinated-pre-profile-backup-v1.tsv
+      --env UMI_FBIG_COORDINATED_PRE_PROFILE_BACKUP_CHECKSUM_PATH=/run/fbig/profile/fbig-coordinated-pre-profile-backup-v1.tsv.sha256
+      --env UMI_FBIG_PROFILE_STATE_PATH=/run/fbig/profile/fbig-profile-state-v1.tsv
+      --env UMI_FBIG_PROFILE_STATE_CHECKSUM_PATH=/run/fbig/profile/fbig-profile-state-v1.tsv.sha256
+      --env ACK_PRODUCTION_FIRST_LIVE_IMPORT=true
+    )
+    if [[ "$PROFILE_PREDECESSOR_STATE_PATH" != none ]]; then
+      predecessor_directory="$(dirname "$PROFILE_PREDECESSOR_STATE_PATH")"
+      predecessor_arguments=(
+        --volume "${predecessor_directory}:/run/fbig/predecessor:ro"
+        --env UMI_FBIG_PROFILE_PREDECESSOR_STATE_PATH=/run/fbig/predecessor/fbig-profile-production-poststate-v1.tsv
+        --env UMI_FBIG_PROFILE_PREDECESSOR_STATE_CHECKSUM_PATH=/run/fbig/predecessor/fbig-profile-production-poststate-v1.tsv.sha256
+      )
+    fi
+  else
+    authorization_arguments=(
+      --env UMI_FBIG_PROFILE_APPROVAL_MODE=production
+      --env UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv
+      --env UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256
+      --env UMI_FBIG_PROFILE_APPROVAL_MANIFEST_PATH=/run/fbig/profile/fbig-profile-approval-v1.tsv
+      --env UMI_FBIG_PROFILE_APPROVAL_CHECKSUM_PATH=/run/fbig/profile/fbig-profile-approval-v1.tsv.sha256
     )
   fi
   TASK_STARTED=true
@@ -595,14 +800,11 @@ run_profile_task() {
     --volume "${BACKUP_FINAL}:/run/fbig/backup:ro" \
     --volume "${ATTEMPT_DIRECTORY}:/run/fbig/attempt" \
     "${target_arguments[@]}" \
-    --env UMI_FBIG_PROFILE_APPROVAL_MODE=production \
+    "${authorization_arguments[@]}" \
+    "${predecessor_arguments[@]}" \
     --env UMI_FBIG_HISTORY_EXPECTED_DATABASE="$DATABASE_NAME" \
     --env DRY_RUN="$DRY_RUN" \
     --env PLATFORMS="$PLATFORMS" \
-    --env UMI_FBIG_APPROVAL_MANIFEST_PATH=/run/fbig/history/fbig-approval-v2.tsv \
-    --env UMI_FBIG_APPROVAL_CHECKSUM_PATH=/run/fbig/history/fbig-approval-v2.tsv.sha256 \
-    --env UMI_FBIG_PROFILE_APPROVAL_MANIFEST_PATH=/run/fbig/profile/fbig-profile-approval-v1.tsv \
-    --env UMI_FBIG_PROFILE_APPROVAL_CHECKSUM_PATH=/run/fbig/profile/fbig-profile-approval-v1.tsv.sha256 \
     --env UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_PATH=/run/fbig/backup/fbig-profile-pre-attempt-backup-v1.tsv \
     --env UMI_FBIG_PROFILE_PRE_ATTEMPT_BACKUP_CHECKSUM_PATH=/run/fbig/backup/fbig-profile-pre-attempt-backup-v1.tsv.sha256 \
     --env UMI_FBIG_PROFILE_ATTEMPT_DIR=/run/fbig/attempt \
@@ -755,8 +957,13 @@ resume_pre_task_attempt() {
   [[ "$ATTEMPT_ID" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$ &&
      "$(basename "$ATTEMPT_DIRECTORY")" == "fbig-profile-attempt-${ATTEMPT_ID}" ]] ||
     die "invalid attempt directory basename"
-  require_root_artifact "$PROFILE_APPROVAL" fbig-profile-approval-v1.tsv
-  require_root_artifact "$PROFILE_CHECKSUM" fbig-profile-approval-v1.tsv.sha256
+  local profile_basename
+  profile_basename="$(basename "$PROFILE_APPROVAL")"
+  [[ "$profile_basename" = fbig-profile-approval-v1.tsv ||
+    "$profile_basename" = fbig-production-first-profile-approval-v1.tsv ]] ||
+    die "invalid profile approval basename"
+  require_root_artifact "$PROFILE_APPROVAL" "$profile_basename"
+  require_root_artifact "$PROFILE_CHECKSUM" "${profile_basename}.sha256"
   verify_checksum "$PROFILE_APPROVAL" "$PROFILE_CHECKSUM"
   PROFILE_APPROVAL_SHA256="$(sha256 "$PROFILE_APPROVAL")"
   APPROVED_IMAGE_DIGEST="$(manifest_value "$PROFILE_APPROVAL" image_digest)"
@@ -794,6 +1001,15 @@ readonly HISTORY_CHECKSUM="$5"
 readonly PROFILE_APPROVAL="$6"
 readonly PROFILE_CHECKSUM="$7"
 readonly PROFILE_TARGETS="${8:-}"
+AUTHORIZATION_MODE=clone_authorized
+HISTORY_BASENAME=fbig-approval-v2.tsv
+PROFILE_BASENAME=fbig-profile-approval-v1.tsv
+if [[ "$(basename "$PROFILE_APPROVAL")" = fbig-production-first-profile-approval-v1.tsv ]]; then
+  AUTHORIZATION_MODE=production_first
+  HISTORY_BASENAME=fbig-production-first-history-approval-v1.tsv
+  PROFILE_BASENAME=fbig-production-first-profile-approval-v1.tsv
+fi
+readonly AUTHORIZATION_MODE HISTORY_BASENAME PROFILE_BASENAME
 [[ "$EUID" == "0" ]] || die "run as root"
 [[ "$INBOX_ID" =~ ^[1-9][0-9]*$ ]] || usage
 [[ "$DRY_RUN" == "true" || "$DRY_RUN" == "false" ]] || usage
@@ -805,15 +1021,29 @@ if [[ "$PLATFORMS" == *instagram* ]]; then
 else
   [[ -z "$PROFILE_TARGETS" ]] || die "Messenger-only profile runs must not receive the target sidecar"
 fi
-require_root_artifact "$HISTORY_MANIFEST" fbig-approval-v2.tsv
-require_root_artifact "$HISTORY_CHECKSUM" fbig-approval-v2.tsv.sha256
-require_root_artifact "$PROFILE_APPROVAL" fbig-profile-approval-v1.tsv
-require_root_artifact "$PROFILE_CHECKSUM" fbig-profile-approval-v1.tsv.sha256
+require_root_artifact "$HISTORY_MANIFEST" "$HISTORY_BASENAME"
+require_root_artifact "$HISTORY_CHECKSUM" "${HISTORY_BASENAME}.sha256"
+require_root_artifact "$PROFILE_APPROVAL" "$PROFILE_BASENAME"
+require_root_artifact "$PROFILE_CHECKSUM" "${PROFILE_BASENAME}.sha256"
 if [[ -n "$PROFILE_TARGETS" ]]; then
   require_root_artifact "$PROFILE_TARGETS" fbig-profile-targets-v1.tsv
 fi
 verify_checksum "$HISTORY_MANIFEST" "$HISTORY_CHECKSUM"
 verify_checksum "$PROFILE_APPROVAL" "$PROFILE_CHECKSUM"
+if [[ "$AUTHORIZATION_MODE" = production_first ]]; then
+  profile_directory="$(dirname "$PROFILE_APPROVAL")"
+  for basename in \
+    fbig-production-first-authorization-v1.tsv \
+    fbig-messenger-terminal-history-result-v1.tsv \
+    fbig-instagram-terminal-history-result-v1.tsv \
+    fbig-coordinated-pre-profile-backup-v1.tsv \
+    fbig-profile-state-v1.tsv; do
+    require_root_artifact "${profile_directory}/${basename}" "$basename"
+    require_root_artifact "${profile_directory}/${basename}.sha256" "${basename}.sha256"
+    verify_checksum \
+      "${profile_directory}/${basename}" "${profile_directory}/${basename}.sha256"
+  done
+fi
 [[ -f "$STORAGE_HELPER" && -r "$STORAGE_HELPER" && ! -L "$STORAGE_HELPER" ]] ||
   die "storage artifact helper is missing"
 [[ -d "$STACK_DIR" && -d "${DATA_DIR}/storage" ]] || die "Chatwoot stack paths are missing"
@@ -838,6 +1068,8 @@ readonly ACCOUNT_ID APPROVED_INBOX_ID FACEBOOK_PAGE_ID INSTAGRAM_BUSINESS_ID
    "$INSTAGRAM_BUSINESS_ID" =~ ^[1-9][0-9]*$ ]] || die "invalid approved FB/IG identity"
 
 acquire_operation_lock
+validate_profile_predecessor_chain
+readonly PROFILE_PREDECESSOR_STATE_PATH
 cd "$STACK_DIR"
 verify_running_release || die "Rails or Sidekiq is not running the profile-approved image digest"
 verify_compose_release
@@ -881,10 +1113,10 @@ create_backup
 seal_attempt_binding
 elapsed="$(($(date +%s) - STARTED_EPOCH))"
 (( elapsed < MAX_WRITER_OUTAGE_SECONDS )) || die "writer outage ceiling reached before the task"
-require_root_artifact "$HISTORY_MANIFEST" fbig-approval-v2.tsv
-require_root_artifact "$HISTORY_CHECKSUM" fbig-approval-v2.tsv.sha256
-require_root_artifact "$PROFILE_APPROVAL" fbig-profile-approval-v1.tsv
-require_root_artifact "$PROFILE_CHECKSUM" fbig-profile-approval-v1.tsv.sha256
+require_root_artifact "$HISTORY_MANIFEST" "$HISTORY_BASENAME"
+require_root_artifact "$HISTORY_CHECKSUM" "${HISTORY_BASENAME}.sha256"
+require_root_artifact "$PROFILE_APPROVAL" "$PROFILE_BASENAME"
+require_root_artifact "$PROFILE_CHECKSUM" "${PROFILE_BASENAME}.sha256"
 verify_checksum "$HISTORY_MANIFEST" "$HISTORY_CHECKSUM"
 verify_checksum "$PROFILE_APPROVAL" "$PROFILE_CHECKSUM"
 if [[ -n "$PROFILE_TARGETS" ]]; then

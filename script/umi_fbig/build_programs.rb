@@ -15,9 +15,17 @@ PROGRAMS = {
 }.freeze
 SUPPORT_PROGRAMS = {
   'profile_wrapper' => File.join('support', 'fbig_profile_attempt.sh'),
-  'storage_artifact' => File.join('support', 'fbig_storage_artifact.py')
+  'storage_artifact' => File.join('support', 'fbig_storage_artifact.py'),
+  'recovered_thread_targets' => File.join('support', 'fbig_recovered_thread_targets.rb'),
+  'production_first_request' => File.join('support', 'fbig_production_first_request.rb'),
+  'production_first_binding' => File.join('support', 'fbig_production_first_binding.rb'),
+  'production_first_authorize' => File.join('support', 'fbig_production_first_authorize.rb'),
+  'production_first_history_revise' => File.join('support', 'fbig_production_first_history_revise.rb'),
+  'production_first_profile_approve' => File.join('support', 'fbig_production_first_profile_approve.rb')
 }.freeze
 
+# Program validation handles three executable formats explicitly.
+# rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 def fsync_directory(path)
   File.open(path, File::RDONLY, &:fsync)
 end
@@ -70,10 +78,13 @@ def validate_program(bytes, extension)
         stdout, stderr, status = Open3.capture3(command, *arguments)
         abort("#{command} rejected generated program:\n#{stdout}#{stderr}") unless status.success?
       end
-    else
+    elsif extension == '.py'
       source = 'import pathlib, sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], "exec")'
       stdout, stderr, status = Open3.capture3('python3', '-c', source, file.path)
       abort("python3 rejected generated program:\n#{stdout}#{stderr}") unless status.success?
+    else
+      stdout, stderr, status = Open3.capture3('ruby', '-c', file.path)
+      abort("ruby rejected generated program:\n#{stdout}#{stderr}") unless status.success?
     end
   end
 end
@@ -117,3 +128,4 @@ outputs.each do |logical_name, (template, prepend_common, extension)|
   publish_file("#{path}.sha256", checksum)
   puts logical_name
 end
+# rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity

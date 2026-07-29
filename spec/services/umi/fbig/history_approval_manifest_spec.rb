@@ -28,8 +28,8 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
       'instagram_fingerprint' => '1' * 64,
       'messenger_unavailable_message_thread_count' => '0',
       'messenger_unavailable_message_thread_fingerprint' => '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa',
-      'instagram_unavailable_message_thread_count' => '2',
-      'instagram_unavailable_message_thread_fingerprint' => '3cd76b2a651ef9eab0883e3d7969b3257df34336dd44a2e7e3b05dc6c763042b',
+      'instagram_unavailable_message_thread_count' => '0',
+      'instagram_unavailable_message_thread_fingerprint' => 'bd73d5c7d96c25c097496395aec4bdd8ce66b3bd8ef474bf4a4f5cb2d317ca17',
       'placeholder_targets_sha256' => '2' * 64,
       'source_dry_log_sha256' => '3' * 64,
       'source_dry_summary_sha256' => '4' * 64,
@@ -52,8 +52,8 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
     )
     expect(result.accepted_unavailable_message_threads(%w[instagram messenger])).to eq(
       'instagram' => Umi::Fbig::UnavailableMessageThreadFingerprint::Result.new(
-        count: 2,
-        fingerprint: '3cd76b2a651ef9eab0883e3d7969b3257df34336dd44a2e7e3b05dc6c763042b'
+        count: 0,
+        fingerprint: 'bd73d5c7d96c25c097496395aec4bdd8ce66b3bd8ef474bf4a4f5cb2d317ca17'
       ),
       'messenger' => Umi::Fbig::UnavailableMessageThreadFingerprint::Result.new(
         count: 0,
@@ -95,6 +95,19 @@ RSpec.describe Umi::Fbig::HistoryApprovalManifest do
     invalid_fields.each do |name, value|
       invalid = manifest.sub("#{name}\t#{fields.fetch(name)}", "#{name}\t#{value}")
       expect { described_class.parse(invalid) }.to raise_error(described_class::InvalidManifest), name
+    end
+  end
+
+  it 'rejects nonzero or noncanonical empty unavailable-thread acceptance for either platform' do
+    nonzero = manifest.sub("instagram_unavailable_message_thread_count\t0",
+                           "instagram_unavailable_message_thread_count\t2")
+    arbitrary_empty = manifest.sub(
+      "instagram_unavailable_message_thread_fingerprint\t#{fields.fetch('instagram_unavailable_message_thread_fingerprint')}",
+      "instagram_unavailable_message_thread_fingerprint\t#{'9' * 64}"
+    )
+
+    [nonzero, arbitrary_empty].each do |invalid|
+      expect { described_class.parse(invalid) }.to raise_error(described_class::InvalidManifest)
     end
   end
 

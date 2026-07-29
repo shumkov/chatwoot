@@ -2,7 +2,7 @@ require 'rake'
 require 'rails_helper'
 
 # The subject is a named task rather than the Rake::Task class itself.
-# rubocop:disable RSpec/DescribeClass
+# rubocop:disable RSpec/DescribeClass, RSpec/ExampleLength
 RSpec.describe 'umi:fbig:history_import' do
   subject(:task) { Rake::Task['umi:fbig:history_import'] }
 
@@ -35,8 +35,8 @@ RSpec.describe 'umi:fbig:history_import' do
       'instagram_fingerprint' => '1' * 64,
       'messenger_unavailable_message_thread_count' => '0',
       'messenger_unavailable_message_thread_fingerprint' => '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa',
-      'instagram_unavailable_message_thread_count' => '2',
-      'instagram_unavailable_message_thread_fingerprint' => '3cd76b2a651ef9eab0883e3d7969b3257df34336dd44a2e7e3b05dc6c763042b',
+      'instagram_unavailable_message_thread_count' => '0',
+      'instagram_unavailable_message_thread_fingerprint' => 'bd73d5c7d96c25c097496395aec4bdd8ce66b3bd8ef474bf4a4f5cb2d317ca17',
       'placeholder_targets_sha256' => '2' * 64,
       'source_dry_log_sha256' => '3' * 64,
       'source_dry_summary_sha256' => '4' * 64,
@@ -69,7 +69,10 @@ RSpec.describe 'umi:fbig:history_import' do
       UMI_FBIG_HISTORY_MAX_DOWNLOAD_BYTES: nil,
       UMI_FBIG_HISTORY_GRAPH_DELAY_MS: nil,
       UMI_FBIG_HISTORY_MAX_CONVERSATION_PAGES: nil,
-      UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES: nil
+      UMI_FBIG_HISTORY_MAX_MESSAGE_PAGES: nil,
+      UMI_FBIG_RECOVERED_THREAD_TARGETS_PATH: nil,
+      UMI_FBIG_RECOVERED_THREAD_TARGETS_CHECKSUM_PATH: nil,
+      UMI_FBIG_RECOVERED_THREAD_TARGETS_SHA256: nil
     }
   end
 
@@ -94,6 +97,38 @@ RSpec.describe 'umi:fbig:history_import' do
     end
 
     expect(Inbox).not_to have_received(:find)
+  end
+
+  it 'runs the normal approved Instagram path without production-first recovered targets' do
+    service = instance_double(Umi::Fbig::HistoryImportService)
+    result = Umi::Fbig::HistoryImportService::Result.new(
+      stats: { exit_failures: 0 },
+      scan_complete: true,
+      write_complete: nil,
+      degraded: false,
+      dry_run: true
+    )
+    allow(Umi::Fbig::HistoryImportService).to receive(:new).and_return(service)
+    allow(service).to receive(:perform).and_return(result)
+    allow(Umi::Fbig::HistoryApprovalManifest).to receive(:load).and_return(approval)
+    env = environment.merge(
+      DRY_RUN: 'true',
+      PLATFORMS: 'instagram',
+      UMI_FBIG_HISTORY_APPROVAL_MODE: 'approved',
+      UMI_FBIG_APPROVAL_MANIFEST_PATH: '/audit/fbig-approval-v2.tsv',
+      UMI_FBIG_APPROVAL_CHECKSUM_PATH: '/audit/fbig-approval-v2.tsv.sha256',
+      UMI_FBIG_RUNTIME_REPOSITORY_COMMIT: approval.repository_commit,
+      UMI_FBIG_RUNTIME_IMAGE_DIGEST: approval.image_digest
+    )
+
+    with_modified_env(**env) do
+      task.invoke(inbox.id)
+    end
+
+    expect(Umi::Fbig::HistoryImportService).to have_received(:new).with(
+      inbox,
+      hash_including(recovered_thread_targets: nil)
+    )
   end
 
   it 'aborts before loading the inbox when the connected database does not match the expected database' do
@@ -186,6 +221,7 @@ RSpec.describe 'umi:fbig:history_import' do
         'messenger' => Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: 'messenger', records: []),
         'instagram' => Umi::Fbig::UnavailableMessageThreadFingerprint.build(platform: 'instagram', records: [])
       },
+      recovered_thread_targets: nil,
       profile_mode: 'defer',
       ack_expand_existing: false,
       max_download_bytes: nil,
@@ -241,6 +277,7 @@ RSpec.describe 'umi:fbig:history_import' do
           fingerprint: '901290cdf01a1cd38b6c8ac38c1a36fb1b02376245c8237a44fc6252971bf1fa'
         )
       },
+      recovered_thread_targets: nil,
       profile_mode: 'defer',
       ack_expand_existing: true,
       max_download_bytes: 104_857_600,
@@ -339,4 +376,4 @@ RSpec.describe 'umi:fbig:history_import' do
     end
   end
 end
-# rubocop:enable RSpec/DescribeClass
+# rubocop:enable RSpec/DescribeClass, RSpec/ExampleLength
