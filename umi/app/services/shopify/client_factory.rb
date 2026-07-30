@@ -12,7 +12,17 @@
 # again. (Context.setup? raises until the first setup, so it cannot be used as a
 # guard; re-running setup is what core ShopifyController does per request.)
 module Umi::Shopify::ClientFactory
-  API_VERSION = '2025-01'
+  # The single Shopify Admin API version for the whole app — the core orders-sidebar
+  # controller reads it too, via config/initializers/zz_umi_shopify_api_version.rb.
+  # ShopifyAPI::Context is process-global, so two callers pinning different versions
+  # would leave whichever ran last in effect for every request in that process.
+  #
+  # Shopify supports a version for 12 months and serves the *oldest supported* version
+  # to callers asking for an expired one — silently, and a quarter later it moves again.
+  # Pin a supported version and let `rake umi:help_center:verify` compare this constant
+  # against the `x-shopify-api-version` response header, so drift alarms instead of
+  # changing behaviour unannounced. 2026-01 is supported until 2027-01-16.
+  API_VERSION = '2026-01'
   CONTEXT_SETUP_MUTEX = Mutex.new
 
   class << self
@@ -28,13 +38,20 @@ module Umi::Shopify::ClientFactory
     end
 
     def ensure_shopify_context!
-      CONTEXT_SETUP_MUTEX.synchronize do
+      synchronize_context_setup do
         ShopifyAPI::Context.setup(
           api_key: GlobalConfigService.load('SHOPIFY_CLIENT_ID', nil),
           api_secret_key: GlobalConfigService.load('SHOPIFY_CLIENT_SECRET', nil),
           api_version: API_VERSION, scope: '', is_embedded: true, is_private: false
         )
       end
+    end
+
+    # Context.setup is process-global and reloads the gem's shared Zeitwerk loader, so
+    # every caller in the process has to take the same lock — including ones outside
+    # this factory that build their own setup call.
+    def synchronize_context_setup(&)
+      CONTEXT_SETUP_MUTEX.synchronize(&)
     end
   end
 end
