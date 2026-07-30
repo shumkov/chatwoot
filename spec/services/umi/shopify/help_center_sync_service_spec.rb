@@ -99,6 +99,89 @@ RSpec.describe Umi::Shopify::HelpCenterSyncService do
         expect(keys).not_to include('custom.featured_position')
       end
     end
+
+    # Shopify rejects the whole article with a 422 ("must be a single line text
+    # string") when any single_line_text_field carries a line break, so an article
+    # whose description is a markdown list can never sync.
+    context 'when the description spans multiple lines' do
+      let(:attrs) do
+        super().merge(
+          'description' => "- Within 14 days of delivery\n\n- Unworn, with tags attached\n\n- Refund to original payment"
+        )
+      end
+
+      it 'sends a single-line description_tag' do
+        mf = payload[:metafields].find { |m| m[:key] == 'description_tag' }
+        expect(mf[:value]).not_to include("\n")
+        expect(mf[:value]).to eq('- Within 14 days of delivery - Unworn, with tags attached - Refund to original payment')
+      end
+    end
+
+    # The single-line guarantee is a property of the type, not of any one field, so it
+    # holds for every value declared single_line_text_field however the source is shaped.
+    context 'when several source fields span multiple lines' do
+      let(:attrs) do
+        super().merge('title' => "Returns\r\nPolicy", 'description' => "a\u2028b", 'slug' => "s\nlug")
+      end
+
+      it 'emits no line separator of any kind in a single_line_text_field' do
+        values = payload[:metafields].select { |m| m[:type] == 'single_line_text_field' }.map { |m| m[:value] }
+
+        expect(values.size).to be >= 3
+        expect(values).to all(match(/\A[^\n\r\u2028\u2029]*\z/))
+      end
+    end
+
+    # A description pasted from a word processor carries separators outside the ASCII
+    # \s class, which a strip- or \s-based collapse would leave embedded in the value.
+    context 'when the description carries unicode separators' do
+      let(:attrs) { super().merge('description' => "Ship\u2028fast\u00A0and safe") }
+
+      it 'collapses unicode whitespace too' do
+        mf = payload[:metafields].find { |m| m[:key] == 'description_tag' }
+        expect(mf[:value]).to eq('Ship fast and safe')
+      end
+    end
+
+    context 'when the title spans multiple lines' do
+      let(:attrs) { super().merge('title' => "Returns\n& Exchanges") }
+
+      it 'sends a single-line title_tag' do
+        mf = payload[:metafields].find { |m| m[:key] == 'title_tag' }
+        expect(mf[:value]).to eq('Returns & Exchanges')
+      end
+    end
+
+    # Normalization has to run before the 320-char cut, otherwise collapsing a run of
+    # whitespace that straddles the boundary yields a different (shorter) string than
+    # the same text collapsed first.
+    context 'when a whitespace run straddles the 320-character limit' do
+      let(:attrs) { super().merge('description' => "#{'a' * 315}\n\n\n\n\n#{'b' * 40}") }
+
+      it 'collapses first, then truncates to 320' do
+        mf = payload[:metafields].find { |m| m[:key] == 'description_tag' }
+        expect(mf[:value].length).to eq(320)
+        expect(mf[:value]).to eq("#{'a' * 315} #{'b' * 4}")
+      end
+    end
+
+    # Shopify treats `tags` as a comma-separated list, so a comma inside a category
+    # name silently becomes two tags and the real category never matches.
+    context 'when the category name contains a comma' do
+      let(:attrs) { super().merge('category_name' => 'Wholesale, Press & Influencers') }
+
+      it 'sends the category as one tag, not two' do
+        expect(payload[:tags].split(',').map(&:strip)).to eq(['Wholesale Press & Influencers'])
+      end
+
+      context 'when the comma has no space after it' do
+        let(:attrs) { super().merge('category_name' => 'Wholesale,Press') }
+
+        it 'keeps the words separated rather than running them together' do
+          expect(payload[:tags]).to eq('Wholesale Press')
+        end
+      end
+    end
   end
 
   # The Context.setup serialization (Zeitwerk-reload race) moved to the shared
