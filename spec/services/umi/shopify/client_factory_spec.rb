@@ -50,4 +50,23 @@ RSpec.describe Umi::Shopify::ClientFactory do
       expect(max_in_flight).to eq(1)
     end
   end
+
+  # Context.setup raises UnsupportedVersionError for a version the installed gem does
+  # not list, which would take down every Shopify call in the process at boot. This
+  # pins that contract across gem upgrades and downgrades.
+  #
+  # It deliberately does NOT prove the version is still supported by *Shopify*: the gem
+  # lists versions long past their 12-month support window, and Shopify answers an
+  # expired request by silently serving the oldest version it still supports. Only the
+  # `x-shopify-api-version` response header can catch that, which is why the drift check
+  # belongs in the reconcile task rather than here.
+  describe 'API_VERSION' do
+    it 'is a version the installed shopify_api gem supports' do
+      expect(ShopifyAPI::AdminVersions::SUPPORTED_ADMIN_VERSIONS).to include(described_class::API_VERSION)
+    end
+
+    it 'is a dated version rather than "unstable"' do
+      expect(described_class::API_VERSION).to match(/\A\d{4}-\d{2}\z/)
+    end
+  end
 end
