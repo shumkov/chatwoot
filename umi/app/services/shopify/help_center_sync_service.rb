@@ -46,8 +46,14 @@ class Umi::Shopify::HelpCenterSyncService
 
   # Category tag (topical grouping) + `featured` when the article is in the storefront
   # featured set. Shopify overwrites all tags on PUT, so un-featuring drops it next sync.
+  #
+  # Shopify parses `tags` as a comma-separated list, so a comma inside a category name
+  # splits it into two unrelated tags and the category the storefront filters on never
+  # matches. Commas become spaces rather than being dropped, so "Wholesale, Press &
+  # Influencers" stays one readable tag instead of running the words together.
   def article_tags
-    [@attrs[:category_name].to_s.strip.presence, ('featured' if @attrs[:featured])].compact.join(', ')
+    category = @attrs[:category_name].to_s.tr(',', ' ').squish.presence
+    [category, ('featured' if @attrs[:featured])].compact.join(', ')
   end
 
   private
@@ -133,14 +139,22 @@ class Umi::Shopify::HelpCenterSyncService
       (number_mf('chatwoot_position', @attrs[:position]) if @attrs[:position].present?),
       (number_mf('featured_position', @attrs[:featured_position]) if @attrs[:featured] && @attrs[:featured_position].present?),
       text_mf('global', 'title_tag', @attrs[:title]),
-      (text_mf('global', 'description_tag', @attrs[:description].to_s[0, 320]) if @attrs[:description].present?)
+      (text_mf('global', 'description_tag', @attrs[:description], limit: 320) if @attrs[:description].present?)
     ].compact
   end
 
-  def text_mf(namespace, key, value)
-    return nil if value.blank?
+  # Shopify rejects a `single_line_text_field` containing a line break with a 422 that
+  # fails the *whole* article, so every value is squished to one line before it is sent.
+  # `squish` (not `strip`) is required: it collapses U+2028 and non-breaking spaces,
+  # which text pasted from a word processor carries and an ASCII-only `\s` would leave.
+  # `limit` is applied after squishing, so a whitespace run straddling the cut cannot
+  # move where it lands.
+  def text_mf(namespace, key, value, limit: nil)
+    normalized = value.to_s.squish
+    return nil if normalized.blank?
 
-    { namespace: namespace, key: key, type: 'single_line_text_field', value: value.to_s }
+    normalized = normalized[0, limit] if limit
+    { namespace: namespace, key: key, type: 'single_line_text_field', value: normalized }
   end
 
   def number_mf(key, value)
