@@ -29,6 +29,17 @@ RSpec.describe ActiveStorage::Attachment do
     end.to raise_error(ActiveRecord::RecordNotUnique)
   end
 
+  it 'allows replacing a contact avatar through the attachment association' do
+    contact.avatar.attach(io: StringIO.new('first'), filename: 'first.png', content_type: 'image/png')
+
+    expect do
+      contact.avatar.attach(io: StringIO.new('second'), filename: 'second.png', content_type: 'image/png')
+    end.not_to raise_error
+
+    expect(contact.reload.avatar.filename.to_s).to eq('second.png')
+    expect(described_class.where(name: 'avatar', record: contact).count).to eq(1)
+  end
+
   it 'allows two avatar attachments for a non-contact record' do
     user = create(:user)
 

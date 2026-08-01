@@ -10,6 +10,9 @@
 # builders don't take historical timestamps), the original send time stays in
 # the reconcile log line and in Meta's thread.
 class Umi::Fbig::MessageHealService
+  HEAL_LOCK_PREFIX = 'UMI_FBIG_MESSAGE_HEAL_LOCK::'
+  HEAL_LOCK_TTL = 15.minutes.to_i
+
   def initialize(channel, platform)
     @channel = channel
     @platform = platform
@@ -21,18 +24,11 @@ class Umi::Fbig::MessageHealService
   # stand-down belongs to the detection scan, and the detection line for this
   # mid is already on record.
   def heal(mid)
-    run_id = SecureRandom.uuid
-    acquired = Umi::Fbig::HistoryImportLock.acquire(@channel.id, run_id)
-    return :history_import_running unless acquired
+    lock_token = SecureRandom.uuid
+    lock_key = "#{HEAL_LOCK_PREFIX}#{@channel.id}:#{@platform}:#{mid}"
+    lock_acquired = Redis::Alfred.set(lock_key, lock_token, nx: true, ex: HEAL_LOCK_TTL)
+    return :heal_in_progress unless lock_acquired
 
-    heal_locked(mid)
-  ensure
-    Umi::Fbig::HistoryImportLock.release(@channel.id, run_id) if acquired
-  end
-
-  private
-
-  def heal_locked(mid)
     detail = fetch_detail(mid)
     return :content_unavailable if detail.nil?
     # A late webhook (or a previous heal) may have won the race since the
@@ -50,7 +46,11 @@ class Umi::Fbig::MessageHealService
   rescue StandardError => e
     Rails.logger.warn("[UMI-FBIG] stage=heal_error mid=#{mid} error=#{e.class}")
     :error
+  ensure
+    Redis::Alfred.delete_if_equals(lock_key, lock_token) if lock_acquired
   end
+
+  private
 
   def fetch_detail(mid)
     api.get_object(mid, { fields: 'id,created_time,from,message,attachments' })

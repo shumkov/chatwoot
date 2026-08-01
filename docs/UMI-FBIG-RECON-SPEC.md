@@ -155,10 +155,20 @@ Known heal limitations (accepted): the recovered message's `created_at` is
 the heal time, not the original send time — it appears late in the thread
 (the builders don't take historical timestamps without a core edit; the
 original timestamp is preserved in the log line and Meta's thread). Residual
-race with a simultaneously-arriving webhook is bounded by the ≥15 min grace +
-a just-before-write exists? re-check (FB builder has no source_id dedup of its
-own). Outbound/echo healing is deliberately excluded until real reports show
-the multipart-suspect labeling is reliable.
+race with a simultaneously-arriving webhook is bounded by the ≥15 min grace
+and a just-before-write existence re-check (FB builder has no source-id dedup
+of its own). Concurrent healers for the same channel/platform/mid are
+serialized by a 15-minute Redis owner lock and return `heal_in_progress` when
+another healer owns it. Outbound/echo healing is deliberately excluded until
+real reports show the multipart-suspect labeling is reliable.
+
+The retired one-time history importer formerly shared a per-channel writer
+lock with healing. That lock and its importer-only skip result were removed
+with the importer; no supported archive writer remains to acquire it. The
+narrow healer owner lock above preserves same-message replay serialization
+without carrying migration coupling. Patch 17's partial unique Active Storage
+index still enforces at most one `avatar` attachment per Contact across
+ordinary and healer writes.
 
 Rollout: deploy with the flag **off**, watch a few days of detection
 summaries, then enable via env + restart.
@@ -238,6 +248,9 @@ iteration + kill-switch no-op. Initializer: registration guard mirror.
   `spec/services/umi/fbig/message_heal_service_spec.rb`,
   `spec/jobs/umi/fbig/conversation_recon_job_spec.rb`
 - `UMI-PATCHES.md` row 12
+
+The independently useful Contact-avatar database invariant is registered as
+`UMI-PATCHES.md` row 17.
 
 The service logs through its own private helper (same `[UMI-FBIG]` prefix)
 rather than `Umi::FbigTrace`, keeping patch #12 removable independently of
