@@ -4,8 +4,6 @@ describe Umi::Fbig::MessageHealService do
   before do
     stub_request(:post, /graph\.facebook\.com/)
     allow(Koala::Facebook::API).to receive(:new).and_return(api)
-    allow(Umi::Fbig::HistoryImportLock).to receive(:acquire).and_return(true)
-    allow(Umi::Fbig::HistoryImportLock).to receive(:release)
   end
 
   let!(:account) { create(:account) }
@@ -14,17 +12,6 @@ describe Umi::Fbig::MessageHealService do
   end
   let!(:inbox) { create(:inbox, channel: channel, account: account) }
   let(:api) { double }
-
-  it 'skips without touching Meta when another FB/IG writer owns the channel lock' do
-    allow(Umi::Fbig::HistoryImportLock).to receive(:acquire).and_return(false)
-    allow(api).to receive(:get_object)
-
-    result = described_class.new(channel, 'instagram').heal('mid-lost')
-
-    expect(result).to eq(:history_import_running)
-    expect(api).not_to have_received(:get_object)
-    expect(Umi::Fbig::HistoryImportLock).not_to have_received(:release)
-  end
 
   describe 'instagram replay' do
     let(:service) { described_class.new(channel, 'instagram') }
@@ -57,6 +44,16 @@ describe Umi::Fbig::MessageHealService do
       expect(inbox.messages.where(source_id: 'mid-lost').count).to eq(1)
     end
 
+    it 'does not replay a mid while another healer owns it' do
+      lock_key = "UMI_FBIG_MESSAGE_HEAL_LOCK::#{channel.id}:instagram:mid-lost"
+      Redis::Alfred.set(lock_key, 'another-healer', ex: 15.minutes.to_i)
+
+      expect(service.heal('mid-lost')).to eq(:heal_in_progress)
+      expect(api).not_to have_received(:get_object).with('mid-lost', anything)
+    ensure
+      Redis::Alfred.delete(lock_key)
+    end
+
     it 'reports content_unavailable when the detail fetch fails' do
       allow(api).to receive(:get_object).with('mid-lost', anything)
                                         .and_raise(Koala::Facebook::ClientError.new(400, '', { 'message' => 'nope' }))
@@ -65,12 +62,14 @@ describe Umi::Fbig::MessageHealService do
       expect(inbox.messages.count).to eq(0)
     end
 
-    it 'releases the writer lock when healing fails' do
-      allow(api).to receive(:get_object).with('mid-lost', anything).and_raise(StandardError)
+    it 'logs only the exception class when replay fails' do
+      allow(Rails.logger).to receive(:warn)
+      allow(Instagram::Messenger::MessageText).to receive(:new).and_raise(RuntimeError, 'sensitive replay detail')
 
-      service.heal('mid-lost')
-
-      expect(Umi::Fbig::HistoryImportLock).to have_received(:release).with(channel.id, kind_of(String))
+      expect(service.heal('mid-lost')).to eq(:error)
+      expect(Rails.logger).to have_received(:warn)
+        .with('[UMI-FBIG] stage=heal_error mid=mid-lost error=RuntimeError')
+      expect(Rails.logger).not_to have_received(:warn).with(a_string_including('sensitive replay detail'))
     end
   end
 
