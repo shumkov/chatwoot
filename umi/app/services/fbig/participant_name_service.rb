@@ -39,6 +39,10 @@ class Umi::Fbig::ParticipantNameService
     end
 
     participant[NAME_FIELD.fetch(platform)].presence
+  rescue Koala::Facebook::AuthenticationError
+    # Callers abort the whole run on a dead token rather than repeating it once
+    # per contact; swallowing it here would hide that.
+    raise
   rescue StandardError => e
     Rails.logger.warn("[UMI-FBIG] stage=participant_name_failed platform=#{platform} id=#{id} error=#{e.class}: #{e.message}")
     nil

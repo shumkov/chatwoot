@@ -59,6 +59,26 @@ describe Umi::Fbig::ProfileRefreshJob do
     end
   end
 
+  # Under real throttling every Graph call raises and is rescued, so before
+  # this the run walked the whole cap producing :unchanged, stamped all of them
+  # as checked, and sorted an entire batch to the back of the cycle — with the
+  # standdown unable to fire because :failed was never produced.
+  it 'stands down instead of stamping a batch Meta refused to answer' do
+    allow(Umi::Fbig::ProfileEnrichmentService).to receive(:new).and_call_original
+    rate_limited = Koala::Facebook::ClientError.new(
+      403, '', { 'type' => 'OAuthException', 'code' => 4, 'message' => '(#4) Application request limit reached' }
+    )
+    allow(api).to receive(:get_object).and_raise(rate_limited)
+    allow(api).to receive(:get_connections).and_raise(rate_limited)
+    contacts = Array.new(12) { |i| contact_with(name: "Instagram user #{1000 + i}") }
+
+    described_class.new.perform('apply' => true)
+
+    stamped = Contact.where(id: contacts.map(&:id))
+                     .where("additional_attributes ? 'umi_profile_checked_at'")
+    expect(stamped).to be_empty
+  end
+
   it 'sweeps ledger rows past the retention window and ones orphaned by a deleted contact' do
     allow(service).to receive(:enrich).and_return(Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged))
     contact = contact_with(name: 'Instagram user 0002')

@@ -75,6 +75,24 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
       expect(contact.avatar).not_to be_attached
       expect(contact.additional_attributes.keys).to contain_exactly('umi_profile_redacted')
       expect(contact.additional_attributes['umi_profile_redacted']).to be(true)
+      expect(contact.last_name).to eq('')
+      expect(contact.custom_attributes).to eq({})
+    end
+
+    # Enrichment ledgers the before/after of every name it writes, so it holds
+    # this customer's name and handle. Leaving it to the nightly sweep would
+    # make erasure depend on another job running.
+    it 'purges the enrichment ledger rows that hold the customer name' do
+      contact = create(:contact, account: account, email: 'led@example.com',
+                                 additional_attributes: { 'shopify_customer_id' => 9004 })
+      create(:conversation, account: account, contact: contact)
+      Umi::ProfileLedgerEntry.create!(run_id: 'r', contact_id: contact.id, attribute_name: 'name',
+                                      old_value: 'Instagram user 4355', new_value: 'ploy.bkk',
+                                      evidence_source: 'participants', created_at: Time.current)
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 9004 })
+
+      expect(Umi::ProfileLedgerEntry.where(contact_id: contact.id)).to be_empty
     end
 
     # Shared phones are common; a phone-only match may be a different person —

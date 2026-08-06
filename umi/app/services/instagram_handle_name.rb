@@ -29,8 +29,20 @@ module Umi::InstagramHandleName
     # super's early-return path and keeps whatever name it had — stamping that
     # would licence a later pass to overwrite an agent's edit.
     return if @contact.blank? || @contact.name != handle
+    # Already recorded: re-writing would fire a contact-updated webhook and an
+    # ActionCable broadcast on every inbound message from this person.
+    return if @contact.additional_attributes['umi_profile_name'] == handle
 
     record_written_name(handle)
+  end
+
+  # A redacted contact keeps its source_id, so the stock path happily re-writes
+  # the handle erasure just removed on their very next message. The tombstone
+  # has to be honoured on the live path too, not only by the nightly refresher.
+  def update_instagram_profile_link(user)
+    return if @contact&.additional_attributes&.dig('umi_profile_redacted')
+
+    super
   end
 
   # Enrichment refreshes a name only while it still equals what we wrote, so

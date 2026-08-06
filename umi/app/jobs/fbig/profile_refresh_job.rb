@@ -13,25 +13,28 @@ class Umi::Fbig::ProfileRefreshJob < ApplicationJob
   Throttled = Class.new(StandardError)
 
   CYCLE_CAP = 40
-  # Below this, assume Meta is throttling rather than genuinely having no data.
-  # Stamping a throttled batch as checked would sort it to the back of the
-  # queue for a full cycle, hiding the outage behind a normal-looking run.
-  MIN_RESOLUTION_RATE = 0.2
+  # Above this share of outright Graph failures, assume Meta is refusing us
+  # rather than genuinely having no data for these people. Continuing would
+  # burn a whole cycle's quota against an outage.
+  MAX_FAILURE_RATE = 0.8
   MIN_SAMPLE_FOR_STANDDOWN = 10
 
   # Options arrive as a plain hash rather than keywords: Sidekiq serializes job
   # arguments to JSON, so a keyword signature would receive a positional hash
   # from the cron entry and fail to bind.
   def perform(options = {})
+    # Retention and erasure propagation run even when enrichment is switched
+    # off: the ledger holds customer names and handles, so leaving it frozen
+    # would turn the kill switch into an indefinite PII store — precisely when
+    # someone reaches for it because something went wrong.
+    sweep = Umi::ProfileLedgerEntry.sweep!
+    Umi::FbigTrace.log(:profile_ledger_swept, **sweep)
+
     return if ENV['UMI_FBIG_PROFILE_REFRESH_DISABLED'] == 'true'
 
     options = options.symbolize_keys
     apply = options.fetch(:apply, false)
     cap = options.fetch(:cap, CYCLE_CAP)
-
-    sweep = Umi::ProfileLedgerEntry.sweep!
-    Umi::FbigTrace.log(:profile_ledger_swept, **sweep)
-
     run_id = SecureRandom.uuid
     Channel::FacebookPage.find_each { |channel| refresh_channel(channel, run_id, apply, cap) }
   end
@@ -78,8 +81,7 @@ class Umi::Fbig::ProfileRefreshJob < ApplicationJob
     attempted = stats.values.sum
     return false if attempted < MIN_SAMPLE_FOR_STANDDOWN
 
-    resolved = stats[:updated] + stats[:would_change]
-    (resolved.to_f / attempted) < MIN_RESOLUTION_RATE && stats[:failed].positive?
+    (stats[:failed].to_f / attempted) > MAX_FAILURE_RATE
   end
 
   def stand_down!(stats)

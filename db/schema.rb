@@ -1411,8 +1411,8 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_06_000000) do
     t.bigint "contact_id", null: false
     t.bigint "contact_inbox_id"
     t.string "attribute_name", null: false
-    t.string "old_value"
-    t.string "new_value"
+    t.text "old_value"
+    t.text "new_value"
     t.string "evidence_source", null: false
     t.string "graph_response_digest"
     t.datetime "created_at", null: false

@@ -57,6 +57,23 @@ describe Instagram::Messenger::MessageText do
     expect(contact.additional_attributes['social_instagram_user_name']).to eq('ploy.bkk')
   end
 
+  # Erasure removed the handle, but the stock path re-wrote it from the
+  # surviving source_id on the customer's very next message — so the erasure
+  # lasted exactly until they said something again.
+  it 'does not restore the handle of a contact whose erasure was requested' do
+    described_class.new(messaging, channel).perform
+    contact = inbox.contact_inboxes.find_by(source_id: sender_id).contact
+    contact.update!(name: 'Redacted customer',
+                    additional_attributes: { 'umi_profile_redacted' => true })
+
+    described_class.new(messaging.merge('message' => { 'mid' => 'mid-2', 'text' => 'again' }), channel).perform
+
+    attrs = contact.reload.additional_attributes
+    expect(attrs).not_to have_key('social_instagram_user_name')
+    expect(attrs).not_to have_key('social_profiles')
+    expect(contact.name).to eq('Redacted customer')
+  end
+
   it 'leaves a real display name alone when Meta provides one' do
     allow(fb_object).to receive(:get_object).and_return(
       { 'id' => sender_id, 'name' => 'Ploy Suwan', 'username' => 'ploy.bkk' }

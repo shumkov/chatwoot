@@ -173,6 +173,8 @@ class Umi::Shopify::ContactSyncService
     return true if name == contact.phone_number
     return true if contact.email.present? && [contact.email, contact.email.split('@').first].include?(name)
 
+    return true if name == contact.additional_attributes['umi_profile_name']
+
     name.match?(HAIKUNATOR_NAME)
   end
 

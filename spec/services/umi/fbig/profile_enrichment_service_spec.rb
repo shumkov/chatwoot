@@ -25,12 +25,19 @@ describe Umi::Fbig::ProfileEnrichmentService do
     contact
   end
 
+  # The conversation factory mints its own contact_inbox unless handed one,
+  # which would make the contact look like an ambiguous merged record.
+  def instagram_conversation_for(contact)
+    create(:conversation, account: account, inbox: inbox, contact: contact,
+                          contact_inbox: contact.contact_inboxes.find_by(inbox_id: inbox.id),
+                          additional_attributes: { 'type' => 'instagram_direct_message' })
+  end
+
   describe 'the first-pass placeholder gate' do
     it 'renames a placeholder that matches this contact_inbox source_id' do
       allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
       contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
-      create(:conversation, account: account, inbox: inbox, contact: contact,
-                            additional_attributes: { 'type' => 'instagram_direct_message' })
+      instagram_conversation_for(contact)
 
       service.enrich(contact)
 
@@ -64,8 +71,7 @@ describe Umi::Fbig::ProfileEnrichmentService do
       allow(api).to receive(:get_object).and_return({ 'name' => 'Ploy Suwan', 'username' => 'ploy.bkk' })
       contact = contact_with(name: 'ploy.bkk', source_id: 'ig-scope-4355',
                              attrs: { 'umi_profile_name' => 'ploy.bkk' })
-      create(:conversation, account: account, inbox: inbox, contact: contact,
-                            additional_attributes: { 'type' => 'instagram_direct_message' })
+      instagram_conversation_for(contact)
 
       service.enrich(contact)
 
@@ -83,6 +89,52 @@ describe Umi::Fbig::ProfileEnrichmentService do
 
       expect(contact.reload.name).to eq('Ploy (returns customer)')
     end
+  end
+
+  # jsonb_set with create_if_missing only creates the FINAL key, so pathing
+  # into '{social_profiles,instagram}' silently does nothing when the contact
+  # has no social_profiles object — which is every contact this targets. The
+  # sidebar renders the Instagram link from social_profiles, so the handle
+  # would just never appear.
+  it 'writes the handle into social_profiles even when the contact has none yet' do
+    allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
+    contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
+    instagram_conversation_for(contact)
+
+    service.enrich(contact)
+
+    expect(contact.reload.additional_attributes['social_profiles']).to eq({ 'instagram' => 'ploy.bkk' })
+    expect(contact.additional_attributes['social_instagram_user_name']).to eq('ploy.bkk')
+  end
+
+  it 'preserves unrelated social profiles when merging the handle' do
+    allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
+    contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355',
+                           attrs: { 'social_profiles' => { 'twitter' => 'ploytweets' } })
+    instagram_conversation_for(contact)
+
+    service.enrich(contact)
+
+    expect(contact.reload.additional_attributes['social_profiles'])
+      .to eq({ 'twitter' => 'ploytweets', 'instagram' => 'ploy.bkk' })
+  end
+
+  # A run walks up to `cap` contacts over minutes, so an erasure can land
+  # between a contact being selected and being written.
+  it 'refuses to write to a contact erased after it was selected' do
+    allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
+    contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
+    # Bypasses callbacks deliberately: simulates an erasure landing in another
+    # process after this contact was selected.
+    Contact.where(id: contact.id)
+           .update_all("additional_attributes = additional_attributes || '{\"umi_profile_redacted\": true}'::jsonb") # rubocop:disable Rails/SkipsModelValidations
+
+    service.enrich(contact)
+
+    expect(contact.reload.name).to eq('Instagram user 4355')
+    expect(contact.additional_attributes).not_to have_key('umi_profile_name')
+    expect(contact.additional_attributes).not_to have_key('social_instagram_user_name')
+    expect(Umi::ProfileLedgerEntry.where(contact_id: contact.id)).to be_empty
   end
 
   # ContactMergeAction deep-merges additional_attributes while the base
@@ -113,15 +165,40 @@ describe Umi::Fbig::ProfileEnrichmentService do
             .new(Rails.root.join('spec/assets/avatar.png').open, 'a.png', 'image/png')
     end
 
+    # A realistic Meta CDN URL, not a short placeholder: ApplicationRecord caps
+    # :string columns at 255, so a short URL in the ledger hides the fact that
+    # every real attach would raise RecordInvalid.
+    let(:profile_pic) do
+      "https://scontent-bkk1-2.cdninstagram.com/v/t51.2885-19/#{'a' * 300}.jpg?stp=dst-jpg&amp;_nc_ht=scontent.cdninstagram.com&amp;oe=68F1A2B3"
+    end
+
     before { allow(SafeFetch).to receive(:fetch).and_yield(file) }
 
-    it 'attaches when the contact has none' do
-      allow(api).to receive(:get_object).and_return({ 'first_name' => 'Som', 'last_name' => 'Chai', 'profile_pic' => 'https://cdn/x.jpg' })
+    it 'attaches when the contact has none, and names the contact from the Facebook profile' do
+      allow(api).to receive(:get_object).and_return({ 'first_name' => 'Som', 'last_name' => 'Chai', 'profile_pic' => profile_pic })
       contact = contact_with(name: 'John Doe', source_id: 'psid-1')
 
       service.enrich(contact)
 
       expect(contact.reload.avatar).to be_attached
+      expect(contact.name).to eq('Som Chai')
+      expect(SafeFetch).to have_received(:fetch).with(
+        profile_pic,
+        hash_including(max_bytes: 15.megabytes,
+                       allowed_content_types: Avatarable::ALLOWED_AVATAR_CONTENT_TYPES,
+                       allowed_content_type_prefixes: [])
+      )
+      entry = Umi::ProfileLedgerEntry.find_by(contact_id: contact.id, attribute_name: 'avatar')
+      expect(entry.new_value).to eq(profile_pic)
+    end
+
+    it 'builds a Facebook name from whichever components Meta returns' do
+      allow(api).to receive(:get_object).and_return({ 'first_name' => 'Som' })
+      contact = contact_with(name: 'John Doe', source_id: 'psid-2')
+
+      service.enrich(contact)
+
+      expect(contact.reload.name).to eq('Som')
     end
 
     # Gap-fill only. Meta's profile_pic is a signed URL that differs on every
@@ -139,6 +216,74 @@ describe Umi::Fbig::ProfileEnrichmentService do
     end
   end
 
+  # The local rung returns a handle, never a display name. Reading it on a later
+  # cycle renamed a real name Meta had already given us back down to the handle
+  # — silent, one-way, and scored healthy by the name-shape census.
+  it 'does not downgrade a real name to the handle on a later cycle' do
+    allow(api).to receive(:get_object).and_return({ 'name' => 'Ploy Suwan', 'username' => 'ploy.bkk',
+                                                    'profile_pic' => 'https://cdn/x.jpg' })
+    allow(SafeFetch).to receive(:fetch).and_yield(
+      Struct.new(:tempfile, :original_filename, :content_type)
+            .new(Rails.root.join('spec/assets/avatar.png').open, 'a.png', 'image/png')
+    )
+    contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
+    instagram_conversation_for(contact)
+
+    service.enrich(contact)
+    expect(contact.reload.name).to eq('Ploy Suwan')
+
+    # Second cycle: avatar and handle are now stored, so the service takes its
+    # local short-circuit and makes no Graph call at all.
+    service.enrich(contact.reload)
+
+    expect(contact.reload.name).to eq('Ploy Suwan')
+  end
+
+  # ContactMergeAction moves every contact_inbox onto the surviving contact, so
+  # "which Meta identity is this" becomes genuinely ambiguous — picking one
+  # would write another customer's handle onto the record.
+  it 'refuses a merged contact that owns several contact_inboxes in the inbox' do
+    allow(api).to receive(:get_object).and_return({ 'username' => 'someone.else' })
+    contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
+    create(:contact_inbox, contact: contact, inbox: inbox, source_id: 'ig-scope-9999')
+
+    expect(service.enrich(contact).status).to eq(:skipped)
+    expect(contact.reload.name).to eq('Instagram user 4355')
+  end
+
+  # The 7 Haikunator contacts are the cohort the live-path fix stops minting;
+  # this is the only way the existing ones ever get repaired.
+  it 'renames a Haikunator-shaped contact' do
+    allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
+    contact = contact_with(name: 'lingering-sun-586', source_id: 'ig-scope-4355')
+
+    service.enrich(contact)
+
+    expect(contact.reload.name).to eq('ploy.bkk')
+  end
+
+  # The over-match direction is the one that damages agent data.
+  it 'refuses a real name that superficially resembles the Haikunator shape' do
+    allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
+    contact = contact_with(name: 'Anna-Marie Chen-1', source_id: 'ig-scope-4355')
+
+    service.enrich(contact)
+
+    expect(contact.reload.name).to eq('Anna-Marie Chen-1')
+  end
+
+  it 'stamps checked_at always, but last_success_at only when something resolved' do
+    contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
+    allow(api).to receive(:get_object).and_return({})
+    allow(api).to receive(:get_connections).and_return([])
+
+    service.enrich(contact)
+
+    attrs = contact.reload.additional_attributes
+    expect(attrs).to have_key('umi_profile_checked_at')
+    expect(attrs).not_to have_key('umi_profile_last_success_at')
+  end
+
   it 'falls back to participants when the profile API refuses' do
     allow(api).to receive(:get_object).and_raise(
       Koala::Facebook::ClientError.new(403, '', { 'type' => 'OAuthException', 'code' => 230, 'message' => 'consent required' })
@@ -147,8 +292,7 @@ describe Umi::Fbig::ProfileEnrichmentService do
       [{ 'participants' => { 'data' => [{ 'id' => 'ig-scope-4355', 'username' => 'commaand.th' }] } }]
     )
     contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
-    create(:conversation, account: account, inbox: inbox, contact: contact,
-                          additional_attributes: { 'type' => 'instagram_direct_message' })
+    instagram_conversation_for(contact)
 
     service.enrich(contact)
 
@@ -158,8 +302,7 @@ describe Umi::Fbig::ProfileEnrichmentService do
   it 'records every write in the ledger, since Contact carries no audit trail' do
     allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
     contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
-    create(:conversation, account: account, inbox: inbox, contact: contact,
-                          additional_attributes: { 'type' => 'instagram_direct_message' })
+    instagram_conversation_for(contact)
 
     service.enrich(contact)
 
@@ -172,8 +315,7 @@ describe Umi::Fbig::ProfileEnrichmentService do
   it 'writes nothing without apply, but reports what it would change' do
     allow(api).to receive(:get_object).and_return({ 'username' => 'ploy.bkk' })
     contact = contact_with(name: 'Instagram user 4355', source_id: 'ig-scope-4355')
-    create(:conversation, account: account, inbox: inbox, contact: contact,
-                          additional_attributes: { 'type' => 'instagram_direct_message' })
+    instagram_conversation_for(contact)
 
     outcome = described_class.new(channel, run_id: 'dry', apply: false).enrich(contact)
 

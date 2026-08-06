@@ -5,8 +5,10 @@ class CreateUmiProfileLedgerEntries < ActiveRecord::Migration[7.1]
       t.bigint :contact_id, null: false
       t.bigint :contact_inbox_id
       t.string :attribute_name, null: false
-      t.string :old_value
-      t.string :new_value
+      # text, not string: ApplicationRecord caps :string columns at 255 and
+      # Meta's signed profile_pic URLs run several hundred characters.
+      t.text :old_value
+      t.text :new_value
       t.string :evidence_source, null: false
       t.string :graph_response_digest
       t.datetime :created_at, null: false

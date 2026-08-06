@@ -33,8 +33,19 @@ class Umi::Fbig::ProfileEnrichmentService
   end
 
   def enrich(contact)
-    contact_inbox = contact.contact_inboxes.find_by(inbox_id: inbox.id)
-    return Outcome.new(status: :skipped) if contact_inbox.nil?
+    @graph_error = false
+    contact_inboxes = contact.contact_inboxes.where(inbox_id: inbox.id).order(:id).to_a
+    return Outcome.new(status: :skipped) if contact_inboxes.empty?
+
+    # A merge can move several contact_inboxes onto one contact. Which Meta
+    # identity the contact "is" is then genuinely ambiguous, and picking one
+    # would write another customer's handle onto it.
+    if contact_inboxes.size > 1
+      Umi::FbigTrace.log(:profile_ambiguous, contact: contact.id, contact_inboxes: contact_inboxes.size)
+      return Outcome.new(status: :skipped)
+    end
+
+    contact_inbox = contact_inboxes.first
     return Outcome.new(status: :redacted) if contact.additional_attributes['umi_profile_redacted']
 
     resolve_and_write(contact, contact_inbox)
@@ -57,11 +68,17 @@ class Umi::Fbig::ProfileEnrichmentService
     profile = profile_for(contact, contact_inbox)
     platform = platform_for(contact_inbox, profile)
     name, source = resolve_name(contact, contact_inbox, platform, profile)
+    avatar_url = (profile['profile_pic'].presence unless contact.avatar.attached?)
+
+    # Meta refused and told us nothing. Report it as a failure and, crucially,
+    # do NOT stamp checked_at: a throttled contact must stay at the front of
+    # the queue, not sort to the back for a whole cycle looking healthy.
+    return Outcome.new(status: :failed) if @graph_error && name.nil? && avatar_url.nil?
 
     write(contact, contact_inbox, Resolution.new(
                                     name: name, source: source,
                                     handle: profile['username'].presence,
-                                    avatar_url: (profile['profile_pic'].presence unless contact.avatar.attached?)
+                                    avatar_url: avatar_url
                                   ))
   end
 
@@ -73,16 +90,24 @@ class Umi::Fbig::ProfileEnrichmentService
   # With no conversations at all, Meta's own answer discriminates: an
   # Instagram profile carries `username`, a Messenger one `first_name`.
   def platform_for(contact_inbox, profile)
-    types = Conversation.where(contact_inbox_id: contact_inbox.id)
-                        .distinct.pluck(Arel.sql("additional_attributes->>'type'"))
-    if types.empty?
-      types = Conversation.where(contact_id: contact_inbox.contact_id, inbox_id: contact_inbox.inbox_id)
-                          .distinct.pluck(Arel.sql("additional_attributes->>'type'"))
-    end
+    # compact: Facebook conversations carry no 'type' key, so pluck yields
+    # [nil] rather than []. Without this the legacy fallback never runs and the
+    # messenger branch is unreachable, since [nil].any? is false.
+    types = conversation_types(contact_inbox.id, nil).compact
+    types = conversation_types(nil, contact_inbox).compact if types.empty?
     return :instagram if types.include?('instagram_direct_message')
     return :messenger if types.any?
 
     profile['username'].present? || contact_inbox.contact.additional_attributes['social_instagram_user_name'].present? ? :instagram : :messenger
+  end
+
+  def conversation_types(contact_inbox_id, contact_inbox)
+    scope = if contact_inbox
+              Conversation.where(contact_id: contact_inbox.contact_id, inbox_id: contact_inbox.inbox_id)
+            else
+              Conversation.where(contact_inbox_id: contact_inbox_id)
+            end
+    scope.distinct.pluck(Arel.sql("additional_attributes->>'type'"))
   end
 
   # Skip the Graph call entirely when everything it could tell us is already
@@ -99,17 +124,25 @@ class Umi::Fbig::ProfileEnrichmentService
   rescue StandardError => e
     # Error 230 and friends: the profile API is denied, but participants still
     # answers, so this is not the end of the road for the name.
+    @graph_error = true
     Umi::FbigTrace.log(:profile_denied, contact: contact.id, reason: e.class.name)
     {}
   end
 
   def resolve_name(contact, contact_inbox, platform, profile)
     return [nil, nil] unless rename_allowed?(contact, contact_inbox)
+    # The local rung carries a handle, never a display name. Once we have
+    # written a name, re-reading it would rename a real name Meta gave us in an
+    # earlier cycle back down to the handle — a silent one-way downgrade.
+    return [nil, nil] if profile['local'] && contact.additional_attributes['umi_profile_name'].present?
 
     from_profile = name_from_profile(profile, platform)
     return [from_profile, profile['local'] ? 'local' : 'profile_api'] if from_profile
 
     handle = Umi::Fbig::ParticipantNameService.new(@channel).name_for(contact_inbox.source_id, platform: platform)
+    # Participants swallows its own errors, so a nil here after the profile API
+    # already errored means Meta told us nothing at all — not that this person
+    # has no name.
     handle ? [handle, 'participants'] : [nil, nil]
   end
 
@@ -133,7 +166,10 @@ class Umi::Fbig::ProfileEnrichmentService
     name = contact.name.to_s
     name == "Instagram user #{contact_inbox.source_id.to_s.last(4)}" ||
       REWRITABLE_LITERALS.include?(name) ||
-      name.match?(HAIKUNATOR_NAME)
+      name.match?(HAIKUNATOR_NAME) ||
+      # Still ours even if the stamp was lost to a concurrent whole-column
+      # write, which would otherwise freeze the contact on its handle forever.
+      name == contact.additional_attributes['social_instagram_user_name']
   end
 
   def write(contact, contact_inbox, resolution)
@@ -153,15 +189,27 @@ class Umi::Fbig::ProfileEnrichmentService
     attach_avatar(contact, contact_inbox, resolution.avatar_url)
   end
 
+  # One transaction: a crash between the stamp and the rename would leave
+  # umi_profile_name holding the new name while contacts.name still holds the
+  # placeholder, and the value-equality gate would then refuse that contact
+  # forever — invisible to both the name-shape census and the freshness stamps.
+  # The ledger is inside too, so it can never claim a write that rolled back.
   def apply_name(contact, contact_inbox, resolution, renaming:, attached:)
-    record_ledger(contact_inbox, 'name', contact.name, resolution.name, resolution.source) if renaming
+    ActiveRecord::Base.transaction do
+      record_ledger(contact_inbox, 'name', contact.name, resolution.name, resolution.source) if renaming
 
-    merge_attributes(contact, name: (renaming ? resolution.name : nil), handle: resolution.handle,
-                              succeeded: resolution.name.present? || attached)
-    contact.reload
-    # Partial update: a name-only UPDATE that still fires before_save, so
-    # Contacts::SyncAttributes promotes visitor -> lead from the reloaded hash.
-    contact.update!(name: resolution.name) if renaming
+      merge_attributes(contact, name: (renaming ? resolution.name : nil), handle: resolution.handle,
+                                succeeded: resolution.name.present? || attached)
+      contact.reload
+      # The SQL merge above already refused if an erasure landed since this
+      # contact was selected; the rename and its ledger row must roll back with
+      # it, or a statutory erasure gets undone minutes after it was honoured.
+      raise ActiveRecord::Rollback if contact.additional_attributes['umi_profile_redacted']
+
+      # Partial update: a name-only UPDATE that still fires before_save, so
+      # Contacts::SyncAttributes promotes visitor -> lead from the reloaded hash.
+      contact.update!(name: resolution.name) if renaming
+    end
   end
 
   def preview(resolution, renaming)
@@ -171,30 +219,39 @@ class Umi::Fbig::ProfileEnrichmentService
 
   # Written as SQL rather than a model save because Avatar::AvatarFromUrlJob
   # rewrites this whole column from a job-start snapshot in an ensure block —
-  # a read-modify-write here would race it. Top-level merge for the flat keys,
-  # a targeted path set for the nested handle so unrelated social profiles
-  # survive.
+  # a read-modify-write here would race it.
+  #
+  # The nested handle is merged via jsonb_build_object rather than jsonb_set:
+  # jsonb_set with create_if_missing only creates the FINAL key, so pathing
+  # into '{social_profiles,instagram}' is a silent no-op whenever the contact
+  # has no social_profiles object yet — which is every contact this feature
+  # targets. Unrelated social profiles still survive the merge.
+  #
+  # The redaction tombstone is re-checked here in SQL, not just in Ruby: a run
+  # walks up to `cap` contacts over minutes, so an erasure can land between the
+  # contact being loaded and being written.
   def merge_attributes(contact, name:, handle:, succeeded:)
     flat = { 'umi_profile_checked_at' => Time.current.iso8601 }
     flat['umi_profile_last_success_at'] = Time.current.iso8601 if succeeded
     flat['umi_profile_name'] = name if name
     flat['social_instagram_user_name'] = handle if handle
 
-    if handle
-      Contact.connection.exec_update(
-        Contact.sanitize_sql_array(
-          ["UPDATE contacts SET additional_attributes = jsonb_set(COALESCE(additional_attributes, '{}'::jsonb) || ?::jsonb, " \
-           "'{social_profiles,instagram}', ?::jsonb, true) WHERE id = ?", flat.to_json, handle.to_json, contact.id]
-        )
-      )
-    else
-      Contact.connection.exec_update(
-        Contact.sanitize_sql_array(
-          ["UPDATE contacts SET additional_attributes = COALESCE(additional_attributes, '{}'::jsonb) || ?::jsonb WHERE id = ?",
-           flat.to_json, contact.id]
-        )
-      )
-    end
+    Contact.connection.exec_update(Contact.sanitize_sql_array([merge_sql(handle), *merge_binds(flat, handle, contact)]))
+  end
+
+  def merge_sql(handle)
+    social = if handle
+               " || jsonb_build_object('social_profiles', " \
+                 "COALESCE(additional_attributes->'social_profiles', '{}'::jsonb) || jsonb_build_object('instagram', ?::text))"
+             else
+               ''
+             end
+    "UPDATE contacts SET additional_attributes = COALESCE(additional_attributes, '{}'::jsonb) || ?::jsonb#{social} " \
+      "WHERE id = ? AND COALESCE(additional_attributes->>'umi_profile_redacted', 'false') != 'true'"
+  end
+
+  def merge_binds(flat, handle, contact)
+    handle ? [flat.to_json, handle, contact.id] : [flat.to_json, contact.id]
   end
 
   # Deliberately not Avatar::AvatarFromUrlJob: its guard reads a timestamp
@@ -204,18 +261,25 @@ class Umi::Fbig::ProfileEnrichmentService
   # validation, leaving it as the only content-type and size enforcement.
   # Gap-fill only: an existing avatar is never replaced.
   def attach_avatar(contact, contact_inbox, url)
+    attached = false
     SafeFetch.fetch(url, max_bytes: MAX_AVATAR_BYTES, allowed_content_type_prefixes: [],
                          allowed_content_types: Avatarable::ALLOWED_AVATAR_CONTENT_TYPES) do |file|
       # Download happens outside the lock; only the attach is serialized.
       ActiveRecord::Base.transaction(requires_new: true) do
         fresh = Contact.lock.find(contact.id)
-        next if fresh.avatar.attached?
+        # Re-read under the lock: an erasure may have landed since this contact
+        # was selected, and redaction purges the avatar we would re-attach.
+        next if fresh.avatar.attached? || fresh.additional_attributes['umi_profile_redacted']
 
         record_ledger(contact_inbox, 'avatar', nil, url, 'profile_api')
         fresh.avatar.attach(io: file.tempfile, filename: file.original_filename, content_type: file.content_type)
+        attached = fresh.avatar.attached?
       end
     end
-    true
+    # Report what actually happened: the skip paths above commit normally, so
+    # returning a bare true would claim an avatar write for a contact whose
+    # avatar was never touched — and stamp last_success_at for it.
+    attached
   rescue ActiveRecord::RecordNotUnique
     # A concurrent writer attached first. Its avatar stands.
     Umi::FbigTrace.log(:avatar_conflict, contact: contact.id)
