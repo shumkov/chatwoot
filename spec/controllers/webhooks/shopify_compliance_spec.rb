@@ -47,8 +47,34 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
       expect(contact.name).to eq('Redacted customer')
       expect(contact.email).to be_nil
       expect(contact.phone_number).to be_nil
-      expect(contact.additional_attributes.keys).to eq(['company_name'])
+      expect(contact.additional_attributes.keys).to contain_exactly('company_name', 'umi_profile_redacted')
       expect(contact.conversations.count).to eq(1)
+    end
+
+    # A contact who reached UMI on Instagram carries their handle and their
+    # profile photo. Blanking the name while keeping those leaves the person
+    # identifiable, so erasure has to reach them too. The tombstone is what
+    # stops profile enrichment re-deriving the handle from Meta afterwards.
+    it 'erases the Instagram handle and avatar, and tombstones the contact against re-enrichment' do
+      contact = create(:contact, account: account, email: 'ig@example.com',
+                                 additional_attributes: {
+                                   'shopify_customer_id' => 9003,
+                                   'social_instagram_user_name' => 'ploy.bkk',
+                                   'social_profiles' => { 'instagram' => 'ploy.bkk' },
+                                   'umi_profile_name' => 'ploy.bkk',
+                                   'umi_profile_checked_at' => '2026-08-06T00:00:00Z'
+                                 })
+      contact.avatar.attach(io: Rails.root.join('spec/assets/avatar.png').open,
+                            filename: 'avatar.png', content_type: 'image/png')
+      create(:conversation, account: account, contact: contact)
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 9003 })
+
+      contact.reload
+      expect(contact.name).to eq('Redacted customer')
+      expect(contact.avatar).not_to be_attached
+      expect(contact.additional_attributes.keys).to contain_exactly('umi_profile_redacted')
+      expect(contact.additional_attributes['umi_profile_redacted']).to be(true)
     end
 
     # Shared phones are common; a phone-only match may be a different person —

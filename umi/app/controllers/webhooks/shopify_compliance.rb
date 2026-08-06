@@ -129,12 +129,30 @@ module Umi::Webhooks::ShopifyCompliance
     end
   end
 
+  # Purged before the update so a failure mid-way leaves the contact
+  # over-erased rather than under-erased. Synchronous, not purge_later: a
+  # queue that never drains would leave the image in place with nothing
+  # reporting it.
+  # A Meta DM contact stays identifiable through their Instagram handle and
+  # profile photo, so erasure has to reach those too — blanking the name alone
+  # is cosmetic. The avatar is purged first and synchronously: a failure
+  # mid-way should leave the contact over-erased rather than under-erased, and
+  # a purge_later that never drains would leave the image in place with
+  # nothing reporting it.
+  #
+  # The tombstone outlives the erasure on purpose. Profile enrichment resolves
+  # names and avatars from Meta on a recurring pass and would otherwise
+  # re-derive both from the source_id, silently reversing a statutory erasure.
+  # Keying that skip off the redacted name instead would not work — enrichment
+  # renames the contact, which un-matches it.
   def anonymize_contact(contact)
+    contact.avatar.purge
     contact.update!(
       name: 'Redacted customer', email: nil, phone_number: nil, identifier: nil,
       location: nil, country_code: nil,
       additional_attributes: contact.additional_attributes.except('city', 'country')
-                                    .reject { |key, _| key.start_with?('shopify_') }
+                                    .reject { |key, _| key.start_with?('shopify_', 'social_', 'umi_profile_') }
+                                    .merge('umi_profile_redacted' => true)
     )
   end
 
