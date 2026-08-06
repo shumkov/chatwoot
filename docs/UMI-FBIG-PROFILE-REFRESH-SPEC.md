@@ -381,6 +381,47 @@ avatar field, so they can never receive one. **Revised from r3**, whose
 "collapse to the genuinely-dead ids" was unachievable by its own numbers and
 would have made a healthy system indistinguishable from a broken one.
 
+## Implementation notes (what code review changed)
+
+Four review agents scrutinised the diff. Findings that changed the design, kept
+here so the doc matches the code:
+
+- **`jsonb_set` cannot create intermediate objects.** Pathing into
+  `{social_profiles,instagram}` with `create_if_missing` was a silent no-op for
+  every contact without a `social_profiles` object — the whole target cohort.
+  Built with `jsonb_build_object` instead.
+- **Ledger values must be `text`.** `ApplicationRecord` caps `:string` at 255
+  and Meta's signed `profile_pic` URLs run 350–600 characters, so every avatar
+  attach would have raised `RecordInvalid`.
+- **The local rung is an avatar/handle shortcut, never a name source on a later
+  cycle.** Reading it after a name had been resolved renamed a real display
+  name back down to the handle — one-way and silent.
+- **Ambiguous contacts are skipped, not guessed.** A merged contact owns
+  several `contact_inbox` rows and `find_by` has no ordering, so the source_id
+  chosen was arbitrary and could write another customer's handle.
+- **The rename gate also accepts a name equal to the stored handle**, so a
+  contact stays repairable if the provenance value is lost to
+  `AvatarFromUrlJob`'s whole-column write.
+- **The throttle standdown tracks Graph denials**, not resolution rate: every
+  Graph error was previously rescued into `:unchanged`, so `:failed` was never
+  produced and the standdown was dead code. A refused batch is now left
+  unstamped so it stays at the head of the queue.
+- **Erasure ordering inverted** — the tombstone is set first, because it is
+  what keeps the erasure honoured; purging the avatar and ledger before it
+  meant a failed `update!` destroyed the audit trail while leaving the contact
+  un-erased and still enrichable.
+- **The live Instagram path honours the tombstone**, which it previously did
+  not: it rewrote the handle from the surviving source_id on the customer's
+  very next message, so erasure lasted only until they spoke again.
+- **The ledger sweep no longer rides the kill switch.** Disabling enrichment
+  had also frozen retention and erasure propagation.
+- **`placeholder_name?` in the Shopify sync** now treats a name we wrote as a
+  placeholder, so a real customer name from an order still wins (§6's guard).
+
+Not implemented, and deliberately so: the expected-database guard (the drain is
+run by hand against a known host) and the canary as a code path (it is a
+runbook ordering — attach-only contacts are drained before renames).
+
 ## Commits
 
 Per `CONTRIBUTING-UMI.md` golden rule 2:
