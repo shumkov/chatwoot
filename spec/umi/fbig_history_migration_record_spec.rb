@@ -36,7 +36,13 @@ RSpec.describe 'FB/IG history migration completion record' do
 
   it 'does not leave the retired importer entrypoints in the application tree' do
     surviving_services = Dir[Rails.root.join('umi/app/services/fbig/*.rb')].map { |path| File.basename(path) }
-    expect(surviving_services).to match_array(%w[conversation_recon_service.rb message_heal_service.rb participant_name_service.rb])
+    # profile_enrichment_service.rb is not a resurrected importer component: it
+    # was written fresh under the reviewed plan the migration record demands
+    # (docs/UMI-FBIG-PROFILE-REFRESH-SPEC.md) for the ongoing gap the importer
+    # never covered. The importer's own profile services stay retired.
+    expect(surviving_services).to match_array(
+      %w[conversation_recon_service.rb message_heal_service.rb participant_name_service.rb profile_enrichment_service.rb]
+    )
 
     expect(Dir[Rails.root.join('lib/tasks/*fbig*history*.rake')]).to be_empty
     expect(Dir[Rails.root.join('script/umi_fbig/**/*')].reject { |path| File.directory?(path) }).to be_empty

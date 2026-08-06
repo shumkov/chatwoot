@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_07_24_000000) do
+ActiveRecord::Schema[7.1].define(version: 2026_08_06_000000) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -447,8 +447,8 @@ ActiveRecord::Schema[7.1].define(version: 2026_07_24_000000) do
     t.integer "status", default: 0, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["account_id"], name: "index_captain_faq_suggestions_on_account_id"
     t.index ["account_id", "assistant_id", "status", "language"], name: "idx_cap_faq_suggestions_on_account_assistant_status_language"
+    t.index ["account_id"], name: "index_captain_faq_suggestions_on_account_id"
     t.index ["assistant_id"], name: "index_captain_faq_suggestions_on_assistant_id"
     t.index ["embedding"], name: "vector_idx_captain_faq_suggestions_embedding", opclass: :vector_cosine_ops, using: :ivfflat
   end
@@ -989,10 +989,10 @@ ActiveRecord::Schema[7.1].define(version: 2026_07_24_000000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.integer "inbox_id"
-    t.index ["account_id", "name", "template_type", "locale"], name: "index_email_templates_on_account_scope", unique: true, where: "(account_id IS NOT NULL) AND (inbox_id IS NULL)"
+    t.index ["account_id", "name", "template_type", "locale"], name: "index_email_templates_on_account_scope", unique: true, where: "((account_id IS NOT NULL) AND (inbox_id IS NULL))"
     t.index ["inbox_id", "name", "template_type", "locale"], name: "index_email_templates_on_inbox_scope", unique: true, where: "(inbox_id IS NOT NULL)"
     t.index ["inbox_id"], name: "index_email_templates_on_inbox_id"
-    t.index ["name", "template_type", "locale"], name: "index_email_templates_on_installation_scope", unique: true, where: "(account_id IS NULL) AND (inbox_id IS NULL)"
+    t.index ["name", "template_type", "locale"], name: "index_email_templates_on_installation_scope", unique: true, where: "((account_id IS NULL) AND (inbox_id IS NULL))"
   end
 
   create_table "folders", force: :cascade do |t|
@@ -1404,6 +1404,21 @@ ActiveRecord::Schema[7.1].define(version: 2026_07_24_000000) do
     t.string "icon_color", default: ""
     t.index ["account_id"], name: "index_teams_on_account_id"
     t.index ["name", "account_id"], name: "index_teams_on_name_and_account_id", unique: true
+  end
+
+  create_table "umi_profile_ledger_entries", force: :cascade do |t|
+    t.string "run_id", null: false
+    t.bigint "contact_id", null: false
+    t.bigint "contact_inbox_id"
+    t.string "attribute_name", null: false
+    t.string "old_value"
+    t.string "new_value"
+    t.string "evidence_source", null: false
+    t.string "graph_response_digest"
+    t.datetime "created_at", null: false
+    t.index ["contact_id"], name: "index_umi_profile_ledger_entries_on_contact_id"
+    t.index ["created_at"], name: "index_umi_profile_ledger_entries_on_created_at"
+    t.index ["run_id"], name: "index_umi_profile_ledger_entries_on_run_id"
   end
 
   create_table "user_sessions", force: :cascade do |t|
