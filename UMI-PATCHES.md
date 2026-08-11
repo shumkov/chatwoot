@@ -5,7 +5,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | # | Patch | Files | Why | Remove when |
 |---|---|---|---|---|
-| 1 | Facebook Graph API v21 + HUMAN_AGENT tag | `config/initializers/zz_umi_facebook_fix.rb` | Bundled `facebook-messenger` gem pins removed Graph API **v3.2** → outbound FB fails. Repins v21.0, and enables Chatwoot's built-in `ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT` (so replies use the 7-day `HUMAN_AGENT` window) instead of the default `RESPONSE` — via the flag, not a service override. | Upstream bumps the gem's Graph version (the HUMAN_AGENT part is just config — drop by unsetting the flag). |
+| 1 | Facebook Graph API v21 pin | `config/initializers/zz_umi_facebook_fix.rb`, `app/services/instagram/messenger/send_on_instagram_service.rb` | Bundled `facebook-messenger` gem pins removed Graph API **v3.2** → outbound FB fails. Repins v21.0. Also pins the one hardcoded **v11.0** URL in the Instagram-via-Messenger send path, which survived only because Meta silently upgrades calls to retired versions. **The HUMAN_AGENT half was removed 2026-08-11** — it never took effect (`GlobalConfigService` reads `InstallationConfig` before ENV, and this install holds an explicit `false`), and reviving it would stamp `HUMAN_AGENT` on *every* outbound message, breaking all messaging if the app lacks Meta's `human_agent` permission — to recover 4 late replies per 60 days, 3 of them an internal test. | Upstream bumps the gem's Graph version and pins the Instagram send URL. |
 | 2 | Widget home: storefront-aligned assistance UI | `app/javascript/widget/views/Home.vue`, `.../Home/UmiHomeComposer.vue`, `.../Home/UmiInboxLinks.vue`, `.../Home/UmiHomeWelcome.vue`, `.../Home/Article/{ArticleContainer,ArticleBlock,ArticleListItem}.vue`, `app/javascript/widget/components/{ChatHeader.vue,layouts/ViewWithHeader.vue}`, `app/javascript/widget/i18n/locale/{en,th}.json`, `app/javascript/widget/assets/scss/{woot.scss,_umi-theme.scss}`; docs: `docs/UMI-WIDGET-HOME-SPEC.md` | Make the widget home a self-contained assistant matching the UMI storefront (drawer shell shipped theme-side). Header shows a translatable **"Assistance"** (overrides the inbox name so the agent UI stays "Website"); a **time-aware welcome** ("available within minutes" during 9 AM–9 PM Bangkok, every day; otherwise a countdown to 9 AM); a single input block — **type-to-chat composer** when there's no conversation, **"Continue conversation"** when one exists; **quick links to WhatsApp / LINE / Messenger / Instagram**; and Help Center articles that open on the **storefront** (`/blogs/help/<slug>`, "View all" → `/pages/help`) instead of the in-drawer viewer. Order: welcome → articles → links → composer. A storefront-alignment SCSS layer (`_umi-theme.scss`, imported last in `woot.scss`) restyles the widget to Helvetica, squared corners, white surfaces, black accents, and flat (no shadows). | **Frontend core edit — keep** while the storefront relies on it (UMI product behaviour). Re-check `Home.vue`, `ViewWithHeader.vue`, `ArticleContainer` and the `conversation/sendMessage` action on each rebase. |
 | 3 | Help Center → Shopify "help" blog sync | `umi/app/services/shopify/help_center_sync_service.rb`, `umi/app/jobs/shopify/help_center_sync_job.rb`, `umi/app/models/shopify_help_center_syncable.rb`, `config/initializers/zz_umi_shopify_help_center.rb`, `lib/tasks/umi_help_center.rake`, `spec/services/umi/shopify/help_center_sync_service_spec.rb`; **core edit:** `config/application.rb` (wires the `umi/` overlay under the `Umi::` namespace via `push_dir`); docs: `UMI-SHOPIFY-HELP-CENTER-SPEC.md`, `UMI-SHOPIFY-HELP-CENTER-REVIEW.md`, `UMI-SHOPIFY-HELP-CENTER-RESILIENCE-SPEC.md` | Mirror Chatwoot Help Center articles to the storefront so the FAQ is server-rendered + SEO-indexed at `/blogs/help/<article>`. Reuses the **existing Shopify integration token** (Integrations::Hook `app_id:"shopify"`) — adds `read_content`/`write_content` + `read_online_store_navigation`/`write_online_store_navigation` to its OAuth scopes. Chatwoot stays the source of truth. | A native Chatwoot ↔ Shopify content sync ships upstream, or UMI stops mirroring the FAQ to the storefront. |
 | 4 | Voice (calls): inbound Twilio → SIP softphone | `umi/app/services/voice.rb`, `umi/app/services/voice/twiml/dial_builder.rb`, `umi/app/services/voice/inbound_resolver.rb`, `umi/app/controllers/voice/webhooks_controller.rb`, `umi/app/models/channel/twilio_sms.rb`, `config/initializers/zz_umi_voice.rb`, `spec/umi/voice/twiml/dial_builder_spec.rb`, `spec/umi/call_spec.rb`; docs: `docs/CALLS_BACKEND_SPEC.md`, `docs/GROUNDWIRE_AGENT_SETUP.md` | Agent calling on phones via Twilio + Acrobits Groundwire SIP softphone — no native app, no premium-gated EE voice. Inbound Twilio call → `<Dial><Sip>` rings the on-duty agents' Groundwire with the Chatwoot contact name injected via `Remote-Party-ID`, **and logs the call** (Contact→Conversation→`voice_call` message screen-pop + status/duration tracking). **Outbound click-to-call** rings the agent's softphone then bridges to the contact, plus **optional call recording**. WhatsApp follows. Includes `Umi::Call#direction_label` so upstream's native `GET /calls` serializer renders the repointed `calls` association without a 500. | **Remove-when now firing:** upstream v4.16.0 shipped native voice on the same `calls` table (a `GET /calls` endpoint + a native `Call` model). Reconcile `Umi::Call` with that native `Call` (extend it, or retire the repoint) — see the reconciliation note below — or drop this patch once native voice is unlocked/usable for UMI. |
@@ -29,12 +29,23 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
 Idempotent initializer (safe even if upstream fixes it): re-pins
 `Facebook::Messenger::{Bot,Profile,Subscriptions}` base_uri to
-`graph.facebook.com/v21.0/me`, and turns on Chatwoot's built-in
-`ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT` (`ENV[...] ||= 'true'`, skipped in test) so
-`Facebook::SendOnFacebookService#merge_human_agent_tag` (and the Instagram
-equivalent) sends the `HUMAN_AGENT` tag. This replaces an earlier `prepend` that
-hardcoded the tag — using the flag keeps the upstream default-`RESPONSE` specs
-green and is one fewer service override to maintain on rebase.
+`graph.facebook.com/v21.0/me`. Paired with a one-line pin of the hardcoded
+`v11.0` URL in `Instagram::Messenger::SendOnInstagramService#send_message` —
+the only Graph URL in the send path the initializer cannot reach, since it is
+built inline with no seam to override. A `prepend` there would have to copy the
+whole method and would silently drift if upstream changed it.
+
+**The HUMAN_AGENT half was removed 2026-08-11.** It set
+`ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT` via `ENV[...] ||= 'true'` intending to
+put replies in Meta's 7-day human-agent window, but `GlobalConfigService` reads
+`InstallationConfig` before ENV and this install holds an explicit `false`
+(row 26, 2026-06-12) — so the patch documented behaviour that was never
+happening. Not revived, because `merge_human_agent_tag` stamps
+`messaging_type=MESSAGE_TAG` + `tag=HUMAN_AGENT` on **every** outbound message
+rather than only those past 24 hours: without Meta's `human_agent` permission
+granted, that breaks all outbound messaging. Measured upside is 4 replies in 60
+days past the 24-hour mark, 3 of them an internal test conversation. To enable
+it properly, confirm the permission and set the `InstallationConfig` row.
 
 ### 2. Widget home: composer + messenger links
 
