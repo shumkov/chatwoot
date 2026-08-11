@@ -1,7 +1,8 @@
 # UMI × Meta — Purchase event data quality
 
-**Status:** Investigation complete for what production access can settle; one
-Events Manager read still outstanding
+**Status:** Complete. Events Manager read back 2026-08-12; it holds no further
+detail, so the remaining unknown is unprovable from outside Meta and is
+resolved by experiment instead.
 **Date:** 2026-08-12
 **Scope:** Read-only. No production writes, no code changes.
 **Dataset:** `1540380063308828` ("cherry.cheap's pixel"), business
@@ -18,14 +19,14 @@ YES.** Over 15 Jul – 11 Aug 2026 Meta recorded **39 Purchase events** against
 **13**. Adding a second Purchase stream would double-count. The long-held
 premise that "55% of revenue never reaches Meta" is **wrong**.
 
-**2. Which subset of Purchase events is missing the value field?** Not
-settled. Every Purchase event in the trailing 28 days carries a `value` **key**,
-and Meta's own missing-parameter diagnostic currently reports *passed*. But
-Meta's warning quotes an empty string (`""`), which is a key that is present and
-blank — a state the aggregation I can read cannot distinguish from a real
-number. The affected population is narrowed to **two candidate subsets of
-exactly 13 orders each**, with a single decisive test defined in
-[What to read from Events Manager](#what-to-read-from-events-manager).
+**2. Which Purchase events have bad price data?** The failure *mode* is now
+established: **13 of the 39 events send a `value` field that is present but not
+a usable positive number.** It is a live problem, not a historical one — Meta's
+diagnostic covers 15 Jul – 11 Aug 2026, the identical window measured here. The
+*identity* of those 13 is **not obtainable from outside Meta**: Events Manager
+exposes no raw counts, no per-event sample and a blank Integration column. Two
+candidate subsets of exactly 13 remain, and the way to choose between them is a
+cheap change-and-watch experiment, not more Meta access.
 
 ---
 
@@ -193,71 +194,119 @@ and is unaffected by anything in this document.
 
 ---
 
-## The missing-value question
+## The price-data question
 
-### What is established
+Meta's exact wording, from the Diagnostics tab:
 
-- Over the trailing 28 days, all 39 Purchase events carry a `value` **key** and
-  a `currency` key.
-- Meta's own diagnostic `pixel_missing_param_in_events` currently reports
-  **passed**.
-- `event_processing_results` for Purchase returns no error or rejection rows —
-  nothing is being dropped before it is counted.
+> **Send higher-quality price data for more accurate ROAS calculation.**
+> 33% of the price data received from **website Purchase events** have
+> formatting issues or missing values. This may affect your ROAS calculation.
 
-### Why that does not close the question
+Detail dialog: Event name `Purchase` · % affected `33` · Issue details
+*"Value field is missing / E.g. `""` isn't allowed"* · **Integration column
+blank**. Guidance: value *"must be a numeric value that is greater than 0"*.
+Dataset date range on screen: **15 Jul 2026 – 11 Aug 2026**. Affected ad spend
+**฿2,774**.
 
-`aggregation=custom_data_field` counts **whether the key was sent**, not
-whether it held a usable number. Meta's warning is explicit that the offending
-payload is an empty string:
+### What is now established
 
-> Purchase — 33% affected — Value field is missing. E.g. `""` isn't allowed.
+**1. It is live, not historical, and it is about the events measured here.**
+The diagnostic's window is exactly the window read from the API. That closes a
+branch left open in the first draft of this document — "the 33% may predate the
+28-day retention horizon" is now ruled out. The affected events are among the
+39 counted above.
 
-An event sending `value: ""` has the key present and would be counted in the
-39. So this aggregation can neither confirm nor refute the 33%. I state this
-rather than claiming the problem is fixed.
+**2. The failure mode is a present-but-unusable value, not an absent field.**
+`aggregation=custom_data_field` reports `value` on 39/39 events — but it also
+reports `content_ids` on only **38/39**. That asymmetry proves the aggregation
+*does* register genuine absence when it happens. So a field it counts as
+present, which Meta simultaneously reports as failing, is present and
+unusable: an empty string, a non-numeric string, or a number that is not
+greater than 0.
 
-Two further reasons the 33% may sit outside my view: the stats API retains only
-28 days, and Events Manager diagnostics persist an issue after it stops
-occurring, showing a "last received" date that can be well outside the chart's
-range.
+**3. "Website Purchase events" does not narrow this to the browser.** Agreed
+with the reading on the read-back. In Meta's taxonomy "website events" means
+`action_source: website`, which spans pixel *and* Conversions API. The API
+corroborates it directly: `aggregation=url&event=Purchase` returns
+`https://umi.store/` for 28 of 39 events — more than the 13 BROWSER events — so
+server-side events are carrying a website source URL too and sit in the same
+bucket. Diagnostics action 2 ("you saw 11.8% more conversions by using the
+Conversions API alongside the Meta pixel") sits under the same heading, which
+would make no sense if the heading excluded CAPI.
+
+**4. The blank Integration column is itself consistent with the architecture
+finding.** Meta has no single integration to name because both connection
+methods originate from the *same* Shopify app (`2329312`). It is not evidence
+of a mystery third source.
+
+### The third candidate, costed: zero and malformed values
+
+Meta's rule is that value must be numeric **and greater than 0**, which makes a
+฿0.00 order a violation by definition. This was worth costing properly, and it
+had not been measured before. Result, for the exact diagnostic window:
+
+| Population | Orders | % of 39 events |
+|---|---:|---:|
+| `total_price == 0.00` | 3 (#1582, #1587, #1592 — all Shumabit-with-checkout) | 7.7% |
+| plus cancelled/refunded to zero | +1 (#1574 — Shumabit-no-checkout, refunded to ฿0.00) | — |
+| **all values ≤ 0** | **4** | **10.3%** |
+
+Everything else is a clean positive decimal. No test orders, no multi-currency,
+one `pending` order, no other refunds.
+
+**So zero-value orders cannot explain 33% on their own — 10.3% is a third of
+the way there.** They are certainly *a* violation by Meta's stated rule, and
+fixing them is unambiguously correct, but they are at most a subset of the
+affected 13.
+
+### The tension this creates — and why it is useful
+
+If Meta *is* counting the ฿0 orders as violations, then neither clean 13-set
+can be the whole answer, because the zeros do not sit inside either of them
+cleanly:
+
+| Hypothesis | Affected count | % of 39 |
+|---|---:|---:|
+| Web checkouts (13) **+** the 4 zero/refunded orders (all non-web) | 17 | 43.6% |
+| Shumabit-no-checkout (13, already contains #1574) **+** the 3 other zeros | 16 | 41.0% |
+| Web checkouts alone | 13 | **33.3%** |
+| Shumabit-no-checkout alone | 13 | **33.3%** |
+
+Only the clean 13-sets land on 33%. The most economical reading is therefore
+that **Meta is not counting the ฿0.00 orders** — either it does not receive a
+Purchase event for them, or it does not flag a zero as a formatting issue
+despite the guidance text — and that the affected population is one of the two
+13-order subsets.
+
+That is an inference from arithmetic, not a proof. Its value is that it makes
+the experiment below *diagnostic either way*.
 
 ### The two candidate subsets
 
-33% of 39 is 12.9. There are exactly two populations of 13 in this window, and
-they are **disjoint**:
+33% of 39 is 12.9. There are exactly two populations of 13, and they are
+**disjoint**:
 
-| Candidate | Orders | Value | If this is the affected set, Meta's total Purchase value for the window is |
-|---|---:|---:|---:|
-| Web checkout / the 13 BROWSER events | 13 | ฿92,250.00 | **฿136,788.00** |
-| Shumabit app orders with no checkout object | 13 | ฿85,860.00 | **฿143,178.00** |
-| *(control)* draft orders | 3 | ฿17,106.00 | ฿211,932.00 |
-| *(control)* nothing is actually missing | — | — | ฿229,038.00 |
+| Candidate | Orders | Value | Under UMI's control? |
+|---|---:|---:|---|
+| Web checkout / the 13 BROWSER events | 13 | ฿92,250.00 | **No** — Meta's app on Shopify's checkout |
+| Shumabit app orders with no checkout object | 13 | ฿85,860.00 | **Yes** — UMI writes these orders |
 
-Both stay near a third across windows — over 60 days, web is 37.7% of orders
-and Shumabit-no-checkout is 35.1% — so the stability of Meta's "33%" does not
-discriminate between them either.
+Both stay near a third across windows — over 60 days web is 37.7% of orders and
+Shumabit-no-checkout is 35.1% — so the stability of the "33%" does not
+discriminate either.
 
-### Which is more likely, and why
+**Shumabit-no-checkout remains the stronger candidate.** The owner tested the
+browser path and saw price and currency arrive correctly, and web checkouts are
+the one population with a real checkout object to read a total from. Those 13
+Shumabit orders, by contrast, carry no identity or checkout context whatsoever
+— 0 of 13 have a customer record, email, phone, shipping address, billing
+address, checkout id, checkout token or cart token. An integration deriving its
+payload from a checkout has nothing to read, and serialising a missing field is
+exactly how `""` reaches Meta.
 
-**Shumabit orders with no checkout object** is the stronger candidate:
-
-1. **The owner tested the browser path and it worked.** He confirmed via Meta's
-   test tool that price and currency come through. That path is precisely the
-   13 web checkouts, and it is the one population with a real checkout object
-   to read a total from.
-2. **Those 13 orders carry no identity or checkout context whatsoever** — 0 of
-   13 have a customer record, an email, a phone, a shipping address, a billing
-   address, a checkout id, a checkout token or a cart token. They are created
-   directly through the Admin API. An integration that derives its Purchase
-   payload from a checkout has nothing to read for these, and serialising a
-   missing field is exactly how `""` reaches Meta.
-3. It is consistent with Meta receiving a *server* event for them regardless —
-   the event fires off the order, but the enrichment that fills `value` comes
-   from a checkout that does not exist.
-
-Against it: the integration could equally read `total_price` straight off the
-order, in which case value would be fine and the 33% is purely historical. I
-cannot choose between those two without the reads below.
+It also happens to be the candidate UMI can actually fix. If the answer is the
+web path instead, there is no hand-fix available anyway — the remedy would be
+reconfiguring or reinstalling Meta's Shopify app.
 
 **A ruled-out hypothesis**, recorded so it is not re-investigated: *custom line
 items*. Every line item on all 38 orders carries both a `product_id` and a
@@ -267,8 +316,8 @@ items*. Every line item on all 38 orders carries both a `product_id` and a
 
 ## Separately confirmed, and genuinely live
 
-These are current-state findings, not historical, and are independent of the
-33% question:
+Current-state findings. The first two are independent of the 33% question; the
+third is a strict subset of it.
 
 1. **`pixel_has_low_event_source_match_rate` — FAILED.** Meta's own diagnostic:
    *"Some content_ids sent from pixel fires by this pixel do not match any
@@ -278,107 +327,144 @@ These are current-state findings, not historical, and are independent of the
    `num_items`** while still carrying value, currency and order_id.
 3. **Zero-value orders.** 3 orders in the 28-day window and **7 in 60 days**
    have `total_price = 0.00` (#1582, #1587, #1592 from the Shumabit app;
-   #1530, #1531, #1532, #1559 draft orders). Each of these produces a Purchase
-   event worth ฿0. At 7 of 77 orders this is ~9% of Purchase volume and cannot
-   by itself explain 33%, but it is real noise in Meta's optimisation signal
-   and is fixable at source rather than at Meta.
+   #1530, #1531, #1532, #1559 draft orders), plus #1574 which was cancelled and
+   refunded to ฿0.00 — 4 in the window once refunds are counted. Each produces
+   a Purchase event worth ฿0, which Meta's own rule ("greater than 0") makes a
+   violation by definition. See
+   [the third candidate](#the-third-candidate-costed-zero-and-malformed-values):
+   at 10.3% of events it cannot by itself explain 33%, but it is real noise in
+   Meta's optimisation signal and is fixable at source rather than at Meta.
 
 ---
 
-## What to read from Events Manager
+## Why no further Meta read will settle this
 
-Three reads. The first is decisive on its own; the third is the cleanest
-cross-check and takes a minute.
+Events Manager was checked on 2026-08-12 across the Overview action dialog and
+the Actions/Diagnostics tab. It exposes **no raw counts, no date range beyond
+the dataset-level one, no sample event, and a blank Integration column**. The
+guidance text is generic. There is no screen that names the affected subset.
 
-### Read 1 — the diagnostic itself (decisive)
+Nor can the API supply it: no `aggregation` exposes field *contents*, only
+presence, and the dataset's detail fields need `ads_read`, which the stored
+Page token does not carry. The `da_checks` edge is actively misleading here —
+it reports `pixel_missing_param_in_events` as **passed** while the UI reports
+the 33% price-data issue. The two surfaces are running different checks, so the
+API's "passed" is not evidence the problem is absent, and `da_checks` cannot be
+used to track whether the experiment below worked. Read the percentage off the
+Diagnostics tab instead. A conversion-value cross-check via Ads Manager was
+considered and rejected — attributed conversion value is filtered by
+attribution window and ad association, so it can legitimately fall below every
+candidate figure and would not discriminate.
 
-Events Manager → Data sources → **cherry.cheap's pixel** → **Diagnostics** tab
-→ the row *"Value field is missing"* on Purchase → **View details**.
+**The identity of the affected 13 is therefore unprovable from outside Meta.**
+The decision below does not depend on obtaining it.
 
-Report:
-- the **date range** the diagnostic covers, and any **"Last received" /
-  "Last detected"** timestamp — this alone tells us whether the issue is
-  current or historical;
-- the **affected count and total** behind "33%" (e.g. "13 of 39");
-- whether it names a **connection method** (Browser / Server) or an
-  integration;
-- any **sample event** shown — in particular `event_source_url`,
-  `action_source`, and the literal `value` field.
+---
 
-### Read 2 — Purchase breakdown by connection method
+## The experiment: change what we control, watch the number
 
-Events Manager → **Overview**, date range **15 Jul – 11 Aug 2026** → click the
-**Purchase** row → the detail panel → breakdown by **Connection method**.
+The diagnostic recomputes over a rolling 28-day window, so the percentage moves
+on its own within about four weeks of a change. That makes the number on screen
+a free instrument. Two changes, both correct on their own merits, both entirely
+within UMI's control:
 
-Report the Browser and Server counts. **Prediction: 13 Browser, 26 Server.** If
-that matches, my dataset reads and the Events Manager screen are confirmed to
-be the same data and everything above holds. Also note the reporting
-**timezone** shown on the page (the API returns +0800, the shop runs +0700).
+**Change A — stop emitting ฿0.00 purchases.** 4 of 39 events in the window
+(10.3%); 7 of 77 orders over 60 days. A ฿0.00 purchase is a violation of Meta's
+stated rule whatever else is true, and it is noise in the optimiser regardless
+of the 33%.
 
-### Read 3 — total Purchase conversion value (the discriminator)
+**Change B — put an explicit numeric total on Shumabit's Admin-API orders**, and
+give them the customer/address identity they currently lack entirely. This is
+the leading candidate for the remaining ~9–13 events.
 
-Ads Manager (or the Purchase detail panel, if it shows a value total), date
-range **15 Jul – 11 Aug 2026**, column **Purchases conversion value**, total
-across all campaigns — including any purchases attributed outside ad campaigns
-if the surface allows it.
+Then read the one number off the Diagnostics tab four weeks later. Every
+outcome is informative:
 
-Compare against the table above:
-
-| If the reported total is ≈ | then |
+| After the change, % affected | Reading |
 |---|---|
-| **฿229,038** | nothing is missing today; the 33% is historical — close it |
-| **฿143,178** | the 13 Shumabit no-checkout orders are the affected set |
-| **฿136,788** | the 13 web checkouts are the affected set |
-| **฿211,932** | the 3 draft orders are the affected set |
+| 33% → **~23%** | The ฿0.00 orders were being counted. The remaining ~9 events are a separate subset; re-open with that much smaller target. |
+| 33% → **~0%** | Change B hit it. The Shumabit no-checkout payload was the cause. Done. |
+| 33% → **unchanged at 33%** | Neither zeros nor the Shumabit payload are counted. By elimination the affected set is the **web-checkout / browser path** — which is Meta's own app on Shopify's checkout, so the remedy is to reconnect or reconfigure the Facebook & Instagram sales channel, not to write code. |
 
-The two live candidates are ~฿6,400 apart, so this needs the actual total
-rather than a rounded one. Treat it as corroboration of Read 1, not a
-replacement — Meta's attributed conversion value is filtered by attribution
-window and ad association, so it can legitimately fall *below* every figure
-above. If it does, Read 1 governs.
+The third row is the reason this is worth doing even though Change B is a
+guess: a null result *is* the answer, because only two candidates exist and
+they are disjoint. Ruling one out selects the other.
+
+Cost of being wrong: both changes are correct independently of the diagnostic,
+so neither is wasted work if it fails to move the number.
 
 ---
 
-## What I could not establish
+## Established vs unprovable — plainly
 
-- **When the 33% occurred, or whether it is still occurring.** The stats API
-  retains exactly 28 days. Everything before 2026-07-15 is unreachable from
-  production.
-- **Whether a `value` key that is present is also non-empty.** No available
-  aggregation exposes field *contents*, only presence.
-- **The identity of the 39th event.** Best explanation is one un-deduplicated
-  browser/server pair; it is not an edge-of-window order.
-- **Why Meta reports more match keys than Shopify holds** — Meta shows `email`
-  on 32 of 39 Purchase events and name/address keys on 28, while only 18 of the
-  38 Shopify orders carry an email and 20 carry any address. Automatic advanced
-  matching in the browser is the likely source. Not pursued; it does not bear
-  on either question.
-- **The ฿2,774 of affected ad spend.** Not reachable without `ads_read`. For
-  scale, it is ~1.2% of the ฿229,038 of order value in the same window.
+**Established from production data:**
+
+1. Meta receives a Purchase event for **every** Shopify order, not just web
+   checkouts (39 events vs 38 orders; web alone was 13).
+2. The BROWSER/SERVER split is 13/26 and maps exactly onto web / non-web
+   orders. `order_id` is on 39/39 events.
+3. "Integration: Multiple" is one Shopify app on two connection methods, not
+   two pixels. Confirmed by storefront inspection: exactly one Meta pixel, no
+   hardcoded theme pixel. Meta's own diagnostics action 2 describes pixel and
+   CAPI as complementary here.
+4. The price-data issue is **live and inside the measured window** (15 Jul –
+   11 Aug 2026), not historical.
+5. The failure mode is a **present-but-unusable** `value`, not an omitted
+   field, inferred from `value` 39/39 against `content_ids` 38/39.
+6. **4 of 39 events (10.3%) carry a value of ≤ 0** and violate Meta's rule by
+   definition. This is a real defect and a strict subset of the problem.
+7. Zero-value orders **cannot** account for 33% on their own.
+8. Only two disjoint 13-order subsets land on 33.3%, and one of them — the web
+   checkout path — is not under UMI's control.
+
+**Unprovable from outside Meta:**
+
+1. **Which 13 events are affected.** No UI surface and no API aggregation
+   exposes it.
+2. **The literal payload Meta received.** No sample event is obtainable.
+3. **Whether Meta counts a ฿0.00 order as a violation.** The guidance text says
+   it should; the arithmetic suggests it does not. Change A settles it.
+4. **Anything before 2026-07-15.** Hard 28-day retention.
+5. **The ฿2,774 of affected ad spend** as a share of anything. Not reachable
+   without `ads_read`; for scale it is ~1.2% of the ฿229,038 of order value in
+   the same window.
+6. **The identity of the 39th event.** Best explanation is one un-deduplicated
+   browser/server pair; it is not an edge-of-window order — Shopify had no
+   orders at all on 12 Aug.
+7. **Why Meta reports more match keys than Shopify holds** (`email` on 32 of 39
+   events vs 18 of 38 orders). Automatic advanced matching is the likely
+   source. Not pursued; it bears on neither question.
 
 ---
 
 ## Recommended action
 
 **Do not build any new Purchase event stream.** This is the single highest-value
-decision in this document, and it is fully established by production data
-rather than pending any further read. Meta already receives every Shopify
-order — manual, draft and web — with a value and a Shopify order id. Any
-CAPI-BM or server-side Purchase patch would double-count the ~55% of revenue
-that the roadmap currently assumes is invisible.
+decision in this document, it is fully established by production data, and it
+does not wait on anything. Meta already receives every Shopify order — manual,
+draft and web — with a value and a Shopify order id. Any CAPI-BM or server-side
+Purchase patch would double-count the ~55% of revenue the roadmap currently
+assumes is invisible.
 
 Then, in order:
 
-1. Take **Read 1** above. It is one screen and it either closes the 33% as
-   historical or names the affected subset.
-2. If the affected set turns out to be the Shumabit no-checkout orders, the fix
-   belongs in **Shumabit's order creation**, not in Chatwoot and not in a new
-   Meta integration — those 13 orders carry no identity of any kind, which is
-   the same root cause already blocking `conversation → order` attribution
-   (backlog D8). One change fixes both.
-3. Independently of the 33%, fix the **catalog `content_ids` mismatch** — it is
-   the only diagnostic Meta currently reports as failing.
-4. Independently, stop emitting **฿0.00 orders** (7 in 60 days) as purchases.
+1. **Run the experiment above.** Fix the ฿0.00 orders and the Shumabit payload,
+   wait four weeks, read the percentage. Do not seek more Meta access first —
+   there is none to be had.
+2. If it turns out to be the Shumabit orders, the fix belongs in **Shumabit's
+   order creation**, not in Chatwoot and not in a new Meta integration. Those
+   13 orders carry no identity of any kind, which is the same root cause
+   already blocking `conversation → order` attribution (backlog D8) — one
+   change fixes both, which is the strongest argument for doing it regardless
+   of the diagnostic.
+3. Independently, fix the **catalog `content_ids` mismatch**. It is the only
+   check Meta currently reports as *failing*, and it is unrelated to price
+   data.
+
+Update `UMI-META-PLAN.md`: the "55% of revenue is invisible to Meta" framing and
+the D14 double-count suspicion are both resolved by this document. The
+open-question "the missing price data — nobody owns it" should be rewritten as
+a bounded experiment rather than a blocked investigation.
 
 Update `UMI-META-PLAN.md`: the "55% of revenue is invisible to Meta" framing and
 the D14 double-count suspicion are both resolved by this document.
