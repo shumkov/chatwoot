@@ -14,7 +14,10 @@ class Instagram::Messenger::SendOnInstagramService < Instagram::BaseSendService
     query[:appsecret_proof] = app_secret_proof if app_secret_proof
 
     response = HTTParty.post(
-      'https://graph.facebook.com/v11.0/me/messages',
+      # UMI: pinned to match the Graph version used everywhere else in this
+      # install. The original v11.0 is long retired and only kept working
+      # because Meta silently upgrades calls to retired versions.
+      'https://graph.facebook.com/v21.0/me/messages',
       body: message_content,
       query: query
     )
