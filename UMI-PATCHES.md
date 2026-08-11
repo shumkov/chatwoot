@@ -381,6 +381,52 @@ attachment for each `Contact`. It applies to all attachment writers, not only
 FB/IG reconciliation. The regression spec proves direct duplicate rows are
 rejected while ordinary avatar replacement still succeeds and leaves one row.
 
+### 20. Meta ad attribution capture
+
+Four things here are load-bearing on rebase, not stylistic — change any of them
+and the patch degrades silently rather than failing:
+
+1. **`referral` is nested inside `message`.** Meta delivers
+   `messaging[:message][:referral]`, *not* `messaging[:referral]`. Verified
+   against a real production payload (Chatwoot logs the whole Instagram
+   messaging entry at `instagram_events_job.rb:53`, so this needed no new code
+   to establish). Reading the top-level key returns `nil`, which is
+   indistinguishable from an organic conversation — the failure is invisible.
+   The spec pins it: reverting the path fails 4 of 9 examples.
+2. **Promotion runs after the builder transaction commits.** Both builders wrap
+   everything in one transaction and swallow `StandardError`. A rescued
+   *database* error inside that transaction leaves it aborted, so the customer's
+   message dies at COMMIT anyway — the failure mode
+   `Umi::MessengerAttachmentResilience` documents. Storing on the message
+   happens inside (pure in-memory, safe); the conversation write happens after.
+3. **Only `source == 'ADS'` promotes.** Meta reuses `message.referral` for
+   Instagram Shops product taps, which carry a `product` object and no ad.
+   Promoting those would label organic conversations as ad-driven.
+4. **Conversation keys are cleared before writing, never merged.** A bare merge
+   leaves a previous ad's `meta_ad_title` beside a new ad's `meta_ad_id`,
+   producing a record describing an ad that never existed.
+
+The migration seeds three `CustomAttributeDefinition` rows scoped to accounts
+owning a Meta channel. They are not decoration: the sidebar maps over
+definitions rather than stored values, and an automation rule referencing an
+undefined key **cannot be saved at all**. Note it only seeds accounts that
+already have a Meta inbox at migration time.
+
+`ref` is set per-ad by whoever builds the campaign and is absent unless they set
+it — current production ads carry `source`, `type`, `ad_id` and
+`ads_context_data` only. The patch degrades to `ad_id` rather than capturing
+nothing.
+
+**Subscription finding, measured against the live page:** Meta's docs say ad
+referrals require both `messages` and `messaging_referrals` subscribed. The live
+field set is six fields with `messaging_referrals` **absent**, yet Instagram
+referrals arrive with complete `ad_id`. So the documented requirement does not
+bind on the Instagram surface. **Facebook is unverified** — if Messenger ad
+threads log `stage=referral_absent` while Instagram ones don't, the subscription
+is the difference; add it by reading the live set first and never via
+`channel.subscribe`, which rescues `StandardError` and returns `true` so a
+failed re-subscribe looks successful.
+
 ## Completed one-time operations
 
 The historical Facebook/Instagram archive and profile migration formerly
