@@ -26,6 +26,11 @@
 # attributes are stripped and the tracker pages a human. Matched contacts with
 # conversations are anonymized (the conversation record is a business/audit
 # record); without conversations they are destroyed outright.
+# rubocop:disable Metrics/ModuleLength
+# Length is inherent: Shopify mandates three separate webhook topics
+# (customers/redact, shop/redact, customers/data_request) and each needs its own
+# verification, replay guard and handler. Splitting them would scatter one
+# statutory contract across files.
 module Umi::Webhooks::ShopifyCompliance
   REPLAY_KEY_PREFIX = 'UMI_SHOPIFY_WEBHOOK_ID::'
   REPLAY_TTL = 7.days
@@ -158,6 +163,7 @@ module Umi::Webhooks::ShopifyCompliance
     # this customer's name and handle. Purged here rather than left to the
     # nightly sweep: erasure should not depend on another job running.
     Umi::ProfileLedgerEntry.where(contact_id: contact.id).delete_all
+    Umi::FbigAdAttribution.purge_for(contact)
   end
 
   def record_data_request
@@ -171,3 +177,4 @@ module Umi::Webhooks::ShopifyCompliance
     Rails.logger.error("[umi-shopify-compliance] #{message}")
   end
 end
+# rubocop:enable Metrics/ModuleLength

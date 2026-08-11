@@ -160,10 +160,31 @@ flowing and the hiring ads carry a known value, labelling becomes a
 one-line automation rule — but it needs real `ref` values observed first, not
 guessed. Ship capture, watch a day of traffic, then label.
 
-**`messaging_referrals` subscription.** Verified in r3 to deliver nothing
-through the planned path: a payload carrying both `message` and `referral`
-already dispatches as `Incoming::Message` today with only `messages`
-subscribed. The only thing the subscription adds is the standalone re-entry
+**`messaging_referrals` subscription — measured, not assumed.** Review raised
+this as a *hard prerequisite*, citing Meta's `messages` reference: *"Message
+with Ads Referral Information requires the application to have page
+subscriptions to both the `messages` and the `messaging_referrals` fields."*
+If true it would be launch-critical, because subscribing has a lead time and
+`POST /{page}/subscribed_apps` **replaces** the field set.
+
+**Checked against the live page, and it does not hold for Instagram.** The live
+subscription set on app `UMI Store` is exactly six fields —
+`message_deliveries message_echoes message_reads messages messaging_handovers
+standby` — with **`messaging_referrals` absent**. Instagram referrals are
+nonetheless arriving with complete `ad_id` and `ads_context_data` (see the
+production payload above). So on the Instagram surface the documented
+requirement is either not enforced or does not apply, and **74% of volume needs
+no Meta-side change at all.**
+
+That evidence does **not** transfer to Facebook, where no referral has been
+observed in the logs. Treat FB as unproven: ship capture, and if Messenger ad
+conversations log `referral_absent` while Instagram ones don't, the subscription
+is the difference — at which point add it deliberately, reading the live set
+first and never via `channel.subscribe`.
+
+This is the right order regardless: capture is inert without referrals, so
+shipping it first costs nothing and turns the subscription question into an
+observation instead of a guess. The only thing the subscription adds is the standalone re-entry
 event, which the gem drops before any Chatwoot code runs (no `Bot.on :referral`
 is registered, so `Bot.trigger` raises `KeyError` and emits a bare
 `Kernel#warn`).

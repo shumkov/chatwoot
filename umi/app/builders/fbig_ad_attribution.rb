@@ -1,0 +1,179 @@
+# frozen_string_literal: true
+
+# Captures Meta's ad `referral` object on inbound Facebook/Instagram messages,
+# mirroring the shape upstream already accepts for WhatsApp and Twilio.
+#
+# Meta nests the object inside `message`, not alongside it:
+#
+#   {"sender" => …, "recipient" => …, "timestamp" => …,
+#    "message" => {"mid" => …, "text" => "1. สนใจรับส่วนลด 10%…",
+#                  "referral" => {"source" => "ADS", "type" => "OPEN_THREAD",
+#                                 "ad_id" => "120252251820030415",
+#                                 "ads_context_data" => {"ad_title" => "Video_2", …}}}}
+#
+# Reading the top-level key instead returns nil, which is indistinguishable
+# from an organic conversation — so the nesting is load-bearing, not a detail.
+#
+# Two layers, answering different questions:
+#   * the message keeps the whole object as an immutable record of what arrived
+#   * the conversation keeps the three readable fields, so agents and
+#     automation rules can see which ad a conversation came from
+#
+# The conversation write happens AFTER the builder's transaction commits. A
+# rescued database error inside that transaction would leave it aborted and the
+# customer's message would still die at COMMIT — the failure mode
+# `Umi::MessengerAttachmentResilience` documents. Nothing here may cost a
+# customer message.
+module Umi::FbigAdAttribution
+  CONVERSATION_KEYS = %w[meta_ad_id meta_ad_ref meta_ad_title].freeze
+
+  module_function
+
+  def normalize(raw)
+    raw.to_h.deep_stringify_keys.presence
+  end
+
+  # Meta reuses `message.referral` for Instagram Shops product taps, which carry
+  # a `product` object and no ad at all. Only ad referrals get promoted; the raw
+  # object is still stored on the message either way.
+  def from_ads?(referral)
+    referral['source'] == 'ADS' || referral['ad_id'].present?
+  end
+
+  # `ref` is set per-ad by whoever builds the campaign and is absent unless they
+  # set it — so this degrades to ad_id alone rather than capturing nothing.
+  def conversation_pairs(referral)
+    {
+      'meta_ad_id' => referral['ad_id'],
+      'meta_ad_ref' => referral['ref'],
+      'meta_ad_title' => referral.dig('ads_context_data', 'ad_title')
+    }.transform_values { |value| value.presence&.to_s }.compact
+  end
+
+  def promote(message, referral)
+    return if referral.blank? || !from_ads?(referral)
+
+    pairs = conversation_pairs(referral)
+    return if pairs.blank?
+
+    conversation = message.conversation
+    # Clear all three before writing. A plain merge would leave a previous ad's
+    # title beside a new ad's id, describing an ad that never existed.
+    conversation.update!(
+      custom_attributes: conversation.custom_attributes.except(*CONVERSATION_KEYS).merge(pairs)
+    )
+    log(:referral_promoted, conversation.id, pairs)
+  end
+
+  # Erasure counterpart to `promote`. Ad attribution is behavioural data — which
+  # ad this person clicked, and when — and the contact_inbox source_id survives
+  # erasure because it is how the channel routes messages, so leaving it behind
+  # is re-identifying.
+  #
+  # Set-based SQL rather than a model loop on purpose: Message#save! would trip
+  # prevent_message_flooding on an active conversation, and would fire
+  # MESSAGE_UPDATED webhooks echoing the redaction outward to third parties.
+  #
+  # messages.content_attributes is `json`, which has no key operators, so it has
+  # to round-trip through a cast; conversations.custom_attributes is `jsonb` and
+  # takes `-` directly.
+  def purge_for(contact)
+    conversation_ids = contact.conversations.pluck(:id)
+    return if conversation_ids.empty?
+
+    # rubocop:disable Rails/SkipsModelValidations
+    Conversation.where(id: conversation_ids)
+                .update_all("custom_attributes = custom_attributes - #{CONVERSATION_KEYS.map { |k| "'#{k}'" }.join(' - ')}")
+    Message.where(conversation_id: conversation_ids)
+           .where("content_attributes::jsonb -> 'referral' IS NOT NULL")
+           .update_all("content_attributes = (content_attributes::jsonb - 'referral')::json")
+    # rubocop:enable Rails/SkipsModelValidations
+  end
+
+  def log(stage, conversation_id, pairs = {})
+    Rails.logger.info(
+      "[UMI-FBIG] stage=#{stage} conversation=#{conversation_id} " \
+      "ad_id=#{pairs['meta_ad_id'] || '-'} ref=#{pairs['meta_ad_ref'] || '-'}"
+    )
+  end
+
+  # Reads the referral off the parsed Facebook payload. The parser keeps
+  # `@messaging` private and exposes no accessor for it.
+  module MessageParser
+    def message_referral
+      @messaging&.dig('message', 'referral')
+    end
+  end
+
+  # Shared by both platform builders: store on the message inside the
+  # transaction (pure in-memory, cannot poison it), promote to the conversation
+  # after it commits.
+  module Builder
+    def perform
+      result = super
+      umi_promote_ad_referral
+      result
+    end
+
+    private
+
+    def umi_promote_ad_referral
+      return if @outgoing_echo
+      return unless @message&.persisted?
+
+      referral = Umi::FbigAdAttribution.normalize(umi_raw_referral)
+      if referral.blank?
+        # Only worth a line once per conversation, not on every reply.
+        Umi::FbigAdAttribution.log(:referral_absent, @message.conversation_id) if @message.conversation.previously_new_record?
+        return
+      end
+
+      Umi::FbigAdAttribution.promote(@message, referral)
+    rescue StandardError => e
+      # Deliberately swallowed: the message is already committed and an
+      # attribution failure must never look like a message failure.
+      Rails.logger.warn("[UMI-FBIG] stage=referral_promote_failed error=#{e.class}: #{e.message}")
+      ChatwootExceptionTracker.new(e, account: @inbox.account).capture_exception
+    end
+
+    def umi_message_params_with_referral(params)
+      referral = Umi::FbigAdAttribution.normalize(umi_raw_referral)
+      return params if referral.blank? || @outgoing_echo
+
+      params.merge(content_attributes: params[:content_attributes].to_h.merge(referral: referral))
+    rescue StandardError => e
+      Rails.logger.warn("[UMI-FBIG] stage=referral_capture_failed error=#{e.class}: #{e.message}")
+      params
+    end
+  end
+
+  module FacebookBuilder
+    include Builder
+
+    private
+
+    def umi_raw_referral
+      @response.try(:message_referral)
+    end
+
+    def message_params
+      umi_message_params_with_referral(super)
+    end
+  end
+
+  # Covers both Instagram builder subclasses — neither overrides `message_params`
+  # or `perform`.
+  module InstagramBuilder
+    include Builder
+
+    private
+
+    def umi_raw_referral
+      @messaging.dig(:message, :referral)
+    end
+
+    def message_params
+      umi_message_params_with_referral(super)
+    end
+  end
+end
