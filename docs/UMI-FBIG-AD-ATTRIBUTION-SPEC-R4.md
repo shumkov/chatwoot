@@ -19,23 +19,51 @@ all** that separates them — an applicant and a shopper arrive identically. The
 `ref` field is the separator, and it must be set on the ads *before* launch;
 capture must be live to receive it.
 
-## What Meta gives us
+## What Meta gives us — **verified in production, and it corrects r4's draft**
 
-On the first message of an ad-originated thread, the messaging entry carries a
-sibling of `message`:
+Chatwoot already logs the whole Instagram messaging entry unconditionally
+(`app/jobs/webhooks/instagram_events_job.rb:53`), so this did not need shipping
+to answer. Grepping 7 days of production logs: **120 Instagram messaging
+payloads, 5 carrying a referral.** Real captured payload, trimmed:
 
-```json
-"referral": {
-  "ref": "<arbitrary string set per ad>",
-  "ad_id": "<ad id>",
-  "source": "ADS",
-  "type": "OPEN_THREAD",
-  "ads_context_data": { "ad_title": "...", "photo_url": "...", "video_url": "..." }
-}
+```ruby
+{"sender" => {"id" => "1509966250899191"},
+ "recipient" => {"id" => "17841468119523354"},
+ "timestamp" => 1786033599215,
+ "message" => {
+   "mid" => "aWdfZAG1faXRlbTox…",
+   "text" => "1. สนใจรับส่วนลด 10% สำหรับการสั่งซื้อครั้งแรก",
+   "referral" => {"source" => "ADS", "type" => "OPEN_THREAD",
+                  "ad_id" => "120252251820030415",
+                  "ads_context_data" => {"ad_title" => "Video_2",
+                                         "video_url" => "https://scontent…"}}}}
 ```
 
-`ref` is operator-controlled, which is what makes the recruitment split cheap
-and deterministic rather than a maintained list of ad ids.
+Four corrections, all of which would have shipped a patch that captured
+nothing:
+
+1. **`referral` is nested INSIDE `message`, not a sibling of it.** The draft
+   said sibling. The real path is `@messaging[:message][:referral]`. Reading
+   `@messaging[:referral]` returns `nil` — indistinguishable from "organic".
+2. **`ad_id` is a String** (`"120252251820030415"`), not an Integer. That
+   sidesteps `JsonbAttributesLengthValidator`'s `> 9_999_999_999` Integer
+   branch (`app/models/jsonb_attributes_length_validator.rb:17-18`), which
+   would otherwise raise on every 17-digit ad id. Coerce with `.to_s` anyway —
+   the guarantee is Meta's, not ours.
+3. **There is no `ref` key at all** on current ads. The keys present are
+   `source`, `type`, `ad_id`, `ads_context_data`. So `ref` is genuinely
+   operator-set and genuinely absent until someone sets it — the recruitment
+   split depends on an action outside this codebase, and the patch must
+   degrade gracefully to `ad_id` when it is missing.
+4. **`ads_context_data.ad_title`** carries a human-readable name (`"Video_2"`),
+   which is the only part of this an agent can actually read.
+
+Note also that the referral arrives **on the quick-reply tap itself** — the same
+message whose bare `"1. สนใจรับส่วนลด 10%…"` text is what makes ad threads
+unreadable. Ad context and the confusing message are the same webhook.
+
+The Facebook path is *not* verified this way — the FB logs are not in the same
+shape — so its nesting must be confirmed before the FB branch is trusted.
 
 ## Scope
 
