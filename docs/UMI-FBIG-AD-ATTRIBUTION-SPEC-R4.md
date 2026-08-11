@@ -112,6 +112,19 @@ first-wins stamp goes stale exactly where it matters.
 
 This makes conversation reuse a non-issue instead of a trap.
 
+### Event ordering is intentional
+
+The message row commits before conversation promotion. `Message#after_create_commit`
+therefore dispatches `message_created` before the later `Conversation#update!`
+can dispatch `conversation_updated`; both dispatchers are asynchronous, so a
+message-created rule must use the message's immutable `content_attributes.referral`
+when it needs first-message attribution. It must not assume that the conversation
+custom attributes are already present. Conversation-level rules that depend on
+`meta_ad_id` or `meta_ad_ref` must use `conversation_updated`, which is the hook
+that observes the promotion write. This is the chosen ordering because moving
+promotion into the builder transaction can roll back the customer message on a
+conversation-write failure.
+
 ### 3. Create the `CustomAttributeDefinition` rows — in the same commit
 
 r3 established that promotion without definitions is **inert and harmful**: the
@@ -237,6 +250,10 @@ strips referral from messages and conversations.
 
 Production: deploy, then read the `referral_seen` / `referral_absent` counts
 over the hiring campaign's first day. That is also the A10 deliverable.
+
+When a Meta inbox is added to an account after the migration, run
+`bundle exec rails 'umi:meta:create_ad_attribute_definitions[<account_id>]'`.
+The task is account-scoped, no-ops without a Meta inbox, and is idempotent.
 
 ## Registry
 

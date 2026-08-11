@@ -195,6 +195,15 @@ Current values: **phone / WhatsApp = `+66975311301`**, **LINE = `@umi.store`** (
 3. Create the **LINE** inbox (independent) → test → **live (@umi.store)**.
 4. **WhatsApp calling last** — enable Twilio WhatsApp Business Calling, point the sender's Voice Endpoint at a TwiML App that `<Dial><Sip>`s Groundwire, run the spike. Gated on Meta Business Verification + the ≥2,000-conv tier.
 
+For every Facebook Page or Instagram inbox added after the Meta attribution migration, provision its account's
+conversation attribute definitions with:
+
+```sh
+bundle exec rails 'umi:meta:create_ad_attribute_definitions[<account_id>]'
+```
+
+The task is account-scoped, checks that a Meta inbox exists, and is safe to run repeatedly.
+
 **Rollback (per channel):** disable/delete the inbox in Chatwoot and remove the provider-side webhook;
 voice rolls back by reverting the number's Voice webhooks + redeploying the prior image tag.
 

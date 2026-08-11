@@ -50,6 +50,7 @@ describe Umi::FbigAdAttribution do
   end
 
   it 'promotes the readable fields onto the conversation so agents and rules can see them' do
+    expect(described_class).to receive(:promote).and_call_original
     perform(build_event(referral: ad_referral))
 
     expect(Conversation.last.custom_attributes).to include(
@@ -70,6 +71,15 @@ describe Umi::FbigAdAttribution do
 
     expect(Conversation.last.custom_attributes).not_to include('meta_ad_id')
     expect(Message.last.content_attributes['referral']).to eq('product' => { 'id' => 'PRODUCT-ID' })
+  end
+
+  it 'does not promote a referral with an ad id but without the ADS source' do
+    referral = { 'ad_id' => '120252251820030415', 'type' => 'OPEN_THREAD' }
+
+    perform(build_event(referral: referral))
+
+    expect(Conversation.last.custom_attributes).not_to have_key('meta_ad_id')
+    expect(Message.last.content_attributes['referral']).to eq(referral)
   end
 
   it 'captures nothing for an echo, which is the business talking to itself' do
@@ -95,12 +105,60 @@ describe Umi::FbigAdAttribution do
     expect(attrs).not_to have_key('meta_ad_title')
   end
 
+  it 'preserves an unrelated sidebar attribute written after the conversation was loaded' do
+    perform(build_event(referral: ad_referral))
+    message = Message.last
+    message.conversation
+    Conversation.where(id: message.conversation_id)
+                .update_all(custom_attributes: { 'sidebar_priority' => 'high' }) # rubocop:disable Rails/SkipsModelValidations
+
+    described_class.promote(message, ad_referral)
+
+    expect(message.conversation.reload.custom_attributes).to include(
+      'sidebar_priority' => 'high', 'meta_ad_id' => '120252251820030415'
+    )
+  end
+
   # The whole point of promoting after the transaction commits.
   it 'still persists the customer message when promotion raises' do
-    allow(described_class).to receive(:promote).and_raise(ActiveRecord::StatementInvalid, 'boom')
+    messaging = build_event(referral: ad_referral)
+    sender_id = messaging['sender']['id']
+    contact = create(:contact, account: account, identifier: sender_id)
+    contact_inbox = create(:contact_inbox, contact: contact, inbox: inbox, source_id: sender_id)
+    conversation = create(:conversation, account: account, inbox: inbox, contact: contact, contact_inbox: contact_inbox)
+    conversation.update_columns(custom_attributes: { 'oversized' => 'x' * 1501 }) # rubocop:disable Rails/SkipsModelValidations
 
-    expect { perform(build_event(referral: ad_referral)) }.to change(Message, :count).by(1)
+    expect(described_class).to receive(:promote)
+      .with(instance_of(Message), hash_including('source' => 'ADS'))
+      .and_call_original
+
+    expect { perform(messaging) }.to change(Message, :count).by(1)
     expect(Message.last.content_attributes['referral']).to be_present
+  end
+
+  it 'captures a referral through the Facebook parser and message builder' do
+    facebook_channel = create(:channel_facebook_page, account: account)
+    response = Integrations::Facebook::MessageParser.new(
+      {
+        messaging: {
+          sender: { id: 'facebook-sender-1' },
+          recipient: { id: facebook_channel.page_id },
+          timestamp: 1,
+          message: { mid: 'facebook-message-1', text: 'I am interested', referral: ad_referral }
+        }
+      }.to_json
+    )
+
+    allow(Koala::Facebook::API).to receive(:new).and_return(fb_object)
+    allow(fb_object).to receive(:get_object).and_return(
+      { first_name: 'Jane', last_name: 'Dae', profile_pic: 'https://chatwoot-assets.local/sample.png' }.with_indifferent_access
+    )
+
+    Messages::Facebook::MessageBuilder.new(response, facebook_channel.inbox).perform
+
+    message = facebook_channel.inbox.messages.find_by(source_id: 'facebook-message-1')
+    expect(message.content_attributes['referral']).to include('source' => 'ADS', 'ad_id' => '120252251820030415')
+    expect(message.conversation.custom_attributes).to include('meta_ad_id' => '120252251820030415')
   end
 
   describe 'the Facebook payload, which is String-keyed rather than indifferent-access' do
