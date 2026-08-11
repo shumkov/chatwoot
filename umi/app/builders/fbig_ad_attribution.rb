@@ -37,7 +37,7 @@ module Umi::FbigAdAttribution
   # a `product` object and no ad at all. Only ad referrals get promoted; the raw
   # object is still stored on the message either way.
   def from_ads?(referral)
-    referral['source'] == 'ADS' || referral['ad_id'].present?
+    referral['source'] == 'ADS'
   end
 
   # `ref` is set per-ad by whoever builds the campaign and is absent unless they
@@ -57,11 +57,18 @@ module Umi::FbigAdAttribution
     return if pairs.blank?
 
     conversation = message.conversation
-    # Clear all three before writing. A plain merge would leave a previous ad's
-    # title beside a new ad's id, describing an ad that never existed.
-    conversation.update!(
-      custom_attributes: conversation.custom_attributes.except(*CONVERSATION_KEYS).merge(pairs)
-    )
+    # Lock before reading so a sidebar update already in flight commits first.
+    # The model save remains intentional: its conversation_updated callback is
+    # the automation/webhook fanout for this post-commit attribution write.
+    conversation.reload
+    conversation.with_lock do
+      conversation.reload
+      # Clear all three before writing. A plain merge would leave a previous
+      # ad's title beside a new ad's id, describing an ad that never existed.
+      conversation.update!(
+        custom_attributes: conversation.custom_attributes.except(*CONVERSATION_KEYS).merge(pairs)
+      )
+    end
     log(:referral_promoted, conversation.id, pairs)
   end
 
@@ -78,16 +85,18 @@ module Umi::FbigAdAttribution
   # to round-trip through a cast; conversations.custom_attributes is `jsonb` and
   # takes `-` directly.
   def purge_for(contact)
-    conversation_ids = contact.conversations.pluck(:id)
-    return if conversation_ids.empty?
+    ActiveRecord::Base.transaction do
+      conversation_ids = contact.conversations.pluck(:id)
+      next if conversation_ids.empty?
 
-    # rubocop:disable Rails/SkipsModelValidations
-    Conversation.where(id: conversation_ids)
-                .update_all("custom_attributes = custom_attributes - #{CONVERSATION_KEYS.map { |k| "'#{k}'" }.join(' - ')}")
-    Message.where(conversation_id: conversation_ids)
-           .where("content_attributes::jsonb -> 'referral' IS NOT NULL")
-           .update_all("content_attributes = (content_attributes::jsonb - 'referral')::json")
-    # rubocop:enable Rails/SkipsModelValidations
+      # rubocop:disable Rails/SkipsModelValidations
+      Conversation.where(id: conversation_ids)
+                  .update_all("custom_attributes = custom_attributes - #{CONVERSATION_KEYS.map { |k| "'#{k}'" }.join(' - ')}")
+      Message.where(conversation_id: conversation_ids)
+             .where("content_attributes::jsonb -> 'referral' IS NOT NULL")
+             .update_all("content_attributes = (content_attributes::jsonb - 'referral')::json")
+      # rubocop:enable Rails/SkipsModelValidations
+    end
   end
 
   def log(stage, conversation_id, pairs = {})
@@ -95,6 +104,8 @@ module Umi::FbigAdAttribution
       "[UMI-FBIG] stage=#{stage} conversation=#{conversation_id} " \
       "ad_id=#{pairs['meta_ad_id'] || '-'} ref=#{pairs['meta_ad_ref'] || '-'}"
     )
+  rescue StandardError
+    nil
   end
 
   # Reads the referral off the parsed Facebook payload. The parser keeps
@@ -132,8 +143,7 @@ module Umi::FbigAdAttribution
     rescue StandardError => e
       # Deliberately swallowed: the message is already committed and an
       # attribution failure must never look like a message failure.
-      Rails.logger.warn("[UMI-FBIG] stage=referral_promote_failed error=#{e.class}: #{e.message}")
-      ChatwootExceptionTracker.new(e, account: @inbox.account).capture_exception
+      umi_report_attribution_failure(:referral_promote_failed, e)
     end
 
     def umi_message_params_with_referral(params)
@@ -142,8 +152,17 @@ module Umi::FbigAdAttribution
 
       params.merge(content_attributes: params[:content_attributes].to_h.merge(referral: referral))
     rescue StandardError => e
-      Rails.logger.warn("[UMI-FBIG] stage=referral_capture_failed error=#{e.class}: #{e.message}")
+      umi_report_attribution_failure(:referral_capture_failed, e)
       params
+    end
+
+    def umi_report_attribution_failure(stage, error)
+      Rails.logger.warn("[UMI-FBIG] stage=#{stage} error=#{error.class}: #{error.message}")
+      ChatwootExceptionTracker.new(error, account: @inbox.account).capture_exception
+    rescue StandardError
+      # Attribution is enrichment and observability, never part of message
+      # persistence. A broken logger or tracker must be equally harmless.
+      nil
     end
   end
 

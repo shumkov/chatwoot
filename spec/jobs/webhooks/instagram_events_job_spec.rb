@@ -15,6 +15,11 @@ describe Webhooks::InstagramEventsJob do
 
   let!(:account) { create(:account) }
 
+  let(:ad_referral) do
+    { 'source' => 'ADS', 'type' => 'OPEN_THREAD', 'ad_id' => '120252251820030415',
+      'ads_context_data' => { 'ad_title' => 'Video_2' } }
+  end
+
   def return_object_for(sender_id)
     { name: 'Jane',
       id: sender_id,
@@ -44,6 +49,34 @@ describe Webhooks::InstagramEventsJob do
         expect(instagram_messenger_inbox.conversations.count).to be 1
         expect(instagram_messenger_inbox.messages.count).to be 1
         expect(instagram_messenger_inbox.messages.last.content_attributes['is_unsupported']).to be_nil
+      end
+
+      it 'continues processing sibling messages when promotion and telemetry both fail' do
+        dm_event = build(:instagram_message_create_event).with_indifferent_access
+        first_messaging = dm_event[:entry][0][:messaging][0]
+        first_messaging[:message][:referral] = ad_referral
+        second_messaging = first_messaging.deep_dup
+        second_messaging[:message][:mid] = 'message-id-2'
+        second_messaging[:message][:text] = 'A second message in the same webhook'
+        second_messaging[:message][:referral] = ad_referral.merge('ad_id' => 'second-ad-id')
+        dm_event[:entry][0][:messaging] << second_messaging
+        sender_id = first_messaging[:sender][:id]
+
+        allow(Koala::Facebook::API).to receive(:new).and_return(fb_object)
+        allow(fb_object).to receive(:get_object).and_return(
+          return_object_for(sender_id).with_indifferent_access
+        )
+        expect(Umi::FbigAdAttribution).to receive(:promote).twice.and_wrap_original do |original, message, referral|
+          raise ActiveRecord::StatementInvalid, 'promotion write failed' if message.source_id == 'message-id-1'
+
+          original.call(message, referral)
+        end
+        tracker = instance_double(ChatwootExceptionTracker)
+        allow(tracker).to receive(:capture_exception).and_raise('telemetry unavailable')
+        allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker)
+
+        expect { instagram_webhook.perform_now(dm_event[:entry]) }.not_to raise_error
+        expect(instagram_messenger_inbox.messages.pluck(:source_id)).to contain_exactly('message-id-1', 'message-id-2')
       end
 
       it 'creates standby message in the instagram inbox' do
@@ -255,6 +288,16 @@ describe Webhooks::InstagramEventsJob do
         expect(instagram_inbox.conversations.count).to eq 1
         expect(instagram_inbox.messages.count).to eq 1
         expect(instagram_inbox.messages.last.content_attributes['is_unsupported']).to be_nil
+      end
+
+      it 'promotes a referral in the direct Instagram inbox' do
+        dm_event = build(:instagram_message_create_event).with_indifferent_access
+        dm_event[:entry][0][:messaging][0][:message][:referral] = ad_referral
+
+        instagram_webhook.perform_now(dm_event[:entry])
+
+        expect(instagram_inbox.messages.last.content_attributes['referral']).to include('source' => 'ADS')
+        expect(instagram_inbox.conversations.last.custom_attributes).to include('meta_ad_id' => '120252251820030415')
       end
 
       it 'sets correct instagram attributes on contact' do

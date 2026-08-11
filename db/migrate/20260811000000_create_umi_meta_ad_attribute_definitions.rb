@@ -42,10 +42,10 @@ class CreateUmiMetaAdAttributeDefinitions < ActiveRecord::Migration[7.0]
   end
 
   def down
-    execute(<<~SQL.squish)
-      DELETE FROM custom_attribute_definitions
-      WHERE attribute_model = 0
-        AND attribute_key IN (#{ATTRIBUTES.map { |key, _, _| quote(key) }.join(', ')})
-    SQL
+    # These rows share an account's custom-attribute namespace. A later owner
+    # may have created a same-key definition with different meaning, so an
+    # automatic down cannot distinguish patch-owned rows from user data.
+    # Leave definitions in place; removing them requires an account-scoped,
+    # operator-confirmed rollback.
   end
 end

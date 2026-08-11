@@ -53,8 +53,14 @@ module Umi::Webhooks::ShopifyCompliance
   def compliance_safely(topic)
     yield
   rescue StandardError => e
-    ChatwootExceptionTracker.new(e).capture_exception
-    Rails.logger.error("[umi-shopify-compliance] #{topic} handler failed (Shopify will NOT redeliver): #{e.message}")
+    begin
+      ChatwootExceptionTracker.new(e).capture_exception
+      Rails.logger.error("[umi-shopify-compliance] #{topic} handler failed (Shopify will NOT redeliver): #{e.message}")
+    rescue StandardError
+      # Shopify must still receive the deliberate 200. The retry job is
+      # scheduled by the redaction path before this handler reports failure.
+      nil
+    end
   end
 
   # First sighting of this delivery id claims it atomically; anything else is a
@@ -146,24 +152,15 @@ module Umi::Webhooks::ShopifyCompliance
   # Keying that skip off the redacted name instead would not work — enrichment
   # renames the contact, which un-matches it.
   def anonymize_contact(contact)
-    # Tombstone first. It is what keeps the erasure honoured by profile
-    # enrichment, so if anything below fails we want it already set — purging
-    # the avatar and the audit trail while leaving the contact re-enrichable
-    # would be the worst of both.
-    contact.update!(
-      name: 'Redacted customer', last_name: '', middle_name: '',
-      email: nil, phone_number: nil, identifier: nil,
-      location: nil, country_code: nil, custom_attributes: {},
-      additional_attributes: contact.additional_attributes.except('city', 'country')
-                                    .reject { |key, _| key.start_with?('shopify_', 'social_', 'umi_profile_') }
-                                    .merge('umi_profile_redacted' => true)
-    )
-    contact.avatar.purge
-    # Enrichment ledgers the before/after of every name it writes, so it holds
-    # this customer's name and handle. Purged here rather than left to the
-    # nightly sweep: erasure should not depend on another job running.
-    Umi::ProfileLedgerEntry.where(contact_id: contact.id).delete_all
-    Umi::FbigAdAttribution.purge_for(contact)
+    Umi::Shopify::CustomerRedactionService.new(contact).perform
+  rescue StandardError => e
+    begin
+      Umi::Shopify::CustomerRedactionRetryJob.perform_later(contact.id)
+    rescue StandardError => enqueue_error
+      Rails.logger.error("[umi-shopify-compliance] could not enqueue redaction retry for contact #{contact.id}: " \
+                         "#{enqueue_error.class}: #{enqueue_error.message}")
+    end
+    raise e
   end
 
   def record_data_request
@@ -175,6 +172,8 @@ module Umi::Webhooks::ShopifyCompliance
   def report_compliance_gap(message)
     ChatwootExceptionTracker.new(StandardError.new(message)).capture_exception
     Rails.logger.error("[umi-shopify-compliance] #{message}")
+  rescue StandardError
+    nil
   end
 end
 # rubocop:enable Metrics/ModuleLength

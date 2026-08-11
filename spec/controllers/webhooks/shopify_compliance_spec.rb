@@ -128,6 +128,21 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
       expect(tracker).to have_received(:capture_exception)
     end
 
+    it 'rolls back a partial erasure and enqueues a durable retry when attribution purge fails' do
+      contact = create(:contact, account: account, email: 'retry@example.com',
+                                 additional_attributes: { 'shopify_customer_id' => 9007 })
+      create(:conversation, account: account, contact: contact)
+      allow(Umi::FbigAdAttribution).to receive(:purge_for).and_raise(StandardError, 'attribution database unavailable')
+
+      expect do
+        post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 9007 })
+      end.to have_enqueued_job(Umi::Shopify::CustomerRedactionRetryJob).with(contact.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(contact.reload.name).not_to eq('Redacted customer')
+      expect(contact.email).to eq('retry@example.com')
+    end
+
     it 'falls back to the single account when the hook is gone and the shop domain is the pinned one' do
       contact = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => 9004 })
       hook.destroy!
