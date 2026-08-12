@@ -52,6 +52,91 @@ level stay as attributes.
 things — agent, team, inbox, label **and channel**. Channel was missed. Custom
 attributes are still not among them, so the main point stands.
 
+### The closest thing to nesting that actually exists — and it works
+
+If what you want is an **ordered, closed set of choices** rather than a pile of
+free-form names, there is a real mechanism for that today, with no code:
+a custom attribute of type **list**.
+
+You define the attribute once (`intent`), and you define the allowed answers
+(`size-advice`, `colour-advice`, `ready-to-order`, …). Agents then get a
+**dropdown** in the conversation sidebar. They cannot invent a new value, cannot
+typo one, and none of it appears in the label picker.
+
+That is genuinely two levels: **the attribute name is level 1, the allowed value
+is level 2.** It is the direct answer to "will this turn into a flat pile of
+names" — it structurally cannot, because only an admin can add a value.
+
+I tested this against production rather than trusting the code:
+
+| | Result |
+|---|---|
+| Filter the inbox by a conversation attribute | **Works** — confirmed live |
+| Filter by an exact value ("equals hiring") | **Works** — confirmed live |
+| Combine it with another condition | **Works** — confirmed live |
+| Use it as an automation rule condition | Yes, supported |
+| Show up in any report | **No.** Never. |
+
+So your instinct is right: **a list attribute is filterable.** Internally
+Chatwoot treats a `list` value as plain text, which is the same path I tested,
+so this is proven rather than assumed.
+
+**Two things to know before choosing it.**
+
+1. **It holds exactly one value.** That is a *good* fit for anything genuinely
+   mutually exclusive — a conversation has one traffic source, not three. It is a
+   *bad* fit for topics, where one conversation can be about sizing *and* a
+   refund. Labels are a set; a list attribute is a single choice.
+2. **It is invisible to reporting, permanently.** Not awkward — absent. There is
+   no way to get "average first response time by source" out of an attribute.
+
+### So why not just make labels nested in our fork?
+
+Because it is a large, permanent fork of a core Chatwoot concept, and it does not
+buy you the thing you want.
+
+The blocker is deeper than adding a "parent" column. Labels are stored on a
+conversation as **plain text tags** — the conversation holds the string
+`source-paid-ads`, and knows nothing about any hierarchy. A parent column would
+live only in the label settings table as decoration. To make it mean anything,
+every place that *reads* labels would have to learn the hierarchy: the picker,
+the sidebar, the inbox filter, the saved filters, the automation rule builder,
+the CSV import, contact labels, the AI label tool — and the Labels report, which
+today emits exactly one row per label with no notion of grouping.
+
+That is the part you actually want (roll-up: "all paid sources as one number"),
+and it is also the largest and most fragile piece. Our fork's rule is that a
+patch should be a small, removable thing that survives upgrading Chatwoot. This
+would be neither — it would conflict on every future Chatwoot release, forever,
+with no version where we could drop it.
+
+**And it is not needed.** Nesting solves two problems: a cluttered picker, and
+report roll-up. The clutter goes away by having three labels instead of
+twenty-seven. The roll-up is only worth building if you have more source
+categories than you can read at a glance — and you have one.
+
+If nested labels ever genuinely become the blocker, the right move is to ask
+Chatwoot for it upstream, not to carry it here.
+
+### The rule for choosing, from now on
+
+**One question: do you need to measure it, or just find it?**
+
+| | Use a **label** | Use a **list attribute** |
+|---|---|---|
+| Want it in reports | ✅ only option | ❌ impossible |
+| Want a tidy closed set of choices | ❌ anyone can add one | ✅ admin-only |
+| One conversation needs several at once | ✅ | ❌ single value |
+| Upkeep as it grows | Gets worse — every label is in every picker | Stays flat — values live in one dropdown |
+
+So: **measure it → label, and keep the list tiny. Merely find it → list
+attribute, and let it be as detailed as you like.**
+
+This is why `source-paid-ads` must stay a label — comparing ad traffic against
+organic on response and resolution time is the entire point, and only labels can
+do that. And it is why `intent` and `support topic`, if they ever come back,
+should come back as **one list attribute each**, not as thirteen labels.
+
 ---
 
 ## 2. What the taxonomy should be: three labels
@@ -101,8 +186,14 @@ conversation still carrying it and tidies up behind itself.
 
 > Both groups describe what a conversation is *about*. Only a human can apply
 > them, and there is nothing in place that would prompt anyone to — no canned
-> responses (0 exist) and one macro. If a habit ever forms, recreating a label
-> takes ten seconds. Deleting is reversible; clutter never fixes itself.
+> responses (0 exist) and one macro. Deleting is reversible; clutter never fixes
+> itself.
+>
+> **If these come back, bring them back as one list attribute each** — an
+> `intent` dropdown with seven allowed answers, and a `support_topic` dropdown
+> with six, instead of thirteen labels in everyone's picker. See section 1. The
+> one thing to accept: a conversation could then only carry one topic, and none
+> of it would appear in reports.
 
 **Delete these 6 (`value-`):** `value-first-time`, `value-high-value`,
 `value-influencer`, `value-returning`, `value-vip`, `value-wholesale`
@@ -289,6 +380,20 @@ did, which is what stops loops (good) but also means one rule cannot trigger
 another. Both rules above are independent, so this is fine — just don't design
 a rule that expects a label another rule applied.
 
+**Trap 5 — a "does not equal" filter on a custom attribute crashes unless it is
+the last condition.** Found while testing this document, and reproduced against
+production. Filtering for *"meta_ad_ref does not equal hiring"* on its own works
+and returns the right answer. Add a second condition after it and the search
+fails outright with a database error, because Chatwoot builds the query as
+`AND OR`. If you hit an error building a filter, move the "does not equal" row to
+the bottom of the list. This is an upstream Chatwoot bug, not something we
+introduced, and it applies to any custom attribute — not just ours.
+
+**Trap 6 — currency and percent attributes cannot be filtered at all.** Chatwoot
+knows how to filter text, number, link, date, list and checkbox attributes, but
+its filter code has no entry for `currency` or `percent`, so filtering one
+produces a broken query. Avoid those two types; use `number` instead.
+
 ---
 
 ## 9. Corrections to earlier figures
@@ -372,6 +477,22 @@ No production changes have been made. This document is a recommendation only.
 - `app/controllers/api/v1/accounts/labels_controller.rb` →
   `app/services/labels/destroy_service.rb` — removes the label from every
   conversation and contact holding it.
+
+**Custom attribute and label filters, run live against production (read-only)**
+- `app/services/filters/custom_attribute_filter_helper.rb` targets the
+  `conversations` table for conversation attributes, so they are genuinely
+  filterable; `app/services/filter_service.rb:9-11` maps `list` to `text`, which
+  is why testing the text path proves the list path.
+- Confirmed working: attribute `is present` → ran clean; attribute `equals` →
+  ran clean; attribute `equals` plus a second condition → ran clean.
+- Confirmed broken: attribute `does not equal` followed by another condition →
+  `PG::SyntaxError: syntax error at or near "OR"`. Alone it is correct and
+  correctly includes conversations that have no value at all.
+- Confirmed correct: `labels equal to lead-new` → 52; `labels does not equal
+  lead-new` → 816, which is exactly 868 − 52; combined with `status open` → 105.
+  So label absence in the inbox filter is right, unlike in automation rules.
+- `currency` and `percent` are absent from the filter type map, so they cannot be
+  filtered.
 
 **Production, measured 2026-08-12 (read-only)**
 - 27 labels; only `lead-new` (52) and `spam` (21) have ever been applied.
