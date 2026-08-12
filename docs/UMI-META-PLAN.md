@@ -47,6 +47,32 @@ partly broken in a way nobody had noticed.
 hand** — it does not run automatically, and if it is skipped the ad-capture
 feature is silently inert.
 
+### Meta-side config changed 2026-08-12 — record, because it is invisible in code
+
+**`messaging_referrals` subscribed on the Page** (app "UMI Store",
+`2163627007746338`). Field set went 6 → 7; nothing was lost.
+
+Before: `message_deliveries message_echoes message_reads messages
+messaging_handovers standby`
+After: the same **plus `messaging_referrals`**
+
+Why: Instagram was delivering ad attribution without it, so an earlier
+conclusion recorded here — that Meta's documented requirement "did not hold" —
+was generalised from Instagram alone. It **does** hold for Messenger. Proven by
+a real ad click: conversation 870, Messenger, 2026-08-12 20:13 Bangkok, opened
+by a menu tap, captured nothing while the code was verified loaded and both
+builder prepends wired.
+
+**If this ever needs restoring**, the pre-change set was:
+`message_deliveries,message_echoes,message_reads,messages,messaging_handovers,standby`
+
+Two traps for whoever touches this next. `POST /{page}/subscribed_apps`
+**replaces** the entire field set rather than appending, so a partial list
+silently unsubscribes everything omitted and Messenger messages stop arriving.
+And never use `Channel::FacebookPage#subscribe`: it rescues `StandardError`,
+logs at `debug` and returns `true`, so a failed re-subscribe looks like success.
+Read the live set, send the union, read back and diff — as the change above did.
+
 ## 🔨 In progress
 
 | What | Detail |
