@@ -3,9 +3,47 @@
 Show the agent what the ad already told the customer, as a private note on the
 conversation.
 
-**Status: gate resolved, cleared to implement.** See §0. Revision 4, after five
-independent reviews (feasibility, failure-modes, scope, security, domain-fit),
-all folded in. Base tag `v4.16.0`, branch `feat/ad-context-note`.
+**Status: implemented.** Revision 5, after five independent reviews
+(feasibility, failure-modes, scope, security, domain-fit) and a red-before-green
+pass over every load-bearing test. Base tag `v4.16.0`, branch
+`feat/ad-context-note`.
+
+### Changes in revision 5
+
+**Scope addition (owner, 2026-08-12): the campaign hierarchy.** An external
+assessment told the owner that "without custom implementation, Chatwoot cannot
+identify which Campaign, Ad Set, or Ad generated each conversation." Patch 20
+makes the ad half false; this closes the other half. Meta's webhook carries only
+`ad_id` and `ad_title`, but `campaign{id,name}` and `adset{id,name}` **expand
+into the request already being made** — verified on the live ad, one round trip,
+creative unaffected:
+
+```
+campaign: 05082026_Conversation_Messages Engagement
+ad set:   Thai_Board
+ad:       Video_2
+```
+
+Rendered as one line, **last**, below the greeting and the answer: the hierarchy
+is context, not what the agent opened the conversation to read. It degrades
+independently — if either level is missing the note still posts with everything
+else, and if both are missing the line is dropped rather than printing an ad
+name the sidebar already shows.
+
+**Two of these specs were vacuous and the red pass caught them.** Both passed
+against deliberately broken code:
+
+- *"still allows the real note once Meta recovers"* deleted the failure note
+  before re-running, so the two-status guard was never exercised. It was testing
+  the rake task's cleanup. Now the failure note is left in place.
+- *"reports failures that are not Graph errors"* stubbed Koala to raise
+  `NoMethodError` — but the service converts everything it catches into
+  `Unavailable`, so the job's catch-all was never reached. The failure now
+  arises in the presenter, outside the service.
+
+The first exposed a real design gap: on recovery the thread would have shown the
+failure note above the real one. Posting a success note now deletes any failure
+note in the same lock.
 
 Everything under "measured" was taken on 2026-08-12 against the live
 installation with read-only Graph GETs and DB reads. No production write, and
