@@ -345,6 +345,8 @@ Each response replaces one `ice_breakers[].response` on creative
 
 ใช้ได้ที่ https://umi.store กรอกโค้ดตอนชำระเงินได้เลยนะคะ
 
+🎁 ซื้อครบ ฿4,000 แถม Thongs Lure 1 ชิ้น (มูลค่า ฿590) ค่ะ
+
 อยากให้ช่วยแนะนำรุ่นขายดี หรือกำลังมองหาชิ้นไหนอยู่คะ บอกได้เลยค่ะ ยินดีเช็คไซส์และสต็อกให้นะคะ 🤍
 ```
 
@@ -356,41 +358,60 @@ rather than an open invitation.
 
 ---
 
-**Button 2 — `2. ขอแนะนำสินค้าสำหรับวันแม่`** — **BLOCKED, see below** (≈480 chars)
+**Button 2 — Mother's Day is being switched off at midnight 2026-08-12.**
+It is replaced by the gift-with-purchase offer, which needs a new **title** on
+the creative as well as a new response:
+
+> new title: `2. ของแถมเมื่อซื้อครบ ฿4,000`
 
 ```
-แนะนำของขวัญวันแม่จาก UMI ค่ะ 🤍
+ของแถมพิเศษจาก UMI ค่ะ 🤍
 
-1. Tank dress Fluent (สีดำ) — ฿4,690
-เดรสทรงสวย ใส่ได้ทุกโอกาส เหมาะเป็นของขวัญให้คุณแม่
-https://umi.store/products/tank-dress-fluent
+🎁 ซื้อครบ ฿4,000 — แถม Thongs Lure 1 ชิ้น (มูลค่า ฿590)
+🎁 ซื้อครบ ฿8,000 — แถม Thongs Lure + Bralette Pure (มูลค่า ฿1,690)
 
-2. Long sleeve Haze (สีดำ) — ฿2,490
-เสื้อแขนยาวเนื้อนุ่ม ใส่สบาย แมตช์ง่าย
-https://umi.store/products/long-sleeve-haze
+ของแถมมีสีดำและสีเบจ ไซส์ S / M / L ค่ะ
+https://umi.store/products/thongs-lure
+https://umi.store/products/bralette-pure
 
-3. Low-rise Flared Trousers (สีไอวอรี่) — ฿4,090
-กางเกงขาบานทรงสวย ยืดหยุ่น ใส่สบายค่ะ
-https://umi.store/products/low-rise-flared-trousers
-
-🎁 «OFFER — ยังไม่ยืนยัน»
-
-คุณแม่ปกติใส่ไซส์ไหนคะ เดี๋ยวช่วยเลือกให้ค่ะ 🤍
+สนใจรุ่นไหนอยู่คะ เดี๋ยวช่วยจัดให้ครบยอดพอดี แล้วเลือกสีและไซส์ของแถมได้เลยค่ะ 🤍
 ```
 
-**This one cannot be finished without UMI.** Agents have told at least three
-customers *"there is a special Mother's Day promotion"*
-(`มีโปรพิเศษสำหรับวันแม่นะคะ`, 08-11 and 08-12) **without ever stating what it
-is** — and searching every page-sent message containing `วันแม่` across all
-time returns only those three one-liners plus two messages about a Mother's Day
-*content shoot* in Phuket. The offer exists in someone's head and has never been
-written down anywhere I can read. **What is the Mother's Day promotion?** That
-is the one fact blocking this block.
+Product facts verified against the live storefront on 2026-08-12:
+**Thongs Lure ฿590** and **Bralette Pure ฿1,100**
+(`/products/thongs-lure`, `/products/bralette-pure`), both Black + Beige,
+S/M/L, and **all six variants of each are in stock** — `available: true`
+product-wide on Shopify's `.js` endpoint. Worth recording because the rendered
+product page shows *"Variant sold out or unavailable"* against every
+combination; that is the theme's pre-selection state, not the stock position.
 
-The products are the top three of the verified best-sellers list, re-framed as
-gifts; if UMI has a different gift edit, substitute it. Note the block asks for
-**the mother's** size, not the customer's — the buyer is shopping for someone
-else, which is the substantive difference from button 3.
+The ฿4,000 tier is **already being quoted to customers** — `แถมกางเกงใน 1ชิ้น
+เมื่อซื้อครบ4,000บาทค่ะ` (2026-08-11 21:38), the only place in production the
+offer has ever been written down, and it names no product. These drafts are the
+first time the gift has an identity, a value and a size.
+
+**Why the gift belongs on its own button rather than only as a footnote to the
+other two:** it has a colour and a size, so it cannot be fulfilled unless the
+customer replies. That converts the auto-reply into a question the customer has
+a concrete reason to answer — exactly what the 43% February cohort had and what
+today's discount block lacks (0 follow-ups in 10). It is the only one of the
+three buttons whose answer *requires* a response to complete.
+
+The same tier line is folded into blocks 1 and 3 above, so the offer is not
+stranded behind a single button.
+
+**Three business rules I could not establish. Each changes who qualifies:**
+
+1. **Does the ฿4,000 count before or after `WELCOME10`?** It decides real
+   cases: a ฿4,690 Tank dress qualifies either way, but ฿4,090 Low-rise
+   Trousers become ฿3,681 with the code and stop qualifying.
+2. **Can the gift be combined with `WELCOME10` at all?** Nothing in production
+   says. The draft deliberately claims nothing.
+3. **What is the current free-shipping threshold?** Production contradicts
+   itself: `฿6,000` (2025-07-09, 2025-08-19) versus `ซื้อสินค้าครบ฿4,500 ส่งฟรี`
+   alongside `฿120` flat shipping (2026-08-06). If ฿4,500 is current, the ladder
+   is unusually tidy and worth stating outright — ฿4,000 gift, ฿4,500 free
+   shipping, ฿8,000 double gift. I am not putting an unverified number in an ad.
 
 ---
 
@@ -420,6 +441,7 @@ https://umi.store/products/strap-top
 https://umi.store/products/mini-dress-keen
 
 อย่าลืมใช้โค้ด WELCOME10 ลด 10% สำหรับออเดอร์แรกนะคะ🤍
+🎁 ซื้อครบ ฿4,000 แถม Thongs Lure 1 ชิ้น (มูลค่า ฿590) ค่ะ
 
 สนใจตัวไหนเป็นพิเศษไหมคะ ปกติใส่ไซส์ไหน เดี๋ยวเช็คสต็อกให้ค่ะ
 ```
@@ -430,12 +452,11 @@ so there is nothing for the customer to answer.
 
 ### Two things to decide before pasting these in
 
-1. **Button 2 expires today.** Thai Mother's Day is 12 August. The button
-   wording lives in the creative, so the response can only ever be as current as
-   the button above it. Either refresh both together, or re-cut button 2 to
-   something evergreen (a gift edit, a new-arrivals list) at the next creative
-   change. The draft above is written to survive as a gift block if the offer
-   line is removed.
+1. **Button 2 needs a title change, not just a response change.** Mother's Day
+   goes off at midnight on 2026-08-12 and the button wording lives in the
+   creative, so a response alone cannot fix it — `title` and `response` have to
+   be edited together. The replacement is deliberately evergreen: a spend
+   threshold does not expire on a calendar date the way a holiday does.
 2. **These three go stale in exactly the same way the menu does.** They are
    per-creative. The best-sellers list in particular hardcodes five products and
    five prices; when stock or pricing moves, three separate places need editing.
