@@ -121,6 +121,67 @@ The answer to *"why only 4 of ~20 Messenger taps?"* is therefore: **it is not
 4 of 20, it is 17 of 18.** The count of 4 is an artefact of counting in a place
 where Messenger's copies do not exist — see Finding 5.
 
+### Reconciliation against an independent measurement
+
+A parallel measurement reported **4 fast replies, all Messenger, none on
+Instagram**, and suspected this document's count of human replies. Holding the
+*criterion* constant settles which half is wrong.
+
+**The classification rule used here is not a timing threshold.** A message
+counts as the ice-breaker firing only if all three hold:
+
+1. `from.id` is the page (`516819784857962`) or the IG business account
+   (`17841468119523354`);
+2. the text contains `ขอบคุณสำหรับข้อความของคุณ` — a substring present **only**
+   in the 166-char `response` read off the creative, and **absent** from the ad
+   greeting (asserted in code: the greeting returns `false` on this test);
+3. Meta `created_time` is **strictly greater** than the Meta-side copy of the
+   tap.
+
+Rule 2 is what makes the greeting trap structurally impossible rather than
+merely avoided: the greeting
+`สวัสดีค่ะ 👋 {{user_full_name}} แจ้งให้เราทราบได้เลยว่ามีอะไรให้เราช่วยคุณได้บ้าง`
+shares only the opening `สวัสดีค่ะ` with the response. Human replies never
+entered the count — they were a separate column throughout.
+
+**Re-run under the other measurement's criterion** — *first page message
+strictly after the tap, excluding Leads Centre notes and `replied to an ad`
+lines, no text matching at all* — same 7-day window, 25 taps matched:
+
+| Gap | Count | What the message actually is |
+|---|---|---|
+| 1 s | 8 | ice-breaker |
+| 2 s | 8 | ice-breaker |
+| 3 s | 5 | ice-breaker |
+| 4 s | 1 | ice-breaker |
+| 68 s | 1 | human (conv 837, Instagram) |
+| 74 s | 1 | human (conv 832, Instagram) |
+| 3193 s | 1 | human (conv 850, Messenger) |
+
+**22 of 25 within 10 s — 16 Messenger, 6 Instagram — and all 22 are the
+ice-breaker.** Greeting matched as an answer: **0**. Nothing sits between 5 and
+67 seconds; the distribution is bimodal with no ambiguous middle, which is why
+no timing threshold between 5 s and 60 s changes any conclusion.
+
+The two criteria therefore agree. The disagreement is not definitional, so it
+lies in the **data source** — and the Messenger half of it is explained by
+Finding 5: any count taken from Chatwoot rows finds **0** Messenger ice-breakers,
+because none has been stored since 2026-06-23. The Instagram half is not
+explained by anything found here; Instagram is the *better*-evidenced platform,
+carrying two independent records.
+
+**Single Instagram data point, both sources, conv 828:**
+
+| Source | Record |
+|---|---|
+| Meta Graph, `platform=instagram` | `2026-08-07T02:33:11+0000` USER `2573263889745610` → `3. ขอแนะนำสินค้าขายดีของ UMI` |
+| " | `2026-08-07T02:33:12+0000` PAGE (IG biz `17841468119523354`) → the 166-char response. **Gap 1 s, strictly after.** |
+| Chatwoot | msg `10175` incoming `08-07 09:33:16.955` (tap) |
+| " | msg `10177` outgoing `08-07 09:33:20.663`, `external_echo: true`, `source_id` `aWdf…`. **Gap 3.71 s, strictly after.** |
+
+Conv 826 is a second such case (Meta 14:54:47 → 14:54:48, 1 s; Chatwoot 10162 →
+10164, 6.47 s). Instagram fires.
+
 ### Month-to-date, as a check on the 7-day window
 
 The rolling 7-day window sits entirely inside August 2026 (first tap 08-06
