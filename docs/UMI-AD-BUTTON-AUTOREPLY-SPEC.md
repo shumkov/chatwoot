@@ -32,9 +32,10 @@ see the automated reply at all.
 
 | | |
 |---|---|
-| Window | 2026-08-05 21:45 → 2026-08-12 21:45 Bangkok (rolling 7 days) |
+| Window (primary) | 2026-08-05 21:45 → 2026-08-12 21:45 Bangkok (rolling 7 days) |
 | Taps in window | **29** inbound messages in inbox 2 matching `^[0-9]\.` (21 Messenger, 8 Instagram) |
 | Tap conversations | 19 |
+| Window (check) | 2026-08-01 00:00 → 2026-08-12 22:00 Bangkok (month-to-date), **33** taps — see *Month-to-date* below |
 | Sources | Chatwoot Postgres, and Meta's own copy of each thread via `GET /me/conversations?user_id=…&platform=…` + `/messages` |
 | Ad read | `GET /120252251820030415` and its creative `1361403628821199` on Ads API **v23.0** |
 | Ad inventory | 50 ads on `act_521070490831440`, `date_preset=last_30d` |
@@ -119,6 +120,26 @@ through the ad's welcome flow — but with n=2 I am not asserting a cause.
 The answer to *"why only 4 of ~20 Messenger taps?"* is therefore: **it is not
 4 of 20, it is 17 of 18.** The count of 4 is an artefact of counting in a place
 where Messenger's copies do not exist — see Finding 5.
+
+### Month-to-date, as a check on the 7-day window
+
+The rolling 7-day window sits entirely inside August 2026 (first tap 08-06
+07:37, last 08-12 20:13), so it is not mixing months. Re-run over the full month
+to date — **2026-08-01 00:00 → 08-12 22:00 BKK, 33 taps, 30 matched** — the
+result holds and strengthens slightly:
+
+| Platform | Taps | Fired | Gap min / median / max | Visible in Chatwoot |
+|---|---|---|---|---|
+| Messenger | 20 | **19 (95%)** | 1 s / 2 s / 4 s | 0 |
+| Instagram | 10 | **8 (80%)** | 1 s / 1 s / 2 s | 8 |
+| **Total** | **30 matched** | **27** | all ≤ 4 s | 8 |
+
+The Instagram figure needs one note: 6 of the 8 are strictly-after on Meta's
+clock, and the other 2 (convs 832 and 130) are confirmed fired by **Chatwoot's**
+copy (+5.9 s and +8.0 s) while Meta's thread listing did not return the message
+in a strictly-after position. For conv 832 that is the same-second rounding
+described above; for conv 130 the cause is not established. Genuine non-fires
+month-to-date are 3 of 30: convs 70, 837 (Instagram) and 850 (Messenger).
 
 ---
 
@@ -299,15 +320,127 @@ recommendation is weaker without them:**
 `ขอแนะนำสินค้าสำหรับวันแม่` — Thai Mother's Day is **12 August**, today. That
 menu option is expiring as this is written, and the ad still serves it.
 
-### What the three responses should say
+### What the three responses should say — drafts
 
-Out of scope for this document — it needs UMI's wording in Thai (the plan doc
-already has this as an open item, "~20 minutes together"). The shape is fixed by
-the mechanism: three blocks, each ≤ 1000 characters, each answering its own
-button. Two of the three already exist as agent copy-paste blocks in production
-(the `WELCOME10` coupon block and the best-sellers block); only the Mother's Day
-answer has never existed — which is why 5 taps for it got the best-sellers list
-or the coupon instead.
+Drafted by **recombining UMI's own production copy**, not by inventing voice or
+product data. Blocks 1 and 3 are the agent copy-paste blocks already in
+circulation (7 sends each in 60 days), reproduced verbatim except for the final
+line. Every product name, colour, price and URL below is copied from a message
+UMI actually sent — none is invented. **A Thai speaker at UMI must still sign
+these off before they go into the ad.**
+
+Each response replaces one `ice_breakers[].response` on creative
+`1361403628821199`, matched to its own `title`.
+
+---
+
+**Button 1 — `1. สนใจรับส่วนลด 10% สำหรับการสั่งซื้อครั้งแรก`** (247 → 262 chars)
+
+```
+สวัสดีค่ะ 🤍 ขอบคุณที่สนใจ UMI นะคะ
+
+นี่คือโค้ดส่วนลด 10% สำหรับการสั่งซื้อครั้งแรกค่ะ
+
+🎁 WELCOME10
+
+ใช้ได้ที่ https://umi.store กรอกโค้ดตอนชำระเงินได้เลยนะคะ
+
+อยากให้ช่วยแนะนำรุ่นขายดี หรือกำลังมองหาชิ้นไหนอยู่คะ บอกได้เลยค่ะ ยินดีเช็คไซส์และสต็อกให้นะคะ 🤍
+```
+
+Verbatim from production except the last line. The original closes with an
+open *"if you're interested in anything particular, tell me"* — and this tap has
+produced **0 follow-ups out of 10** across all time, the worst of the three.
+The replacement offers a concrete next step (best-sellers, or name a piece)
+rather than an open invitation.
+
+---
+
+**Button 2 — `2. ขอแนะนำสินค้าสำหรับวันแม่`** — **BLOCKED, see below** (≈480 chars)
+
+```
+แนะนำของขวัญวันแม่จาก UMI ค่ะ 🤍
+
+1. Tank dress Fluent (สีดำ) — ฿4,690
+เดรสทรงสวย ใส่ได้ทุกโอกาส เหมาะเป็นของขวัญให้คุณแม่
+https://umi.store/products/tank-dress-fluent
+
+2. Long sleeve Haze (สีดำ) — ฿2,490
+เสื้อแขนยาวเนื้อนุ่ม ใส่สบาย แมตช์ง่าย
+https://umi.store/products/long-sleeve-haze
+
+3. Low-rise Flared Trousers (สีไอวอรี่) — ฿4,090
+กางเกงขาบานทรงสวย ยืดหยุ่น ใส่สบายค่ะ
+https://umi.store/products/low-rise-flared-trousers
+
+🎁 «OFFER — ยังไม่ยืนยัน»
+
+คุณแม่ปกติใส่ไซส์ไหนคะ เดี๋ยวช่วยเลือกให้ค่ะ 🤍
+```
+
+**This one cannot be finished without UMI.** Agents have told at least three
+customers *"there is a special Mother's Day promotion"*
+(`มีโปรพิเศษสำหรับวันแม่นะคะ`, 08-11 and 08-12) **without ever stating what it
+is** — and searching every page-sent message containing `วันแม่` across all
+time returns only those three one-liners plus two messages about a Mother's Day
+*content shoot* in Phuket. The offer exists in someone's head and has never been
+written down anywhere I can read. **What is the Mother's Day promotion?** That
+is the one fact blocking this block.
+
+The products are the top three of the verified best-sellers list, re-framed as
+gifts; if UMI has a different gift edit, substitute it. Note the block asks for
+**the mother's** size, not the customer's — the buyer is shopping for someone
+else, which is the substantive difference from button 3.
+
+---
+
+**Button 3 — `3. ขอแนะนำสินค้าขายดีของ UMI`** (707 → 771 chars)
+
+```
+แนะนำรุ่นขายดีของ UMI ค่ะ 🤍
+
+1. Tank dress Fluent (สีดำ) — ฿4,690
+เดรสขายดีอันดับ 1 ค่ะ ทรงสวย ใส่ได้ทุกโอกาส
+https://umi.store/products/tank-dress-fluent
+
+2. Long sleeve Haze (สีดำ) — ฿2,490
+เสื้อแขนยาวเนื้อนุ่ม ใส่สบาย แมตช์ง่าย
+https://umi.store/products/long-sleeve-haze
+
+3. Low-rise Flared Trousers (สีไอวอรี่) — ฿4,090
+กางเกงขาบานทรงสวย ยืดหยุ่น ใส่สบายค่ะ
+https://umi.store/products/low-rise-flared-trousers
+
+4. Slip Top (สีไอวอรี่) — ฿2,190
+เสื้อสายเดี่ยว ใส่เดี่ยวหรือใส่ทับก็สวยค่ะ
+https://umi.store/products/strap-top
+
+5. Mini dress Keen (สีดำ) — ฿3,590
+เดรสสั้นทรงเรียบหรู ใส่ได้ทั้งกลางวันกลางคืน
+https://umi.store/products/mini-dress-keen
+
+อย่าลืมใช้โค้ด WELCOME10 ลด 10% สำหรับออเดอร์แรกนะคะ🤍
+
+สนใจตัวไหนเป็นพิเศษไหมคะ ปกติใส่ไซส์ไหน เดี๋ยวเช็คสต็อกให้ค่ะ
+```
+
+Verbatim from production, plus a closing question. This tap already has the best
+follow-up rate of the three (3 of 9); the block currently ends on a statement,
+so there is nothing for the customer to answer.
+
+### Two things to decide before pasting these in
+
+1. **Button 2 expires today.** Thai Mother's Day is 12 August. The button
+   wording lives in the creative, so the response can only ever be as current as
+   the button above it. Either refresh both together, or re-cut button 2 to
+   something evergreen (a gift edit, a new-arrivals list) at the next creative
+   change. The draft above is written to survive as a gift block if the offer
+   line is removed.
+2. **These three go stale in exactly the same way the menu does.** They are
+   per-creative. The best-sellers list in particular hardcodes five products and
+   five prices; when stock or pricing moves, three separate places need editing.
+   Keeping the list to items that are reliably in stock is worth more than
+   keeping it long.
 
 ---
 
