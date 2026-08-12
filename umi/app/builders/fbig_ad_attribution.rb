@@ -134,8 +134,17 @@ module Umi::FbigAdAttribution
 
       referral = Umi::FbigAdAttribution.normalize(umi_raw_referral)
       if referral.blank?
-        # Only worth a line once per conversation, not on every reply.
-        Umi::FbigAdAttribution.log(:referral_absent, @message.conversation_id) if @message.conversation.previously_new_record?
+        # Log unconditionally. This previously fired only when
+        # conversation.previously_new_record? was true, which is never the case
+        # by the time promotion runs after the builder transaction commits — so
+        # the patch emitted no line at all whether it worked or not, and a real
+        # ad conversation arriving with no referral was indistinguishable from
+        # the code never running. Observability that cannot observe is worse
+        # than none, because its silence reads as evidence.
+        #
+        # Volume makes the unconditional form safe: this inbox takes on the
+        # order of twenty inbound messages per six hours.
+        Umi::FbigAdAttribution.log(:referral_absent, @message.conversation_id)
         return
       end
 
