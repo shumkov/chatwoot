@@ -77,24 +77,44 @@ module Umi::FbigAdAttribution
   # erasure because it is how the channel routes messages, so leaving it behind
   # is re-identifying.
   #
-  # Set-based SQL rather than a model loop on purpose: Message#save! would trip
-  # prevent_message_flooding on an active conversation, and would fire
-  # MESSAGE_UPDATED webhooks echoing the redaction outward to third parties.
+  # Message#save! is avoided throughout: it would trip prevent_message_flooding
+  # on an active conversation, and would fire MESSAGE_UPDATED webhooks echoing
+  # the redaction outward to third parties. `update_all` and `update_columns`
+  # both skip validations and callbacks, so either satisfies that.
   #
-  # messages.content_attributes is `json`, which has no key operators, so it has
-  # to round-trip through a cast; conversations.custom_attributes is `jsonb` and
-  # takes `-` directly.
+  # conversations.custom_attributes is `jsonb` and takes `-` directly.
+  #
+  # messages.content_attributes cannot be touched in SQL at all. It is a `json`
+  # column carrying `store … coder: JSON`, so the value is serialized twice and
+  # what Postgres holds is a JSON *string*:
+  #
+  #   content_attributes::text                 "{\"referral\":{…}}"   ← quoted
+  #   jsonb_typeof(content_attributes::jsonb)  "string"
+  #
+  # Every key operator therefore matches nothing — silently. A predicate of
+  # `content_attributes::jsonb -> 'referral' IS NOT NULL` returned 0 rows in
+  # production against 5029 rows that genuinely carry the key, and the erasure
+  # reported success while deleting nothing. Reading through the accessor, which
+  # decodes, and writing back through `update_columns`, which re-encodes the
+  # same way, is the only form that cannot silently miss.
   def purge_for(contact)
     ActiveRecord::Base.transaction do
       conversation_ids = contact.conversations.pluck(:id)
       next if conversation_ids.empty?
 
-      # rubocop:disable Rails/SkipsModelValidations
       Conversation.where(id: conversation_ids)
-                  .update_all("custom_attributes = custom_attributes - #{CONVERSATION_KEYS.map { |k| "'#{k}'" }.join(' - ')}")
-      Message.where(conversation_id: conversation_ids)
-             .where("content_attributes::jsonb -> 'referral' IS NOT NULL")
-             .update_all("content_attributes = (content_attributes::jsonb - 'referral')::json")
+                  .update_all("custom_attributes = custom_attributes - #{CONVERSATION_KEYS.map { |k| "'#{k}'" }.join(' - ')}") # rubocop:disable Rails/SkipsModelValidations
+      purge_message_referrals(conversation_ids)
+    end
+  end
+
+  def purge_message_referrals(conversation_ids)
+    Message.where(conversation_id: conversation_ids).find_each do |message|
+      attributes = message.content_attributes
+      next if attributes['referral'].blank?
+
+      # rubocop:disable Rails/SkipsModelValidations
+      message.update_columns(content_attributes: attributes.except('referral'))
       # rubocop:enable Rails/SkipsModelValidations
     end
   end
