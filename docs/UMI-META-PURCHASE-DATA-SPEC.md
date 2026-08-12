@@ -239,47 +239,93 @@ finding.** Meta has no single integration to name because both connection
 methods originate from the *same* Shopify app (`2329312`). It is not evidence
 of a mystery third source.
 
-### The third candidate, costed: zero and malformed values
+### The zero-value orders are barter — legitimate records, and not the cause
 
 Meta's rule is that value must be numeric **and greater than 0**, which makes a
-฿0.00 order a violation by definition. This was worth costing properly, and it
-had not been measured before. Result, for the exact diagnostic window:
+฿0.00 order a violation by definition. That made zero-value orders a candidate.
+Costing them properly demotes them.
 
-| Population | Orders | % of 39 events |
+**They are barter with influencers and models.** Confirmed against the orders
+themselves, not asserted: all 7 zero-total orders in 60 days carry a `barter`
+tag, a **manual 100% discount**, and an explanatory note — *"Blogger order -
+100% discount"*, *"barter for model"*, *"Barter — Anna, makeup artist from
+fashion show"*. Retail value is preserved in the line items and
+`total_discounts` (e.g. #1592 = ฿11,970). Four are draft orders, three come
+from the Shumabit app. One (#1592) is a staff birthday gift that its own note
+calls "NOT a barter", but it carries the same tag and the same shape.
+
+**These are real business records. Goods went out, no money came in.** They
+must not be deleted, and they must not be treated as corrupt data.
+
+**The window arithmetic demotes them as a cause of the 33%:**
+
+| Population | Orders | % of the 39 Meta events |
 |---|---:|---:|
-| `total_price == 0.00` | 3 (#1582, #1587, #1592 — all Shumabit-with-checkout) | 7.7% |
-| plus cancelled/refunded to zero | +1 (#1574 — Shumabit-no-checkout, refunded to ฿0.00) | — |
-| **all values ≤ 0** | **4** | **10.3%** |
+| Barter, 60 days | 7 | — |
+| **Barter, inside the 15 Jul – 11 Aug window** | **3** (#1582, #1587, #1592) | **7.7%** |
+| Cancelled/refunded to ฿0.00 in window — a *different* category | 1 (#1574) | 2.6% |
+| **All values ≤ 0 in window** | **4** | **10.3%** |
 
-Everything else is a clean positive decimal. No test orders, no multi-currency,
-one `pending` order, no other refunds.
+**7.7% is not 33%, and even the widest reading of "values ≤ 0" reaches only
+10.3%.** Barter orders cannot be the main driver. Nobody should later read "we
+found the zero-value orders" as "we found the cause" — at three events per
+28-day window they are roughly a quarter of the affected population at most.
 
-**So zero-value orders cannot explain 33% on their own — 10.3% is a third of
-the way there.** They are certainly *a* violation by Meta's stated rule, and
-fixing them is unambiguously correct, but they are at most a subset of the
-affected 13.
+Everything else in the window is a clean positive decimal: no test orders, no
+multi-currency, one `pending` order, no other in-window refunds. (A second
+fully-refunded order, #1537 at ฿11,890, sits just outside the window on 4 Jul.)
+
+### What to do about the barter orders — and what is not possible
+
+**Do not revalue them to retail before sending to Meta.** The retail value is
+available, so this is technically possible and it would be wrong: it would
+report revenue that was never received, inflating ROAS on every campaign, and
+an influencer receiving free goods is not an ad-driven conversion. Optimising
+toward it would teach Meta's bidder to chase a signal that produces no cash.
+
+**Excluding them from the purchase feed is not configurable.** Stated plainly
+because the alternative would be recommending something that cannot be done:
+
+- The Shopify Facebook & Instagram app has **data-sharing *level*** controls
+  (how much customer data, which event categories), not per-order predicates.
+  The storefront's own pixel registration shows
+  `"dataSharingControls":["share_all_events"]` — all-or-nothing at the event
+  level.
+- Meta's Events Manager offers **event blocking by event name**, not
+  conditional blocking. Blocking Purchase would discard all 39 events.
+- The `barter` tag is a clean, already-existing marker, but nothing in either
+  product can filter on it.
+
+So the realistic options are: **accept them**, or stop recording barter as
+Shopify orders at all — which would sacrifice inventory and fulfilment
+tracking for a business-process change, and is not recommended.
+
+**Accepting them is defensible.** A ฿0 Purchase event is *truthful*. It
+slightly dilutes average order value; it does not inflate ROAS. That is the
+right direction of error for a record of goods that generated no revenue.
 
 ### The tension this creates — and why it is useful
 
 If Meta *is* counting the ฿0 orders as violations, then neither clean 13-set
 can be the whole answer, because the zeros do not sit inside either of them
-cleanly:
+cleanly — the 3 in-window barter orders are all Shumabit-**with**-checkout:
 
 | Hypothesis | Affected count | % of 39 |
 |---|---:|---:|
 | Web checkouts (13) **+** the 4 zero/refunded orders (all non-web) | 17 | 43.6% |
-| Shumabit-no-checkout (13, already contains #1574) **+** the 3 other zeros | 16 | 41.0% |
+| Shumabit-no-checkout (13, already contains #1574) **+** the 3 barter orders | 16 | 41.0% |
 | Web checkouts alone | 13 | **33.3%** |
 | Shumabit-no-checkout alone | 13 | **33.3%** |
 
 Only the clean 13-sets land on 33%. The most economical reading is therefore
-that **Meta is not counting the ฿0.00 orders** — either it does not receive a
-Purchase event for them, or it does not flag a zero as a formatting issue
-despite the guidance text — and that the affected population is one of the two
-13-order subsets.
+that **Meta is not counting the ฿0.00 barter orders** — either it does not
+receive a Purchase event for them, or it does not flag a zero as a formatting
+issue despite the guidance text — and that the affected population is one of
+the two 13-order subsets.
 
-That is an inference from arithmetic, not a proof. Its value is that it makes
-the experiment below *diagnostic either way*.
+That is an inference from arithmetic, not a proof. Its value is that it turns
+the barter orders into a **calibration constant** for the experiment below: they
+set the expected residual, whichever way the main change lands.
 
 ### The two candidate subsets
 
@@ -325,15 +371,13 @@ third is a strict subset of it.
    catalog-based retargeting. It is the only failing check on the dataset.
 2. **One Purchase event in 39 carries no `content_ids`, `content_type` or
    `num_items`** while still carrying value, currency and order_id.
-3. **Zero-value orders.** 3 orders in the 28-day window and **7 in 60 days**
-   have `total_price = 0.00` (#1582, #1587, #1592 from the Shumabit app;
-   #1530, #1531, #1532, #1559 draft orders), plus #1574 which was cancelled and
-   refunded to ฿0.00 — 4 in the window once refunds are counted. Each produces
-   a Purchase event worth ฿0, which Meta's own rule ("greater than 0") makes a
-   violation by definition. See
-   [the third candidate](#the-third-candidate-costed-zero-and-malformed-values):
-   at 10.3% of events it cannot by itself explain 33%, but it is real noise in
-   Meta's optimisation signal and is fixable at source rather than at Meta.
+3. **Barter orders send ฿0 purchases.** 3 in the 28-day window, 7 in 60 days —
+   legitimate influencer/model barter, not data errors. Meta's rule ("greater
+   than 0") makes them a violation by definition, but at 7.7% of events they
+   are not the cause of the 33%, exclusion is not configurable, and revaluing
+   them would be actively harmful. See
+   [the zero-value orders](#the-zero-value-orders-are-barter--legitimate-records-and-not-the-cause).
+   Listed here for completeness; **no action recommended**.
 
 ---
 
@@ -365,33 +409,39 @@ The decision below does not depend on obtaining it.
 
 The diagnostic recomputes over a rolling 28-day window, so the percentage moves
 on its own within about four weeks of a change. That makes the number on screen
-a free instrument. Two changes, both correct on their own merits, both entirely
-within UMI's control:
+a free instrument — provided only one thing changes at a time.
 
-**Change A — stop emitting ฿0.00 purchases.** 4 of 39 events in the window
-(10.3%); 7 of 77 orders over 60 days. A ฿0.00 purchase is a violation of Meta's
-stated rule whatever else is true, and it is noise in the optimiser regardless
-of the 33%.
+**The change expected to move the number — Shumabit's Admin-API orders.** Put an
+explicit numeric total on them, and give them the customer/address identity
+they currently lack entirely (0 of 13 have any). This is the leading candidate,
+at almost exactly 33%, and it is the only candidate under UMI's control.
 
-**Change B — put an explicit numeric total on Shumabit's Admin-API orders**, and
-give them the customer/address identity they currently lack entirely. This is
-the leading candidate for the remaining ~9–13 events.
+**The change NOT expected to move the number — the barter orders.** As set out
+above, exclusion is not configurable and revaluing them would be wrong, so
+there is realistically nothing to change here. Even if there were, 3 of 39 is
+7.7% — a quarter of the problem at most. **Do not read a barter-related change
+as part of this test.**
 
-Then read the one number off the Diagnostics tab four weeks later. Every
-outcome is informative:
+This leaves the experiment single-variable, which is what makes it
+interpretable. Read the one number off the Diagnostics tab four weeks after the
+Shumabit change:
 
 | After the change, % affected | Reading |
 |---|---|
-| 33% → **~23%** | The ฿0.00 orders were being counted. The remaining ~9 events are a separate subset; re-open with that much smaller target. |
-| 33% → **~0%** | Change B hit it. The Shumabit no-checkout payload was the cause. Done. |
-| 33% → **unchanged at 33%** | Neither zeros nor the Shumabit payload are counted. By elimination the affected set is the **web-checkout / browser path** — which is Meta's own app on Shopify's checkout, so the remedy is to reconnect or reconfigure the Facebook & Instagram sales channel, not to write code. |
+| 33% → **~0%** | The Shumabit no-checkout payload was the cause. Done. Meta is not counting the barter zeros either. |
+| 33% → **~8%** | The Shumabit payload was the cause, **and** Meta does count the ฿0.00 barter orders — that 8% is the barter floor and is not worth chasing further, given exclusion is not configurable. |
+| 33% → **unchanged at 33%** | The Shumabit payload is not it. By elimination the affected set is the **web-checkout / browser path** — Meta's own app on Shopify's checkout, so the remedy is to reconnect or reconfigure the Facebook & Instagram sales channel, not to write code. |
 
-The third row is the reason this is worth doing even though Change B is a
-guess: a null result *is* the answer, because only two candidates exist and
-they are disjoint. Ruling one out selects the other.
+The last row is why this is worth doing even though the change is a guess: a
+null result *is* the answer, because only two candidates exist and they are
+disjoint. Ruling one out selects the other. The middle row is why the barter
+orders are worth understanding even though they are not the cause — they
+predict the residual, so an ~8% floor is a *success*, not a partial failure.
 
-Cost of being wrong: both changes are correct independently of the diagnostic,
-so neither is wasted work if it fails to move the number.
+Cost of being wrong: the Shumabit change is correct independently of the
+diagnostic — it is the same missing-identity defect that blocks
+`conversation → order` attribution — so it is not wasted work if the number
+does not move.
 
 ---
 
@@ -411,10 +461,15 @@ so neither is wasted work if it fails to move the number.
    11 Aug 2026), not historical.
 5. The failure mode is a **present-but-unusable** `value`, not an omitted
    field, inferred from `value` 39/39 against `content_ids` 38/39.
-6. **4 of 39 events (10.3%) carry a value of ≤ 0** and violate Meta's rule by
-   definition. This is a real defect and a strict subset of the problem.
-7. Zero-value orders **cannot** account for 33% on their own.
-8. Only two disjoint 13-order subsets land on 33.3%, and one of them — the web
+6. **4 of 39 events (10.3%) carry a value of ≤ 0** — 3 barter orders (7.7%)
+   plus 1 cancelled-and-refunded order (2.6%).
+7. The zero-value orders are **legitimate barter**, verified by tag, 100%
+   manual discount and note on all 7 over 60 days. They **cannot** account for
+   33%: 3 in the window is 7.7%, and the widest reading reaches 10.3%.
+8. **Excluding barter from the purchase feed is not configurable** in either
+   the Shopify app (`share_all_events`, level controls only) or Events Manager
+   (event blocking is by name, not conditional).
+9. Only two disjoint 13-order subsets land on 33.3%, and one of them — the web
    checkout path — is not under UMI's control.
 
 **Unprovable from outside Meta:**
@@ -423,7 +478,8 @@ so neither is wasted work if it fails to move the number.
    exposes it.
 2. **The literal payload Meta received.** No sample event is obtainable.
 3. **Whether Meta counts a ฿0.00 order as a violation.** The guidance text says
-   it should; the arithmetic suggests it does not. Change A settles it.
+   it should; the arithmetic suggests it does not. The residual left after the
+   Shumabit fix settles it — ~8% means counted, ~0% means not.
 4. **Anything before 2026-07-15.** Hard 28-day retention.
 5. **The ฿2,774 of affected ad spend** as a share of anything. Not reachable
    without `ads_read`; for scale it is ~1.2% of the ฿229,038 of order value in
@@ -448,15 +504,18 @@ assumes is invisible.
 
 Then, in order:
 
-1. **Run the experiment above.** Fix the ฿0.00 orders and the Shumabit payload,
-   wait four weeks, read the percentage. Do not seek more Meta access first —
-   there is none to be had.
-2. If it turns out to be the Shumabit orders, the fix belongs in **Shumabit's
-   order creation**, not in Chatwoot and not in a new Meta integration. Those
-   13 orders carry no identity of any kind, which is the same root cause
-   already blocking `conversation → order` attribution (backlog D8) — one
-   change fixes both, which is the strongest argument for doing it regardless
-   of the diagnostic.
+1. **Fix Shumabit's Admin-API order payload** — an explicit numeric total, plus
+   the customer/address identity those 13 orders entirely lack. Then wait four
+   weeks and read the percentage. This is the single-variable experiment; do
+   not seek more Meta access first, there is none to be had. The fix belongs in
+   **Shumabit's order creation**, not in Chatwoot and not in a new Meta
+   integration — the missing identity is the same root cause already blocking
+   `conversation → order` attribution (backlog D8), so one change fixes both.
+   That is the strongest argument for doing it regardless of the diagnostic.
+2. **Leave the barter orders alone.** They are legitimate records; exclusion is
+   not configurable and revaluing them to retail would inflate ROAS on every
+   campaign with revenue that was never received. Expect them to show up as a
+   residual of up to ~8% and treat that as the floor, not as unfinished work.
 3. Independently, fix the **catalog `content_ids` mismatch**. It is the only
    check Meta currently reports as *failing*, and it is unrelated to price
    data.
