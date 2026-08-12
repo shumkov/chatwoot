@@ -526,6 +526,116 @@ so there is nothing for the customer to answer.
 
 ---
 
+## The rest of the ad account, and whether the buttons can be edited
+
+Both measured read-only on 2026-08-13 against `act_521070490831440` ("UMI Ads",
+THB, Asia/Bangkok). **Ads API calls need `{ api_version: 'v25.0' }` as a
+symbol-keyed options hash** — a string key silently falls back to
+`Koala.config.api_version`, which nothing sets, and returns error 2635 while the
+code looks correct.
+
+### Messaging is a rounding error in this account — except for what it produces
+
+121 campaigns, 207 adsets, 300 ads scanned (the ads list is capped at 300, so
+the oldest tail is not covered; campaigns and adsets are complete).
+
+**Only 5 of 207 adsets have ever been messaging-destination:**
+
+| Adset | Started | Destination | Campaign | State |
+|---|---|---|---|---|
+| Social Media Manager_Phuket | 2026-08-13 | IG Direct + Messenger + WhatsApp | 13082026_Recruitment SMM_Phuket | **ACTIVE** |
+| Phuket + Bangkok · 22-40 | 2026-08-13 | Messenger | SMM hiring — Phuket + Bangkok | PAUSED |
+| Thai_Board | 2026-08-05 | IG Direct + Messenger + WhatsApp | 05082026_Conversation_Messages Engagement | campaign paused |
+| 04062026_Recruitment Admin_Phuket | 2026-06-05 | IG Direct + Messenger | same | campaign paused |
+| Bangkok / Instagram/FB / F25-45 | 2026-02-25 | IG Direct + Messenger | 25.02 Conversations / Bangkok only / Thai | campaign paused |
+
+**Two campaigns are ACTIVE account-wide.** Everything else — all 119 others — is
+paused:
+
+| Campaign | Objective | Destination | Delivered today |
+|---|---|---|---|
+| 13082026_Recruitment SMM_Phuket | ENGAGEMENT | **messaging** | ฿26.20, 441 impressions |
+| 13082026_Coversion Purchase_Travel 1 | SALES | website conversions | ฿25.10, 182 impressions |
+
+So **the only ad currently sending anyone into the inbox is a recruitment ad**
+for a Social Media Manager — ad `120252444629860415` (`SMM_Post`). Inbound ad
+traffic right now is job applicants, not shoppers. Its creative
+(`1577695497021437`, PHOTO, `MESSAGE_PAGE`, all three messaging destinations)
+has **no `page_welcome_message` at all** — no menu, no buttons, and therefore no
+automated response of any kind. A second recruitment messaging campaign was
+created the same day and left paused.
+
+**Non-messaging campaigns also drive DMs, and it is not negligible.** Messaging
+conversations started, last 7 days, by campaign:
+
+| Campaign | Spend 7d | Impressions | Conversations started |
+|---|---|---|---|
+| 05082026_Conversation_Messages Engagement | ฿1,538 | 9,085 | **21** |
+| 07082026_Traffic to Web | ฿1,551 | 22,260 | 3 |
+| 07082026_Coversion Purchase_Mothers' Day 10% | ฿3,265 | 13,692 | 1 |
+| 07082026_Traffic to IG | ฿1,458 | 23,852 | 1 |
+| 11082026_Coversion Purchase_Mothers' Day Gift | ฿1,306 | 5,966 | 1 |
+
+**27 conversations, of which the messaging campaign produced 21 (78%) on 17% of
+the spend.** The other 22% arrive from traffic and sales ads, land in the same
+inbox, and never see a menu because only messaging creatives carry one. The same
+campaign reports `messaging_welcome_message_view = 29`, which corroborates the
+29 taps measured independently in Chatwoot over the same 7 days.
+
+### The buttons can be edited. It is an edit, not a rebuild.
+
+Two separate questions, and they have different answers.
+
+**Can the ice-breakers be changed in place on the existing creative? No.** Meta
+documents only three updatable fields on an ad creative — `name`, `status`,
+`adlabels`. `object_story_spec` is not among them, and the ice-breakers live
+inside it at `object_story_spec.video_data.page_welcome_message`. Any change
+produces a **new creative**. This part is certain.
+
+**Does that force a duplicate ad? No — and this account proves it.** Scanning
+300 ads, **11 carry a creative dated after the ad itself was created**:
+
+| Ad | Ad created | Creative dated | Ad last updated |
+|---|---|---|---|
+| 120251750514250415 Carousel_Pictures_Manual | 2026-07-14 | 2026-07-16 | 2026-07-17 |
+| 120250776044790415 FLOW_catalog | 2026-06-23 | 2026-06-25 | 2026-06-25 |
+| 120250368838070415 Video 1 | 2026-06-18 | 2026-06-19 | 2026-06-19 |
+| …8 more | | | |
+
+A creative that did not exist when the ad was created, now attached to that ad,
+means the ad **kept its ID while its creative was replaced**. `106 of 300` ads
+were also edited more than an hour after creation, so this is routine here, not
+exotic. The earlier "message flows are immutable while live" finding applies to
+the *creative object*, not to the ad — the ad is a pointer, and the pointer can
+be moved.
+
+**What an edit actually costs, for this ad specifically:**
+
+| | |
+|---|---|
+| Ad ID, name, lifetime stats | **kept** — 9,148 impressions, 5,748 reach, ฿1,561.85, 22 conversations |
+| Learning phase | **nothing to lose** — the campaign is PAUSED and not delivering |
+| Page post social proof | at risk — the post carries **8 likes, 5 shares, 0 comments** |
+| Live traffic disruption | none — the ad is not delivering |
+
+The social proof at stake is 13 interactions on a reel eight days old. That is
+not a reason to avoid an edit.
+
+**What I could not establish:** whether Ads Manager's UI greys out the
+welcome-message editor specifically for an ad that has already been published.
+Everything above says the edit is permitted; whether the interface exposes it
+without a duplicate is a two-minute check in the UI — open the ad, press Edit,
+see whether the welcome-message section accepts changes — and I will not test it
+by writing to a live ad. If it is greyed out, the fallback is to build one new
+creative and point this ad at it, which preserves everything in the table above.
+
+**Recommendation stands: make it one edit.** The campaign is paused, so there is
+no delivery to disrupt and no learning to reset. Remove the stale Mother's Day
+button and replace all three generic responses in the same pass, rather than
+touching the ad twice. Note separately that fixing this ad does **nothing** for
+the traffic arriving right now, which comes from a recruitment ad that has no
+menu at all.
+
 ## Reproduction
 
 Scripts used, run via
