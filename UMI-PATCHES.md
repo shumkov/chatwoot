@@ -25,6 +25,7 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 18 | Instagram contacts named from their handle | `umi/app/services/instagram_handle_name.rb`, `config/initializers/zz_umi_ig_handle_name.rb`, `spec/umi/services/instagram/messenger/message_text_handle_name_spec.rb`; shared service: `umi/app/services/fbig/participant_name_service.rb` (+ `spec/services/umi/fbig/`) | With Business Asset User Profile Access granted, Meta's Instagram profile fetch **succeeds but omits `name`**, returning only `username`/`profile_pic`. Upstream passes that nil to `ContactInboxWithContactBuilder#contact_name`, which falls back to `Haikunator` — minting contacts called `lingering-sun-586`. Worse than the placeholder it replaced: a random adjective-noun name is indistinguishable from an agent's own wording, so no repair pass can safely rewrite it. Prepend on `Instagram::WebhooksBaseService#find_or_create_contact` names the contact from the handle and records it in `umi_profile_name` so enrichment may still upgrade it later. Distinct from patch #10, which covers the fetch *raising* (no contact at all). Prod census 2026-08-06: 7 such contacts, all minted within 30 days, newest the day before. `ParticipantNameService` also gained a platform keyword — Instagram participants carry only `username`, and that path answers for ids the profile API refuses with error 230 (12/12 in probe). | Upstream falls back to `username` when Meta returns no `name`, or Meta starts returning Instagram display names. |
 | 17 | Contact avatar uniqueness invariant | `db/migrate/20260724000000_add_unique_contact_avatar_attachment_index.rb`, `db/schema.rb`, `spec/models/active_storage/attachment_contact_avatar_constraint_spec.rb` | Enforce at most one Active Storage `avatar` attachment per `Contact` while preserving normal avatar replacement and unrelated attachments. The invariant protects ordinary live writers as well as reconciliation healing. | Upstream enforces the same Contact-avatar invariant, or Contact avatars no longer use this Active Storage attachment shape. |
 | 21 | Orders sidebar honours the stored `shopify_customer_id` | `umi/app/controllers/shopify/prefer_linked_customer.rb`, `config/initializers/zz_umi_shopify_linked_customer_orders.rb`, `spec/controllers/api/v1/accounts/integrations/shopify_linked_customer_orders_spec.rb` | The core orders sidebar resolves the customer only through `customers/search.json` on `"email:<x> OR phone:<y>"` (Chatwoot's own docs say matching is by phone or email). Patch #7 has meanwhile stored the id Shopify itself returned on `contact.additional_attributes['shopify_customer_id']` for ~795 production contacts — from the backfill/poll sync and from the on-touch link — and the controller ignored it, so a contact we know is a customer still rendered an **empty sidebar** whenever the search failed to reproduce the match (phone held in a different shape on either side, an email the agent has since edited, an id inherited through a contact merge). Prepend returns the linked id straight to the action and skips the search entirely; absent or blank id falls through to upstream's search untouched. No new API scopes and no extra calls — it removes one request on the linked path. Only the id is needed: the action reads `customers.first['id']` and `fetch_orders` sends it as `customer_id`, taking nothing else from the customer record. | Upstream matches the sidebar's customer on a stored customer id rather than only email/phone. |
+| 22 | Ad context private note | `umi/app/services/meta/ad_welcome_message_service.rb`, `umi/app/services/meta/ad_context_note_presenter.rb`, `umi/app/services/meta/ad_context_note_trigger.rb`, `umi/app/jobs/meta/ad_context_note_job.rb`, `umi/app/models/ad_context_note_liquid_exempt.rb`, `config/initializers/zz_umi_meta_ad_context_note.rb`, `lib/tasks/umi_meta.rake`, specs in `spec/services/umi/meta/`, `spec/jobs/umi/meta/`, fixture `spec/fixtures/files/umi/meta_ad_creative.json`; docs: `docs/UMI-META-AD-CONTEXT-NOTE-SPEC.md` | Meta answers a tapped ad menu option in 1-5s, but on Messenger that answer never reaches Chatwoot — measured 0 of 22 Messenger tap conversations over 90 days, against 8 of 8 on Instagram. The agent opens the thread, sees only the bare tap, and sends a canned block that may repeat or contradict it. A background job reads the ad creative with the page access token already on the channel and posts a **private note** carrying the greeting, which option was tapped, the options not taken, the answer the ad is configured to send, and the campaign/ad set/ad hierarchy Meta's webhook omits. **The page token reading Ads API nodes is undocumented** (it works because the grant carries `ads_read`/`ads_management`) so every failure posts a visible note rather than nothing — `SENTRY_DSN` is empty here and the Sidekiq dead set is unwatched, so an exception is not a signal. Four things are load-bearing: Koala sends an **unversioned** URL that the Ads API rejects with #2635, so `api_version` must be passed as a **symbol** key (this is the only Ads API caller in the tree); the documented `creative.page_welcome_message` is **nil** and the payload is nested and JSON-encoded, so the extractor scans rather than walking a path; `media_type` selects which `*_format` block is live, the others holding copy no customer saw; and the note is **exempted from Liquid** — Meta's greeting contains `{{user_full_name}}`, which Liquid renders to empty string, and escaping with `{% raw %}` does not work because Liquidable pre-wraps backtick spans and raw blocks do not nest. The idempotency guard is evaluated in **Ruby**: `messages.content_attributes` is double-encoded, so `::jsonb -> 'key'` matches nothing silently. Guard and insert run inside `conversation.with_lock` — two taps or a redelivered webhook otherwise race, and the bad outcome is not a duplicate but a correct note followed by a contradictory failure note. Erasure deletes the notes with patch 20's `purge_for`. | **When the ad's `ice_breakers[].response` values are made per-option and relevant, and Meta's replies become visible in Chatwoot.** Note this is deliberately *not* an upstream-shaped remove-when: upstream cannot do this (Meta documents Page tokens as unable to read ad nodes), so the honest reading is that this patch is a code workaround for a Meta-side configuration decision that has not been taken. Re-examine it when that decision is made. |
 
 ## Patch details
 
@@ -427,6 +428,46 @@ threads log `stage=referral_absent` while Instagram ones don't, the subscription
 is the difference; add it by reading the live set first and never via
 `channel.subscribe`, which rescues `StandardError` and returns `true` so a
 failed re-subscribe looks successful.
+
+### 22. Ad context private note
+
+Three things here will look like style choices on a rebase and are not:
+
+1. **`api_version` is passed as a symbol key.** `Koala.config.api_version` is
+   nil in this app and nothing sets it, so a string key falls back to nil and
+   Koala sends an unversioned URL. Graph Page calls tolerate that; the Ads API
+   rejects it outright with `(#2635)`. Every other Koala caller in this tree is
+   a Page call, which is why this only bites here.
+2. **The welcome message is found by scanning, not by path.** Meta documents
+   `creative.page_welcome_message`; that field is empty and the real payload is
+   a JSON-encoded string nested under `object_story_spec.<media>_data`. Reading
+   the documented path returns nil, which is indistinguishable from "this ad has
+   no welcome message" — the same silent-nil class as patch 20's nested
+   `referral`.
+3. **The note must never go through Liquid.** `Liquidable` runs `before_create`
+   on outgoing messages including private notes, and Meta's greeting contains
+   `{{user_full_name}}`, which is not a Chatwoot drop and renders to empty
+   string. Escaping was tried and does not work: `liquidable.rb` rewrites
+   backtick spans into raw blocks of its own, raw blocks do not nest, and the
+   resulting `Liquid::SyntaxError` is rescued — leaving literal `{% raw %}`
+   markers in the note. Not rendering at all also closes an injection route,
+   since the text is chosen by whoever can edit the ad.
+
+Reporting safety is proven by spec rather than argued: private notes satisfy
+neither `human_response?` nor `valid_first_reply?`, so `waiting_since`,
+`first_reply_created_at` and `ReportingEvent` are untouched and ad conversations
+stay in Unattended. **`private: true` carries two of those three guards on its
+own** — `update_waiting_since` skips the outgoing branch before
+`human_response?` is consulted — so the counterfactual examples all clear
+`private` and vary the second axis. Mutating only the sender proves nothing.
+
+`messages.content_attributes` is double-encoded (a `json` column plus a `store`
+coder), so `content_attributes::jsonb -> 'key'` matches **nothing, silently**.
+Measured: `external_echo` returns 0 rows via SQL and 5029 via Ruby. Any predicate
+on that column has to be evaluated in Ruby or double-decoded first.
+**Patch 20's `purge_for` still carries this defect for its `referral`
+predicate** — harmless only while no referrals are stored, which stopped being
+true when `messaging_referrals` was subscribed on 2026-08-12. Needs its own fix.
 
 ## Completed one-time operations
 
