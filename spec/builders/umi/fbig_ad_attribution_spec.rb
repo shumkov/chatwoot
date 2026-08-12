@@ -161,6 +161,67 @@ describe Umi::FbigAdAttribution do
     expect(message.conversation.custom_attributes).to include('meta_ad_id' => '120252251820030415')
   end
 
+  # purge_for is the Shopify customers/redact path — a statutory erasure. It
+  # shipped with no test of its own, and the referral half never deleted
+  # anything: messages.content_attributes is a json column carrying a `store`
+  # coder, so what Postgres holds is a JSON *string* and
+  # `content_attributes::jsonb -> 'referral'` matches nothing. The method
+  # returned cleanly either way, so nothing surfaced it.
+  describe 'erasure' do
+    def stored_referral
+      Message.find(Message.last.id).content_attributes['referral']
+    end
+
+    it 'deletes the referral from the message, stored the way the live path stores it' do
+      perform(build_event(referral: ad_referral))
+      contact = Message.last.conversation.contact
+      expect(stored_referral).to be_present
+
+      described_class.purge_for(contact)
+
+      expect(stored_referral).to be_nil
+    end
+
+    it 'leaves the rest of content_attributes intact rather than blanking the column' do
+      perform(build_event(referral: ad_referral))
+      message = Message.last
+      message.update_columns(content_attributes: message.content_attributes.merge('in_reply_to' => 42)) # rubocop:disable Rails/SkipsModelValidations
+
+      described_class.purge_for(message.conversation.contact)
+
+      attributes = Message.find(message.id).content_attributes
+      expect(attributes).to include('in_reply_to' => 42)
+      expect(attributes).not_to have_key('referral')
+    end
+
+    # The conversation half is a different column: jsonb with no store coder, so
+    # the minus operator does work on it directly. Verified rather than assumed,
+    # because the two halves of this method fail independently.
+    it 'strips the promoted fields from the conversation' do
+      perform(build_event(referral: ad_referral))
+      conversation = Message.last.conversation
+      expect(conversation.custom_attributes).to include('meta_ad_id')
+
+      described_class.purge_for(conversation.contact)
+
+      expect(conversation.reload.custom_attributes).not_to include('meta_ad_id', 'meta_ad_ref', 'meta_ad_title')
+    end
+
+    it 'keeps unrelated conversation attributes' do
+      perform(build_event(referral: ad_referral))
+      conversation = Message.last.conversation
+      conversation.update!(custom_attributes: conversation.custom_attributes.merge('sidebar_priority' => 'high'))
+
+      described_class.purge_for(conversation.contact)
+
+      expect(conversation.reload.custom_attributes).to eq('sidebar_priority' => 'high')
+    end
+
+    it 'does nothing for a contact with no conversations' do
+      expect { described_class.purge_for(create(:contact, account: account)) }.not_to raise_error
+    end
+  end
+
   describe 'the Facebook payload, which is String-keyed rather than indifferent-access' do
     it 'reads the nested referral through the parser' do
       json = { messaging: { sender: { id: '1' }, recipient: { id: '2' }, timestamp: 1,
