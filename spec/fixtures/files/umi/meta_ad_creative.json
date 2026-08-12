@@ -1,0 +1,66 @@
+{
+  "id": "120252251820030415",
+  "name": "Video_2",
+  "updated_time": "2026-08-05T23:32:29+0700",
+  "campaign": {
+    "id": "120252251147010415",
+    "name": "05082026_Conversation_Messages Engagement"
+  },
+  "adset": {
+    "id": "120252251147000415",
+    "name": "Thai_Board"
+  },
+  "creative": {
+    "id": "1361403628821199",
+    "object_story_spec": {
+      "page_id": "516819784857962",
+      "instagram_user_id": "17841468119523354",
+      "video_data": {
+        "video_id": "1543639160836803",
+        "title": "รับส่วนลด 10% วันนี้",
+        "message": "ค้นพบสินค้าขายดีจาก UMI \nเสื้อผ้าจากวัสดุธรรมชาติที่เบาสบาย ระบายอากาศ เหมาะกับอากาศเมืองไทย เพื่อให้คุณรู้สึกมั่นใจในทุกวัน\nรับส่วนลด 10% สำหรับการสั่งซื้อออนไลน์ครั้งแรก",
+        "call_to_action": {
+          "type": "MESSAGE_PAGE",
+          "value": {
+            "app_destination": "MESSENGER",
+            "link": "https://fb.com/messenger_doc/"
+          }
+        },
+        "image_url": "https://www.facebook.com/ads/image/?d=AQLHYomg7x5jaSW7-H5ORR75V6NczflgBkQyhPlt65107UWGQQoo-2uwKnpSLLrgjL47CXXZmP_DLUpBL9L_SY7xWPKq1KXExScYd6BE8ST-yXNDV1ySjjrqRaBsl60zGolHxlnheaCLGzLSz_fkUJC1",
+        "image_hash": "a4f455f71a85004e73b0cae91a79b667",
+        "page_welcome_message": "{\"type\":\"VISUAL_EDITOR\",\"version\":2,\"landing_screen_type\":\"welcome_message\",\"media_type\":\"text\",\"text_format\":{\"customer_action_type\":\"ice_breakers\",\"message\":{\"ice_breakers\":[{\"title\":\"1. สนใจรับส่วนลด 10% สำหรับการสั่งซื้อครั้งแรก\",\"response\":\"สวัสดีค่ะ 🤍 ขอบคุณสำหรับข้อความของคุณ\\nเราได้รับข้อความของคุณเรียบร้อยแล้ว และจะตอบกลับโดยเร็วที่สุด\\nระหว่างนี้ คุณกำลังสนใจสินค้ารุ่นไหนอยู่คะ? เรายินดีช่วยแนะนำค่ะ ✨\"},{\"title\":\"2. ขอแนะนำสินค้าสำหรับวันแม่\",\"response\":\"สวัสดีค่ะ 🤍 ขอบคุณสำหรับข้อความของคุณ\\nเราได้รับข้อความของคุณเรียบร้อยแล้ว และจะตอบกลับโดยเร็วที่สุด\\nระหว่างนี้ คุณกำลังสนใจสินค้ารุ่นไหนอยู่คะ? เรายินดีช่วยแนะนำค่ะ ✨\"},{\"title\":\"3. ขอแนะนำสินค้าขายดีของ UMI\",\"response\":\"สวัสดีค่ะ 🤍 ขอบคุณสำหรับข้อความของคุณ\\nเราได้รับข้อความของคุณเรียบร้อยแล้ว และจะตอบกลับโดยเร็วที่สุด\\nระหว่างนี้ คุณกำลังสนใจสินค้ารุ่นไหนอยู่คะ? เรายินดีช่วยแนะนำค่ะ ✨\"}],\"quick_replies\":[],\"text\":\"สวัสดีค่ะ 👋 {{user_full_name}}    แจ้งให้เราทราบได้เลยว่ามีอะไรให้เราช่วยคุณได้บ้าง\"}},\"image_format\":{\"customer_action_type\":\"quick_replies\",\"message\":{\"attachment\":{\"type\":\"template\",\"payload\":{\"template_type\":\"generic\",\"elements\":[{\"title\":\"\",\"buttons\":[],\"image_hash\":\"\"}]}},\"quick_replies\":[{\"title\":\"I'd like to learn more\",\"content_type\":\"text\",\"response_type\":null}],\"text\":\"สวัสดีค่ะ 👋 {{user_full_name}}    แจ้งให้เราทราบได้เลยว่ามีอะไรให้เราช่วยคุณได้บ้าง\"}},\"video_format\":{\"customer_action_type\":\"quick_replies\",\"message\":{\"attachment\":{\"type\":\"video\",\"payload\":{\"attachment_id\":\"\"}},\"quick_replies\":[{\"title\":\"I'd like to learn more\",\"content_type\":\"text\",\"response_type\":null}],\"text\":\"สวัสดีค่ะ 👋 {{user_full_name}}    แจ้งให้เราทราบได้เลยว่ามีอะไรให้เราช่วยคุณได้บ้าง\"}},\"user_edit\":true,\"surface\":\"visual_editor_new\",\"ai_generated_icebreaker_toggle_enabled\":true,\"ai_gen_welcome_message_model_version\":null,\"ai_gen_nudge_model_version\":null,\"is_eligible_for_customized_greeting\":false,\"is_user_editing\":false,\"is_eligible_for_leveraging_inbox_faqs\":false,\"ai_gen_conversation_model_version\":\"IBV1\",\"ice_breakers_edited\":true,\"welcome_message_edited\":true,\"has_ai_generated_welcome_message\":false,\"performance_booster_enabled\":false,\"template_id\":\"1753402629028158\"}"
+      }
+    },
+    "asset_feed_spec": {
+      "call_to_actions": [
+        {
+          "type": "MESSAGE_PAGE",
+          "value": {
+            "app_destination": "MESSENGER",
+            "link": "https://fb.com/messenger_doc/"
+          }
+        },
+        {
+          "type": "WHATSAPP_MESSAGE",
+          "value": {
+            "app_destination": "WHATSAPP",
+            "link": "https://api.whatsapp.com/send"
+          }
+        },
+        {
+          "type": "INSTAGRAM_MESSAGE",
+          "value": {
+            "app_destination": "INSTAGRAM_DIRECT",
+            "app_link": "instagram://direct?userid=68106838650",
+            "link": "https://www.instagram.com/"
+          }
+        }
+      ],
+      "optimization_type": "DOF_MESSAGING_DESTINATION",
+      "additional_data": {
+        "multi_share_end_card": false,
+        "is_click_to_message": true
+      }
+    }
+  }
+}
