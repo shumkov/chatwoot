@@ -3,10 +3,14 @@
 Show the agent what the ad already told the customer, as a private note on the
 conversation.
 
-**Status: implemented.** Revision 5, after five independent reviews
-(feasibility, failure-modes, scope, security, domain-fit) and a red-before-green
-pass over every load-bearing test. Base tag `v4.16.0`, branch
+**Status: implemented, not deployed.** Revision 6, after five independent
+reviews (feasibility, failure-modes, scope, security, domain-fit) and a
+red-before-green pass over every load-bearing test. Base tag `v4.16.0`, branch
 `feat/ad-context-note`.
+
+Revision 6 corrects two facts that changed after the code was written: Messenger
+capture is now **observed** rather than argued (§0 point 5), and the erasure
+fix's deploy timing rested on a premise that has since flipped (§5.4).
 
 ### Changes in revision 5
 
@@ -69,15 +73,32 @@ no modification to any ad, was performed.
 4. Instagram referral arrival is **proven from captured payloads**: 5 of 120
    Instagram messaging entries over 7 days carried a complete `referral` with
    `ad_id` and `ads_context_data`.
-5. Not yet confirmed: a **live Messenger capture**. Zero ad-originated
-   conversations have arrived since the subscription change.
+5. **Messenger capture confirmed 2026-08-13.** No longer argued. 12
+   conversations carry `meta_ad_id` — **9 Instagram, 3 Messenger** — with 14
+   messages holding the raw referral. Messenger examples: conv 890 (09:13),
+   conv 881 (04:37), conv 876 (01:15). The Messenger half began working
+   immediately after `messaging_referrals` was subscribed, which confirms both
+   the diagnosis and the fix.
 
-**Owner decision: build now, do not wait.** The trigger keys on `meta_ad_id`
-being present, which is platform-agnostic; the payload shape is verified from
-real captured data rather than docs; the specs prove the code without live
-traffic; and if referrals never arrive the job simply never fires — the correct
-failure mode, costing nothing. Recorded rather than assumed so a later reader
-knows §0 was cleared by decision plus four proven points, not by a live capture.
+   **The delivering ad has changed.** All 12 carry ad `120252444629860415`
+   ("SMM_Post"), not the `120252251820030415` ("Video_2") this spec was written
+   against — Video_2 is paused and SMM_Post delivers to **both** platforms. Two
+   consequences: the checked-in fixture is Video_2's payload and is kept as a
+   *shape* fixture rather than a claim about what is live, and SMM_Post's
+   ice-breaker answers have not been read, so the "all three answers identical"
+   finding (§2.4) is specific to Video_2. The presenter covers both cases —
+   identical answers collapse to one, differing answers render per option — and
+   both branches are tested, so nothing depends on which shape SMM_Post has.
+
+   `ref` is empty on all 12, as expected: nobody has set one on the ads. The
+   patch degrades to `ad_id` rather than capturing nothing, exactly as patch 20
+   documents.
+
+**Owner decision at the time: build now, do not wait**, on four proven points
+plus the reasoning that the trigger keys on `meta_ad_id`, which is
+platform-agnostic. That decision has since been vindicated by point 5 — the
+live capture arrived while the patch was being written, on the platform the
+gate was raised about.
 
 The original argument for the gate is kept below, because it is still the reason
 the subscription fix mattered and the reason a live Messenger capture remains
@@ -106,10 +127,14 @@ the 22 Messenger threads that need it. That cannot be settled from the database
 That is what happened, and the subscription work (backlog A3) is what fixed it —
 `messaging_referrals` added by reading the live field set first and never via
 `channel.subscribe`, which rescues `StandardError` and returns `true`, so a
-failed re-subscribe looks successful.
+failed re-subscribe looks successful. **Confirmed working: 3 Messenger
+conversations captured within hours** (point 5 above).
 
-**Still worth confirming once traffic resumes:** one Messenger conversation
-carrying `meta_ad_id`. Until then the Messenger path is argued, not observed.
+The measured split that made this a gate — 22 Messenger tap conversations to 8
+Instagram, with Meta's answer stored for the Instagram ones only — still stands
+as the reason the patch exists. The 9-to-3 split in the first hours of capture
+is a different and much smaller sample, and says nothing yet about the
+steady-state mix.
 
 ---
 
@@ -644,14 +669,37 @@ silence. The guard runs inside a lock we already hold, on one conversation's
 messages — a bounded set — so it is evaluated in **Ruby**, where the accessor
 does the decoding and a mistake cannot be silent.
 
-> **Live defect in deployed patch 20, out of scope for this patch.**
-> `purge_for` uses `content_attributes::jsonb -> 'referral' IS NOT NULL` for its
-> Shopify-redaction erasure. That predicate matches nothing for the same reason.
-> It reads 0 today only because no referrals are stored yet; `messaging_referrals`
-> was subscribed on 2026-08-12, so as soon as referrals arrive the erasure path
-> will silently strip nothing while reporting success. Needs its own fix and its
-> own commit. The `conversations.custom_attributes` half is **fine** — that
-> column is real `jsonb` with no `store` coder.
+> **Defect in deployed patch 20 — now fixed on this branch, not yet deployed.**
+> `purge_for` used `content_attributes::jsonb -> 'referral' IS NOT NULL` for its
+> Shopify-redaction erasure, which matched nothing for the same reason, so the
+> statutory erasure reported success while deleting nothing. Fixed in its own
+> commit. The `conversations.custom_attributes` half was **fine** and is
+> verified so by test — that column is real `jsonb` with no `store` coder, which
+> is what isolates the defect to the message side.
+>
+> Fixing the `WHERE` alone would not have sufficed: the `SET` was
+> `(content_attributes::jsonb - 'referral')::json`, and subtracting a key from a
+> jsonb *scalar* raises. A partial fix would have converted a silent failure
+> into a raising one mid-erasure.
+
+### Deploy timing for the erasure fix — premise corrected 2026-08-13
+
+The earlier recommendation ("can ride the next deploy") rested on *zero
+referrals being stored*. **That is no longer true: 14 messages carry referrals
+as of 2026-08-13.** The bug is now reachable rather than theoretical — a
+`customers/redact` webhook arriving today would report success and leave real
+referral data in place.
+
+Revised recommendation: **still not an emergency, because redactions are rare,
+but it should go out at the next opportunity rather than drift.** The exposure
+grows with every ad conversation now that capture is live on both platforms.
+
+> **Action if a redaction lands before the fix is deployed.** `update_columns`
+> leaves no trace, so afterwards there is no way to tell which contacts were
+> affected. Any `customers/redact` webhook arriving in this window must have
+> `Umi::Shopify::CustomerRedactionService` re-run for that contact once the fix
+> is live. It is idempotent, so re-running costs nothing. This is no longer a
+> hypothetical — referrals are stored, so the trigger is live.
 
 **The guard runs inside `conversation.with_lock`, with the Graph call outside
 it:**
@@ -933,8 +981,9 @@ Gated on §0. Patch 20 must be deployed **including its migration** — per
 `chatwoot-prod-deploy`, migrations do not run on boot; skipping it leaves the
 whole chain silently inert.
 
-1. **Settle the gate:** confirm at least one **Messenger** conversation captures
-   `meta_ad_id`. Check the **database**, not the log — patch 20's
+1. **Gate settled 2026-08-13 — 3 Messenger conversations captured** (§0). Kept
+   as a step because it is how the same check is made after any future
+   subscription or rebase change. Check the **database**, not the log — patch 20's
    `stage=referral_absent` line was gated on `conversation.previously_new_record?`,
    which is never true by the time promotion runs, so the patch emitted no line
    either way. Fixed in code on 2026-08-12, **not yet deployed**. Until that
