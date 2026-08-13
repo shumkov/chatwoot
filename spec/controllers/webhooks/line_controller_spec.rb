@@ -8,5 +8,23 @@ RSpec.describe 'Webhooks::LineController', type: :request do
       post '/webhooks/line/line_channel_id', params: { content: 'hello' }
       expect(response).to have_http_status(:success)
     end
+
+    it 'passes the raw request body and signature unchanged to the job' do
+      raw_body = '{"destination":"U123","events":[{"type":"message","text":"สวัสดี 👋"}]}'
+      signature = 'original-line-signature'
+
+      expect(Webhooks::LineEventsJob).to receive(:perform_later).with(
+        params: hash_including(line_channel_id: 'line_channel_id'),
+        signature: signature,
+        post_body: raw_body
+      )
+
+      post '/webhooks/line/line_channel_id', params: raw_body, headers: {
+        'CONTENT_TYPE' => 'application/json',
+        'X-Line-Signature' => signature
+      }
+
+      expect(response).to have_http_status(:success)
+    end
   end
 end
