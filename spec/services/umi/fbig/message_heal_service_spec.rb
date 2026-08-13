@@ -22,8 +22,9 @@ describe Umi::Fbig::MessageHealService do
 
     before do
       allow(api).to receive(:get_object).with('mid-lost', anything).and_return(detail)
-      # Contact profile fetch inside the IG builder path.
-      allow(api).to receive(:get_object).with('ig-customer-1')
+      # Contact profile fetch inside the IG builder path, which names the
+      # fields it wants rather than relying on Meta's defaults.
+      allow(api).to receive(:get_object).with('ig-customer-1', hash_including(:fields))
                                         .and_return({ 'name' => 'Jane', 'id' => 'ig-customer-1', 'username' => 'jane_ig' }.with_indifferent_access)
     end
 

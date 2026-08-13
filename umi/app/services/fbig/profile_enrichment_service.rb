@@ -22,9 +22,13 @@ class Umi::Fbig::ProfileEnrichmentService
   # match a customer genuinely named "Jane Doe".
   REWRITABLE_LITERALS = ['John Doe', 'Facebook user'].freeze
   MAX_AVATAR_BYTES = 15.megabytes
+  # Freshness stamp for the Business Discovery pass. Separate from
+  # umi_profile_checked_at because the two passes have separate budgets and
+  # separate queues; sharing one stamp would let either starve the other.
+  DISCOVERY_STAMP = 'umi_business_discovery_at'
 
   Outcome = Struct.new(:status, :name, :avatar, :error, keyword_init: true)
-  Resolution = Struct.new(:name, :source, :handle, :avatar_url, keyword_init: true)
+  Resolution = Struct.new(:name, :source, :handle, :avatar_url, :extra, keyword_init: true)
 
   def initialize(channel, run_id:, apply: false)
     @channel = channel
@@ -34,18 +38,8 @@ class Umi::Fbig::ProfileEnrichmentService
 
   def enrich(contact)
     @graph_error = false
-    contact_inboxes = contact.contact_inboxes.where(inbox_id: inbox.id).order(:id).to_a
-    return Outcome.new(status: :skipped) if contact_inboxes.empty?
-
-    # A merge can move several contact_inboxes onto one contact. Which Meta
-    # identity the contact "is" is then genuinely ambiguous, and picking one
-    # would write another customer's handle onto it.
-    if contact_inboxes.size > 1
-      Umi::FbigTrace.log(:profile_ambiguous, contact: contact.id, contact_inboxes: contact_inboxes.size)
-      return Outcome.new(status: :skipped)
-    end
-
-    contact_inbox = contact_inboxes.first
+    contact_inbox = sole_contact_inbox(contact)
+    return Outcome.new(status: :skipped) if contact_inbox.nil?
     return Outcome.new(status: :redacted) if contact.additional_attributes['umi_profile_redacted']
 
     resolve_and_write(contact, contact_inbox)
@@ -58,6 +52,66 @@ class Umi::Fbig::ProfileEnrichmentService
     Outcome.new(status: :failed, error: e)
   end
 
+  # The write half of this service, public so Business Discovery — which
+  # resolves the same facts through a different Meta endpoint — reaches the
+  # same gates instead of reimplementing them. The rename claim, the ledger,
+  # the avatar uniqueness handling and the erasure re-check are the whole
+  # safety story here; a second copy of them is the failure mode to avoid.
+  def apply_resolution(contact, contact_inbox, resolution)
+    renaming = resolution.name.present? && resolution.name != contact.name
+    return preview(resolution, renaming) unless @apply
+
+    attached = apply_avatar(contact, contact_inbox, resolution)
+    apply_name(contact, contact_inbox, resolution, renaming: renaming, attached: attached)
+    # Projection last, and unconditionally: the commercial fields have been
+    # arriving into additional_attributes for months on contacts this pass
+    # otherwise leaves alone, and nothing reads them until they are copied
+    # across. Costs no API call.
+    Umi::Meta::InstagramProfileAttributes.project!(contact)
+
+    Outcome.new(status: (renaming || attached ? :updated : :unchanged), name: resolution.name,
+                avatar: (resolution.avatar_url if attached))
+  end
+
+  # Once we have written a name, that exact string is our claim on it: an agent
+  # who edits it breaks the equality and we never touch the contact again.
+  # Before any write exists, only the known placeholder shapes are fair game —
+  # matched against THIS contact_inbox's source_id, because a contact can own
+  # several across both platforms.
+  def rename_allowed?(contact, contact_inbox)
+    written = contact.additional_attributes['umi_profile_name']
+    return contact.name == written if written.present?
+
+    name = contact.name.to_s
+    name == "Instagram user #{contact_inbox.source_id.to_s.last(4)}" ||
+      REWRITABLE_LITERALS.include?(name) ||
+      name.match?(HAIKUNATOR_NAME) ||
+      # Still ours even if the stamp was lost to a concurrent whole-column
+      # write, which would otherwise freeze the contact on its handle forever.
+      name == contact.additional_attributes['social_instagram_user_name']
+  end
+
+  # Records a freshness stamp on its own. Deliberately does not stamp
+  # umi_profile_checked_at: that drives the other pass's queue, and a contact
+  # Business Discovery could not answer for has not been profile-checked.
+  def stamp(contact, attributes)
+    return unless @apply
+
+    merge_attributes(contact, name: nil, handle: nil, succeeded: false, extra: attributes)
+  end
+
+  # A merge can move several contact_inboxes onto one contact. Which Meta
+  # identity the contact "is" is then genuinely ambiguous, and picking one
+  # would write another customer's handle onto it.
+  def sole_contact_inbox(contact)
+    contact_inboxes = contact.contact_inboxes.where(inbox_id: inbox.id).order(:id).to_a
+    return nil if contact_inboxes.empty?
+    return contact_inboxes.first if contact_inboxes.one?
+
+    Umi::FbigTrace.log(:profile_ambiguous, contact: contact.id, contact_inboxes: contact_inboxes.size)
+    nil
+  end
+
   private
 
   def inbox
@@ -66,7 +120,7 @@ class Umi::Fbig::ProfileEnrichmentService
 
   def resolve_and_write(contact, contact_inbox)
     profile = profile_for(contact, contact_inbox)
-    platform = platform_for(contact_inbox, profile)
+    platform = Umi::Fbig::PlatformResolver.for(contact_inbox, profile)
     name, source = resolve_name(contact, contact_inbox, platform, profile)
     avatar_url = (profile['profile_pic'].presence unless contact.avatar.attached?)
 
@@ -75,39 +129,22 @@ class Umi::Fbig::ProfileEnrichmentService
     # the queue, not sort to the back for a whole cycle looking healthy.
     return Outcome.new(status: :failed) if @graph_error && name.nil? && avatar_url.nil?
 
-    write(contact, contact_inbox, Resolution.new(
-                                    name: name, source: source,
-                                    handle: profile['username'].presence,
-                                    avatar_url: avatar_url
-                                  ))
+    apply_resolution(contact, contact_inbox, Resolution.new(
+                                               name: name, source: source,
+                                               handle: handle_from(profile, platform, name, source),
+                                               avatar_url: avatar_url
+                                             ))
   end
 
-  # The conversation marker is authoritative — the Instagram builder sets it
-  # and outbound routing depends on it, so it is reliable on live and imported
-  # rows alike. Preferred by contact_inbox, since a contact can own one per
-  # platform; legacy rows without that link fall back to the inbox pairing.
-  #
-  # With no conversations at all, Meta's own answer discriminates: an
-  # Instagram profile carries `username`, a Messenger one `first_name`.
-  def platform_for(contact_inbox, profile)
-    # compact: Facebook conversations carry no 'type' key, so pluck yields
-    # [nil] rather than []. Without this the legacy fallback never runs and the
-    # messenger branch is unreachable, since [nil].any? is false.
-    types = conversation_types(contact_inbox.id, nil).compact
-    types = conversation_types(nil, contact_inbox).compact if types.empty?
-    return :instagram if types.include?('instagram_direct_message')
-    return :messenger if types.any?
+  # An Instagram participants lookup answers with the handle, not a display
+  # name — that is all the endpoint carries for this platform. Storing it as
+  # the handle as well as the name is what lets Business Discovery reach the
+  # contact later without paying for the lookup a second time.
+  def handle_from(profile, platform, name, source)
+    return profile['username'].presence if profile['username'].present?
+    return nil unless platform == :instagram && source == 'participants'
 
-    profile['username'].present? || contact_inbox.contact.additional_attributes['social_instagram_user_name'].present? ? :instagram : :messenger
-  end
-
-  def conversation_types(contact_inbox_id, contact_inbox)
-    scope = if contact_inbox
-              Conversation.where(contact_id: contact_inbox.contact_id, inbox_id: contact_inbox.inbox_id)
-            else
-              Conversation.where(contact_inbox_id: contact_inbox_id)
-            end
-    scope.distinct.pluck(Arel.sql("additional_attributes->>'type'"))
+    name if name.to_s.match?(Umi::Fbig::BusinessDiscoveryService::HANDLE)
   end
 
   # Skip the Graph call entirely when everything it could tell us is already
@@ -154,35 +191,6 @@ class Umi::Fbig::ProfileEnrichmentService
     end
   end
 
-  # Once we have written a name, that exact string is our claim on it: an agent
-  # who edits it breaks the equality and we never touch the contact again.
-  # Before any write exists, only the known placeholder shapes are fair game —
-  # matched against THIS contact_inbox's source_id, because a contact can own
-  # several across both platforms.
-  def rename_allowed?(contact, contact_inbox)
-    written = contact.additional_attributes['umi_profile_name']
-    return contact.name == written if written.present?
-
-    name = contact.name.to_s
-    name == "Instagram user #{contact_inbox.source_id.to_s.last(4)}" ||
-      REWRITABLE_LITERALS.include?(name) ||
-      name.match?(HAIKUNATOR_NAME) ||
-      # Still ours even if the stamp was lost to a concurrent whole-column
-      # write, which would otherwise freeze the contact on its handle forever.
-      name == contact.additional_attributes['social_instagram_user_name']
-  end
-
-  def write(contact, contact_inbox, resolution)
-    renaming = resolution.name.present? && resolution.name != contact.name
-    return preview(resolution, renaming) unless @apply
-
-    attached = apply_avatar(contact, contact_inbox, resolution)
-    apply_name(contact, contact_inbox, resolution, renaming: renaming, attached: attached)
-
-    Outcome.new(status: (renaming || attached ? :updated : :unchanged), name: resolution.name,
-                avatar: (resolution.avatar_url if attached))
-  end
-
   def apply_avatar(contact, contact_inbox, resolution)
     return false if resolution.avatar_url.blank?
 
@@ -199,7 +207,8 @@ class Umi::Fbig::ProfileEnrichmentService
       record_ledger(contact_inbox, 'name', contact.name, resolution.name, resolution.source) if renaming
 
       merge_attributes(contact, name: (renaming ? resolution.name : nil), handle: resolution.handle,
-                                succeeded: resolution.name.present? || attached)
+                                succeeded: resolution.name.present? || attached,
+                                extra: (resolution.extra || {}).merge('umi_profile_checked_at' => Time.current.iso8601))
       contact.reload
       # The SQL merge above already refused if an erasure landed since this
       # contact was selected; the rename and its ledger row must roll back with
@@ -213,7 +222,10 @@ class Umi::Fbig::ProfileEnrichmentService
   end
 
   def preview(resolution, renaming)
-    Outcome.new(status: (renaming || resolution.avatar_url ? :would_change : :unchanged),
+    # The discovery stamp is bookkeeping, not a change worth reporting in a
+    # dry run — counting it would mark every contact as changing.
+    changing = renaming || resolution.avatar_url.present? || resolution.extra.to_h.except(DISCOVERY_STAMP).present?
+    Outcome.new(status: (changing ? :would_change : :unchanged),
                 name: resolution.name, avatar: resolution.avatar_url)
   end
 
@@ -230,8 +242,8 @@ class Umi::Fbig::ProfileEnrichmentService
   # The redaction tombstone is re-checked here in SQL, not just in Ruby: a run
   # walks up to `cap` contacts over minutes, so an erasure can land between the
   # contact being loaded and being written.
-  def merge_attributes(contact, name:, handle:, succeeded:)
-    flat = { 'umi_profile_checked_at' => Time.current.iso8601 }
+  def merge_attributes(contact, name:, handle:, succeeded:, extra: {})
+    flat = extra.dup
     flat['umi_profile_last_success_at'] = Time.current.iso8601 if succeeded
     flat['umi_profile_name'] = name if name
     flat['social_instagram_user_name'] = handle if handle

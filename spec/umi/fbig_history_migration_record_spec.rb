@@ -41,7 +41,8 @@ RSpec.describe 'FB/IG history migration completion record' do
     # (docs/UMI-FBIG-PROFILE-REFRESH-SPEC.md) for the ongoing gap the importer
     # never covered. The importer's own profile services stay retired.
     expect(surviving_services).to match_array(
-      %w[conversation_recon_service.rb message_heal_service.rb participant_name_service.rb profile_enrichment_service.rb]
+      %w[business_discovery_enrichment.rb business_discovery_service.rb conversation_recon_service.rb
+         message_heal_service.rb participant_name_service.rb platform_resolver.rb profile_enrichment_service.rb]
     )
 
     expect(Dir[Rails.root.join('lib/tasks/*fbig*history*.rake')]).to be_empty

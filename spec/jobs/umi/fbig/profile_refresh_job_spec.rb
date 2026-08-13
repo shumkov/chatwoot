@@ -79,6 +79,96 @@ describe Umi::Fbig::ProfileRefreshJob do
     expect(stamped).to be_empty
   end
 
+  # The second pass spends a second Graph call per contact against a quota
+  # shared with live message delivery, so what it selects — and refuses to
+  # select — is the whole rate-limit story.
+  describe 'the Business Discovery pass' do
+    let(:discovery) { instance_double(Umi::Fbig::BusinessDiscoveryEnrichment) }
+    let(:stamp) { Umi::Fbig::ProfileEnrichmentService::DISCOVERY_STAMP }
+
+    before do
+      allow(service).to receive(:enrich).and_return(Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged))
+      allow(Umi::Fbig::BusinessDiscoveryEnrichment).to receive(:new).and_return(discovery)
+      allow(discovery).to receive(:discover).and_return(Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged))
+    end
+
+    def discovered
+      seen = []
+      allow(discovery).to receive(:discover) do |contact|
+        seen << contact.id
+        Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged)
+      end
+      described_class.new.perform('apply' => true)
+      seen
+    end
+
+    it 'asks only about contacts whose handle is already known' do
+      stored = contact_with(name: 'Someone', attrs: { 'social_instagram_user_name' => 'marinaemmb' })
+      claimed = contact_with(name: 'ther.collective', attrs: { 'umi_profile_name' => 'ther.collective' })
+      contact_with(name: 'Narongsak Sarika')
+
+      expect(discovered).to contain_exactly(stored.id, claimed.id)
+    end
+
+    # A Facebook contact with a one-word ASCII name would otherwise be sent to
+    # an Instagram-only endpoint, burning a call to be told error 110.
+    it 'ignores a name we did not write, however handle-shaped' do
+      contact_with(name: 'Narongsak', attrs: { 'umi_profile_name' => 'something.else' })
+
+      expect(discovered).to be_empty
+    end
+
+    it 'leaves out a contact answered within the cooldown' do
+      contact_with(name: 'marinaemmb',
+                   attrs: { 'umi_profile_name' => 'marinaemmb', stamp => 5.days.ago.iso8601 })
+
+      expect(discovered).to be_empty
+    end
+
+    it 'asks again once the cooldown has passed' do
+      due = contact_with(name: 'marinaemmb',
+                         attrs: { 'umi_profile_name' => 'marinaemmb', stamp => 100.days.ago.iso8601 })
+
+      expect(discovered).to eq([due.id])
+    end
+
+    # The contacts with no photo and no follower count are the ones the profile
+    # API refuses — in production that cohort held every influencer above
+    # 100,000 followers. They must not wait behind a sweep of contacts we
+    # already cover.
+    it 'takes the contacts with a gap before the ones already covered' do
+      covered = contact_with(name: 'covered.acct',
+                             attrs: { 'umi_profile_name' => 'covered.acct', 'social_instagram_follower_count' => 900 })
+      covered.avatar.attach(io: Rails.root.join('spec/assets/avatar.png').open, filename: 'a.png', content_type: 'image/png')
+      gap = contact_with(name: 'gap.acct', attrs: { 'umi_profile_name' => 'gap.acct' })
+
+      expect(discovered.first).to eq(gap.id)
+    end
+
+    it 'never exceeds its own cap' do
+      3.times { |i| contact_with(name: "handle.#{i}", attrs: { 'umi_profile_name' => "handle.#{i}" }) }
+
+      expect(discovery).to receive(:discover).twice.and_return(Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged))
+
+      described_class.new.perform('apply' => true, 'discovery_cap' => 2)
+    end
+
+    it 'never selects a contact whose erasure was requested' do
+      contact_with(name: 'marinaemmb', attrs: { 'umi_profile_name' => 'marinaemmb', 'umi_profile_redacted' => true })
+
+      expect(discovered).to be_empty
+    end
+
+    it 'can be switched off on its own without stopping the profile pass' do
+      contact_with(name: 'marinaemmb', attrs: { 'umi_profile_name' => 'marinaemmb' })
+
+      expect(discovery).not_to receive(:discover)
+      expect(service).to receive(:enrich).and_return(Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged))
+
+      described_class.new.perform('apply' => true, 'discovery_cap' => 0)
+    end
+  end
+
   it 'sweeps ledger rows past the retention window and ones orphaned by a deleted contact' do
     allow(service).to receive(:enrich).and_return(Umi::Fbig::ProfileEnrichmentService::Outcome.new(status: :unchanged))
     contact = contact_with(name: 'Instagram user 0002')
