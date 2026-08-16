@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Connect LINE</title>
+    <script src="<%= ERB::Util.html_escape(Umi::Line::Config.sdk_url) %>"
+            integrity="<%= ERB::Util.html_escape(Umi::Line::Config.sdk_integrity) %>"
+            crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Connect with UMI on LINE</h1>
+      <p id="status">Preparing LINE…</p>
+      <a id="follow-link" hidden target="_blank" rel="noopener noreferrer"></a>
+      <label id="consent-wrap" hidden>
+        <input id="consent" type="checkbox" />
+        <span id="consent-text"></span>
+      </label>
+      <button id="bind" hidden type="button" disabled>
+        Connect LINE
+      </button>
+    </main>
+    <script nonce="<%= ERB::Util.html_escape(nonce) %>">
+      (() => {
+        const config = <%= raw ERB::Util.json_escape({
+          liffId: Umi::Line::Config.liff_id,
+          oaUrl: Umi::Line::Config.oa_add_friend_url,
+          consentText: Umi::Line::Config.consent_text
+        }.to_json) %>;
+        const status = document.getElementById('status');
+        const followLink = document.getElementById('follow-link');
+        const consentWrap = document.getElementById('consent-wrap');
+        const consent = document.getElementById('consent');
+        const consentText = document.getElementById('consent-text');
+        const bind = document.getElementById('bind');
+
+        const setStatus = (message) => { status.textContent = message; };
+        const showFollow = () => {
+          followLink.href = config.oaUrl;
+          followLink.textContent = 'Follow UMI on LINE';
+          followLink.hidden = false;
+        };
+        const updateButton = () => { bind.disabled = !consent.checked; };
+
+        const exchangeEmailEntry = async () => {
+          const query = new URLSearchParams(window.location.search);
+          const emailToken = query.get('email_token');
+          if (!emailToken) return query.get('token');
+
+          const response = await fetch('/line-connect/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email_token: emailToken })
+          });
+          if (!response.ok) throw new Error('email_entry_failed');
+          const result = await response.json();
+          const next = new URL(result.url, window.location.origin);
+          window.history.replaceState({}, '', next.pathname + next.search);
+          return next.searchParams.get('token');
+        };
+
+        const friendshipReady = async () => {
+          if (!window.liff.getFriendship) return false;
+          const friendship = await window.liff.getFriendship();
+          if (friendship.friendFlag) return true;
+          if (window.liff.isInClient() && window.liff.requestFriendship) {
+            await window.liff.requestFriendship();
+            return (await window.liff.getFriendship()).friendFlag;
+          }
+          return false;
+        };
+
+        const start = async () => {
+          await window.liff.init({ liffId: config.liffId });
+          const token = await exchangeEmailEntry();
+          if (!token) throw new Error('missing_token');
+          if (!window.liff.isLoggedIn() && !window.liff.isInClient()) {
+            window.liff.login({ redirectUri: window.location.href });
+            return;
+          }
+
+          const following = await friendshipReady();
+          if (!following) {
+            setStatus('Please follow UMI on LINE, then continue here.');
+            showFollow();
+          } else {
+            setStatus('Review the consent text, then connect your LINE account.');
+          }
+          consentText.textContent = config.consentText;
+          consentWrap.hidden = false;
+          bind.hidden = false;
+          consent.addEventListener('change', updateButton);
+          bind.addEventListener('click', async () => {
+            bind.disabled = true;
+            setStatus('Connecting…');
+            try {
+              const response = await fetch('/line-connect/bind', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token, id_token: window.liff.getIDToken(), consent: consent.checked })
+              });
+              if (!response.ok) throw new Error('bind_failed');
+              setStatus('Connected. You can close this page.');
+              bind.remove();
+            } catch (error) {
+              bind.disabled = false;
+              setStatus('LINE could not be connected. Follow UMI and try again.');
+              showFollow();
+            }
+          });
+        };
+
+        start().catch(() => {
+          setStatus('LINE could not be prepared. Please use the follow link and try again.');
+          showFollow();
+        });
+      })();
+    </script>
+  </body>
+</html>

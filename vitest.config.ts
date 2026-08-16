@@ -9,7 +9,10 @@ export default defineConfig({
   resolve: { alias: aliases },
   test: {
     environment: 'jsdom',
-    include: ['app/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+    include: [
+      'app/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'docs/UMI-LINE-IDENTITY-BINDING-STOREFRONT-SNIPPET.test.js',
+    ],
     coverage: {
       reporter: ['lcov', 'text'],
       include: ['app/**/*.js', 'app/**/*.vue'],
