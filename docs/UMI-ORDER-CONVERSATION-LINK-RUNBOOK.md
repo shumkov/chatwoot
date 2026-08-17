@@ -14,6 +14,11 @@ deployment steps; this agent does not deploy them.
 - Set `UMI_SHOPIFY_ORDER_LINK_CANARY_HEARTBEAT` to the path watched by the
   existing Netdata app-check dead-man's switch. The default path is only a
   development fallback.
+- Keep `UMI_SHOPIFY_ORDER_LINK_REWRITE_DISABLED=true` in the Chatwoot env while
+  the storefront `_cw` capture snippet and the `orders/create` subscription are
+  absent. Remove this opt-out only after both are live; removing it is the
+  enablement step. Verify a new outgoing `umi.store` link carries `umi_cw` only
+  after that coordinated rollout.
 
 ## Deploy sequence
 
