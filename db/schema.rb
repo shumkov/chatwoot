@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_08_13_000000) do
+ActiveRecord::Schema[7.1].define(version: 2026_08_17_000000) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1421,6 +1421,33 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_13_000000) do
     t.index ["run_id"], name: "index_umi_profile_ledger_entries_on_run_id"
   end
 
+  create_table "umi_shopify_order_attributions", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.string "shop_domain", null: false
+    t.bigint "candidate_conversation_id"
+    t.bigint "candidate_contact_id"
+    t.bigint "conversation_id"
+    t.bigint "contact_id"
+    t.string "shopify_order_id", null: false
+    t.string "shopify_order_name"
+    t.decimal "order_total", precision: 20, scale: 2
+    t.string "currency", limit: 3
+    t.string "attribution_state", null: false
+    t.string "match_method"
+    t.string "token_nonce", null: false
+    t.string "webhook_id"
+    t.datetime "redacted_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "attribution_state"], name: "idx_umi_order_attributions_state"
+    t.index ["account_id", "shopify_order_id"], name: "idx_umi_order_attributions_order", unique: true
+    t.index ["account_id", "token_nonce"], name: "idx_umi_order_attributions_token", unique: true
+    t.index ["candidate_contact_id"], name: "idx_umi_order_attributions_candidate_contact"
+    t.index ["contact_id"], name: "idx_umi_order_attributions_contact"
+    t.index ["conversation_id"], name: "idx_umi_order_attributions_conversation"
+    t.index ["webhook_id"], name: "idx_umi_order_attributions_webhook"
+  end
+
   create_table "user_sessions", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.string "client_id", null: false
@@ -1513,6 +1540,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_13_000000) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "inboxes", "portals"
+  add_foreign_key "umi_shopify_order_attributions", "accounts", column: "account_id", on_delete: :cascade
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).
       on("accounts").

@@ -19,7 +19,8 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
     headers = {
       'CONTENT_TYPE' => 'application/json',
       'X-Shopify-Topic' => topic,
-      'X-Shopify-Hmac-SHA256' => hmac
+      'X-Shopify-Hmac-SHA256' => hmac,
+      'X-Shopify-Shop-Domain' => payload[:shop_domain] || payload['shop_domain']
     }
     headers['X-Shopify-Webhook-Id'] = webhook_id if webhook_id
     post '/webhooks/shopify', params: body, headers: headers
@@ -40,6 +41,14 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
       contact = create(:contact, account: account, email: 'gone@example.com', phone_number: '+66812345678',
                                  additional_attributes: { 'shopify_customer_id' => 9002, 'company_name' => 'ACME', 'city' => 'Bangkok' })
       create(:conversation, account: account, contact: contact)
+      attribution = Umi::ShopifyOrderAttribution.create!(
+        account: account,
+        candidate_contact_id: contact.id,
+        shop_domain: shop_domain,
+        shopify_order_id: 'redact-9002',
+        token_nonce: 'nonce-redact-9002',
+        attribution_state: 'unverified'
+      )
 
       post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 9002 })
 
@@ -49,6 +58,12 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
       expect(contact.phone_number).to be_nil
       expect(contact.additional_attributes.keys).to contain_exactly('company_name', 'umi_profile_redacted')
       expect(contact.conversations.count).to eq(1)
+      expect(attribution.reload).to have_attributes(
+        candidate_conversation_id: nil,
+        candidate_contact_id: nil,
+        conversation_id: nil,
+        contact_id: nil
+      )
     end
 
     # A contact who reached UMI on Instagram carries their handle and their
@@ -202,12 +217,76 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
     end
   end
 
+  describe 'orders/create' do
+    let(:contact) { create(:contact, :with_email, account: account, email: 'buyer@example.com') }
+    let(:conversation) { create(:conversation, account: account, contact: contact) }
+    let(:claim) do
+      {
+        'account_id' => account.id,
+        'conversation_id' => conversation.id,
+        'contact_id' => contact.id,
+        'nonce' => 'nonce-webhook',
+        'raw' => '{"nonce":"nonce-webhook"}'
+      }
+    end
+
+    before do
+      allow(Redis::Alfred).to receive(:get).and_return(nil)
+      allow(Redis::Alfred).to receive(:set).and_return(true)
+      allow(Redis::Alfred).to receive(:delete)
+      allow(Umi::Shopify::OrderLinkTokenService).to receive(:peek).and_return(claim)
+      allow(Umi::Shopify::OrderLinkTokenService).to receive(:consume).and_return(true)
+    end
+
+    it 'runs through the existing HMAC-verified webhook endpoint' do
+      post_webhook(
+        'orders/create',
+        {
+          shop_domain: shop_domain,
+          id: 1001,
+          email: 'buyer@example.com',
+          note_attributes: [{ name: '_cw', value: 'signed-token' }]
+        },
+        'orders-create-1001'
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(Umi::ShopifyOrderAttribution.last).to have_attributes(
+        shopify_order_id: '1001', attribution_state: 'verified', conversation_id: conversation.id
+      )
+    end
+
+    it 'acknowledges an invalid token without creating an attribution row' do
+      allow(Umi::Shopify::OrderLinkTokenService).to receive(:peek).and_raise(
+        Umi::Shopify::OrderLinkTokenService::InvalidToken
+      )
+
+      post_webhook(
+        'orders/create',
+        { shop_domain: shop_domain, id: 1002, note_attributes: [{ name: '_cw', value: 'bad-token' }] },
+        'orders-create-1002'
+      )
+
+      expect(response).to have_http_status(:ok)
+      expect(Umi::ShopifyOrderAttribution.exists?(shopify_order_id: '1002')).to be(false)
+    end
+  end
+
   describe 'passthrough' do
     it 'keeps the core shop/redact behavior (hook destroyed)' do
+      Umi::ShopifyOrderAttribution.create!(
+        account: account,
+        shop_domain: shop_domain,
+        shopify_order_id: 'shop-redact-1',
+        token_nonce: 'shop-redact-nonce-1',
+        attribution_state: 'unlinked'
+      )
+
       post_webhook('shop/redact', shop_domain: shop_domain)
 
       expect(response).to have_http_status(:ok)
       expect(Integrations::Hook.exists?(hook.id)).to be(false)
+      expect(Umi::ShopifyOrderAttribution.where(shop_domain: shop_domain)).to be_empty
     end
 
     it 'rejects an invalid HMAC' do

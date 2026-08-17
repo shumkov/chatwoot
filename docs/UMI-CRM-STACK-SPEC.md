@@ -395,12 +395,14 @@ the deployment lacks.
    creates no `Message` row, so the prepend must replace the send path too, not just the
    provider guard. **Recommendation: (a)**, per the fork's own "glue does not go in the fork"
    rule, with the deep-merge problem handled by posting a pre-built message payload.
-2. **Accelerated checkouts.** Accept the coverage gap, or disable dynamic checkout buttons on
-   product pages? Disabling costs conversion; accepting means a share of orders can never be
-   attributed. Size it with the three test orders first.
-3. **W4's rewrite mechanism.** Automatic rewrite on every outgoing message (permanent, highest
-   blast radius, catches everything) versus a macro/canned tagged link (no core patch, agent
-   opt-in, loses the "agent forgot" case).
+2. **Decision 11 — Accelerated checkouts — resolved.** Express checkout buttons are currently
+   disabled on the storefront, so every deployed order passes through the cart and coverage is
+   complete today. If they are re-enabled, bypassed orders must degrade gracefully to unlinked;
+   never guess a conversation, and let the canary expose the coverage drop.
+3. **Decision 12 — W4's rewrite mechanism — resolved.** Choose option A: Chatwoot automatically
+   rewrites every eligible outgoing `umi.store` URL before the `Message` row commits. The
+   macro/canned tagged-link alternative is rejected because agent omission creates attribution
+   holes.
 
 ## 8. Review provenance **[R]**
 

@@ -20,6 +20,7 @@ class Umi::Shopify::CustomerRedactionService
       )
       Umi::ProfileLedgerEntry.where(contact_id: @contact.id).delete_all
       Umi::FbigAdAttribution.purge_for(@contact)
+      Umi::ShopifyOrderAttribution.detach_for(@contact)
     end
 
     # Active Storage deletion is not transactional. It is intentionally after
