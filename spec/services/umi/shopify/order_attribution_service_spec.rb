@@ -17,7 +17,7 @@ RSpec.describe Umi::Shopify::OrderAttributionService do
     }
   end
   let(:perform_order) do
-    lambda do |order_id:, email: 'buyer@example.com', note_attributes: [{ 'name' => '_cw', 'value' => 'signed-token' }],
+    lambda do |order_id:, email: 'buyer@example.com', note_attributes: [{ 'name' => '__cw', 'value' => 'signed-token' }],
                    webhook_id: "webhook-#{order_id}", phone: nil, billing_address: nil, shipping_address: nil|
       described_class.new(
         payload: {
@@ -95,14 +95,32 @@ RSpec.describe Umi::Shopify::OrderAttributionService do
     expect(Umi::Shopify::OrderLinkTokenService).to have_received(:restore).with(hash_including('nonce' => 'nonce-1'))
   end
 
+  it 'carries the token on the private double-underscore attribute Shopify hides from the storefront' do
+    # A single underscore is the line item property convention and leaves a cart attribute public,
+    # readable by every app on the storefront origin through /cart.js. The name is also the contract
+    # with the theme, which posts exactly this attribute.
+    expect(described_class::CART_ATTRIBUTE).to eq('__cw')
+  end
+
+  it 'ignores a token sent on the old public attribute name' do
+    # Nothing should still be writing `_cw`: the rewrite has never been enabled, so no link has ever
+    # carried a token and no cart has ever held one. Reading it anyway would keep the leak alive by
+    # making a public carrier work.
+    expect(
+      perform_order.call(order_id: '1010', note_attributes: [{ 'name' => '_cw', 'value' => 'signed-token' }])
+    ).to eq(:unlinked)
+
+    expect(Umi::Shopify::OrderLinkTokenService).not_to have_received(:peek)
+  end
+
   it 'rejects duplicate carrier attributes rather than choosing one' do
     expect do
       perform_order.call(
         order_id: '1006',
         email: 'buyer@example.com',
         note_attributes: [
-          { 'name' => '_cw', 'value' => 'signed-token' },
-          { 'name' => '_cw', 'value' => 'another-token' }
+          { 'name' => '__cw', 'value' => 'signed-token' },
+          { 'name' => '__cw', 'value' => 'another-token' }
         ]
       )
     end.to raise_error(described_class::Permanent, 'carrier_ambiguous')

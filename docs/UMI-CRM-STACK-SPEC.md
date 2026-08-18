@@ -242,7 +242,7 @@ attribution is impossible.
    untagged link while the stored thread shows the tagged one — an attribution hole that looks
    correct in the UI.
 2. **Storefront** — **[R]** capture is necessarily JS (Liquid cannot read arbitrary query
-   params): read the param, `POST /cart/update.js` with attribute **`_cw`** (underscore-prefixed
+   params): read the param, `POST /cart/update.js` with attribute **`__cw`** (underscore-prefixed
    so Shopify hides it from the customer-facing checkout, order-status page and notification
    templates), mirror to `localStorage` with an explicit TTL, and re-apply on every add-to-cart
    so a cart clear doesn't drop it. The mirror matters because IG/Messenger in-app browsers

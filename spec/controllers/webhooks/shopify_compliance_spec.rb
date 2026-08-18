@@ -245,7 +245,7 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
           shop_domain: shop_domain,
           id: 1001,
           email: 'buyer@example.com',
-          note_attributes: [{ name: '_cw', value: 'signed-token' }]
+          note_attributes: [{ name: '__cw', value: 'signed-token' }]
         },
         'orders-create-1001'
       )
@@ -263,7 +263,7 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
 
       post_webhook(
         'orders/create',
-        { shop_domain: shop_domain, id: 1002, note_attributes: [{ name: '_cw', value: 'bad-token' }] },
+        { shop_domain: shop_domain, id: 1002, note_attributes: [{ name: '__cw', value: 'bad-token' }] },
         'orders-create-1002'
       )
 

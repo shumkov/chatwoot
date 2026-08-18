@@ -8,14 +8,17 @@ deployment steps; this agent does not deploy them.
 ## Preflight
 
 - Confirm the Shopify integration hook is enabled and its token can read orders.
-- Confirm express checkout buttons are disabled for the canary storefront.
+- Size the express-checkout gap before trusting any coverage number. Express checkout is **enabled**
+  on this storefront (`show_dynamic_checkout: true` in five templates), so "Buy it now" and wallet
+  orders skip the cart and can never carry the carrier. Pull the accelerated-PDP versus cart-checkout
+  split from Shopify Analytics; that ratio is the ceiling on what this attribution can ever see.
 - Confirm the app's webhook configuration can add `orders/create` for the
   production shop and that the Chatwoot webhook URL is reachable.
 - Set `UMI_SHOPIFY_ORDER_LINK_CANARY_HEARTBEAT` to the path watched by the
   existing Netdata app-check dead-man's switch. The default path is only a
   development fallback.
 - Keep `UMI_SHOPIFY_ORDER_LINK_REWRITE_DISABLED=true` in the Chatwoot env while
-  the storefront `_cw` capture snippet and the `orders/create` subscription are
+  the storefront `__cw` capture snippet and the `orders/create` subscription are
   absent. Remove this opt-out only after both are live; removing it is the
   enablement step. Verify a new outgoing `umi.store` link carries `umi_cw` only
   after that coordinated rollout.
@@ -43,8 +46,13 @@ deployment steps; this agent does not deploy them.
    [`UMI-SHOPIFY-ORDER-LINK-STOREFRONT.md`](UMI-SHOPIFY-ORDER-LINK-STOREFRONT.md)
    and wire its explicit cart-mutation hooks.
 4. Send one real storefront checkout from a Chatwoot outbound link. Confirm
-   the order contains `_cw`, the webhook creates one `verified` row, and the
-   canary heartbeat is touched.
+   the order contains `__cw`, the webhook creates one `verified` row, and the
+   canary heartbeat is touched. This test order is a **gate, not a formality**:
+   `__cw` is private, so it cannot be observed anywhere before the order exists,
+   and that a private cart attribute reaches `note_attributes` is established from
+   Shopify's documentation rather than from a run of this system. If `__cw` is
+   absent from the order, stop and treat the carrier as unproven — do not fall
+   back to the public `_cw` name, which is the leak this carrier replaced.
 5. Monitor the canary, application logs, exception tracker, and the ratio of
    `verified` to `unverified` rows for the first seven days.
 
