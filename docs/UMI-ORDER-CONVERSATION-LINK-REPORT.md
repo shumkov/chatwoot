@@ -3,6 +3,15 @@
 Status: implementation complete on `feat/order-conversation-link`, based on
 `cab6bb243` (`origin/umi`). No external deployment was performed.
 
+This report is a record of that review round and is left as written. One decision
+in it has since been reversed: the carrier is now the **private** cart attribute
+`__cw`, not `_cw`. A single underscore is the line item property convention and
+leaves a cart attribute publicly readable; see
+[`UMI-ORDER-CONVERSATION-LINK-SPEC.md`](UMI-ORDER-CONVERSATION-LINK-SPEC.md) for
+the current design. Decision 11 below is also now known to be wrong on its facts: express checkout
+buttons are **enabled** on the storefront, in five templates, so cart coverage is not complete and the
+bypass rate needs sizing.
+
 ## Authoritative-spec check
 
 After fetching `origin umi` and rebasing onto `cab6bb243`, I deleted the

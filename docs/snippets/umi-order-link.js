@@ -1,6 +1,8 @@
 (() => {
   const PARAMETER = 'umi_cw';
-  const CART_ATTRIBUTE = '_cw';
+  // Double underscore is Shopify's privacy marker for cart attributes: the order still
+  // carries it, but no script on the shop origin can read it back from Liquid or /cart.js.
+  const CART_ATTRIBUTE = '__cw';
   const STORAGE_KEY = 'umi_shopify_order_link';
   const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 

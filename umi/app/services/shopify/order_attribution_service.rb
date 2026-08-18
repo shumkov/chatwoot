@@ -4,6 +4,13 @@ class Umi::Shopify::OrderAttributionService
   class Permanent < StandardError; end
   class InProgress < StandardError; end
 
+  # The double underscore is Shopify's privacy marker for cart attributes: the storefront writes it
+  # and the order carries it, but Liquid and `GET /cart.js` omit it, so the upsell, review and
+  # analytics apps sharing the shop origin cannot simply read a customer's conversation token off
+  # the cart. That is a narrowing, not a seal — the cart mutation endpoints echo private attributes
+  # back to whoever called them — so the token is still handled as a bearer secret here.
+  CART_ATTRIBUTE = '__cw'
+
   DELIVERY_KEY_PREFIX = 'UMI_SHOPIFY_ORDER_LINK_DELIVERY::'
   DELIVERY_TTL = 10.minutes
   COMPLETED_DELIVERY_TTL = 7.days
@@ -36,7 +43,7 @@ class Umi::Shopify::OrderAttributionService
     permanent('order_id_missing') unless order_id
     return :duplicate if Umi::ShopifyOrderAttribution.exists?(account_id: hook.account_id, shopify_order_id: order_id)
 
-    token = note_attribute('_cw')
+    token = note_attribute(CART_ATTRIBUTE)
     return :unlinked if token.blank?
 
     claim = Umi::Shopify::OrderLinkTokenService.peek(token)

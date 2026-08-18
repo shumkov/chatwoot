@@ -54,7 +54,7 @@ class Umi::Shopify::OrderAttributionCanaryJob < ApplicationJob
 
   def tagged?(order)
     Array(order['note_attributes']).any? do |attribute|
-      attribute['name'].to_s == '_cw' && attribute['value'].to_s.present?
+      attribute['name'].to_s == Umi::Shopify::OrderAttributionService::CART_ATTRIBUTE && attribute['value'].to_s.present?
     end
   end
 

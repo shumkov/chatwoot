@@ -7,7 +7,7 @@ RSpec.describe Umi::Shopify::OrderAttributionCanaryJob do
   let(:client) { instance_double(ShopifyAPI::Clients::Rest::Admin) }
   let(:response) do
     Struct.new(:body, :next_page_info).new(
-      { 'orders' => [{ 'id' => 1, 'note_attributes' => [{ 'name' => '_cw', 'value' => 'token' }] }] }, nil
+      { 'orders' => [{ 'id' => 1, 'note_attributes' => [{ 'name' => '__cw', 'value' => 'token' }] }] }, nil
     )
   end
 

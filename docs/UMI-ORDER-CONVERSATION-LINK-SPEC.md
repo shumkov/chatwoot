@@ -14,9 +14,9 @@ only when the order identity matches the conversation contact.
 
 The flow is:
 
-`outgoing Message → signed URL parameter → cart attribute _cw → orders/create → verified attribution row`
+`outgoing Message → signed URL parameter → cart attribute __cw → orders/create → verified attribution row`
 
-Orders without `_cw` remain unlinked. A forwarded token whose order identity does
+Orders without `__cw` remain unlinked. A forwarded token whose order identity does
 not match is recorded as `unverified`, but it never becomes a conversation/order
 link and is not eligible for Meta or Klaviyo output.
 
@@ -50,7 +50,7 @@ The claim record is consumed with Redis `GETDEL`; `Rails.cache` is not used
 because production cache state is a per-container FileStore. The storefront
 removes `umi_cw` from the address bar with `history.replaceState` immediately
 after capture, sets `Referrer-Policy: no-referrer`, and never logs the token.
-The Rails parameter filter also includes `umi_cw` and `_cw`.
+The Rails parameter filter also includes `umi_cw` and `__cw`.
 
 ### Durable storage
 
@@ -102,8 +102,8 @@ For an order delivery:
    never use `Account.first` or a request-body shop value. The signed claim's
    account must equal the hook account, and the conversation/contact must belong
    to that account.
-2. Parse the root order JSON. A missing order ID, duplicate nonblank `_cw`
-   attributes, or a blank `_cw` value is a terminal `malformed` outcome. No
+2. Parse the root order JSON. A missing order ID, duplicate nonblank `__cw`
+   attributes, or a blank `__cw` value is a terminal `malformed` outcome. No
    attribute is a cheap terminal `unlinked` outcome.
 3. Check the durable `(account_id, shopify_order_id)` row before claiming. An
    existing row returns `duplicate` without another write.
@@ -146,17 +146,27 @@ Add the snippet and instructions under `docs/` for the separate
 - reads `umi_cw` from the landing URL;
 - validates that it is nonblank and stores it in `localStorage` with an explicit
   30-day expiry;
-- posts `{ attributes: { _cw: token } }` to `window.Shopify.routes.root + 'cart/update.js'`;
+- posts `{ attributes: { __cw: token } }` to `window.Shopify.routes.root + 'cart/update.js'`;
 - awaits a successful cart update, serializes clear→reapply, and reapplies the
   token after every current theme add-to-cart path and after a cart clear; and
-- uses the mandated underscore-prefixed `_cw` name as a private-ish carrier. The
-  token is treated as sensitive even if a Shopify surface exposes the attribute;
+- uses the double-underscore `__cw` name, which is Shopify's privacy marker for
+  cart attributes: the attribute reaches the order's note attributes but cannot be
+  read back from Liquid or the Ajax API, so no other script on the shop origin can
+  lift the token out of `/cart.js`. (The carrier was `__cw` until a review found
+  that a *single* underscore is the line item property convention and leaves a cart
+  attribute public.) The token is still treated as a bearer secret;
   the storefront must configure an HTTP `Referrer-Policy: no-referrer` header,
   and the snippet only provides defense-in-depth cleanup.
 
 The snippet must list the current theme's `product-form.js`, `cart.js`, bulk-add,
-and custom direct `/cart/add.js` call sites it hooks. It must not read `_cw` back
-from `/cart.js`; localStorage is the source of truth for reapplication. No
+and custom direct `/cart/add.js` call sites it hooks. It cannot read `__cw` back
+from `GET /cart.js` — private attributes are omitted there — so localStorage is the
+sole source of truth for reapplication. Note the omission is narrower than the
+Shopify docs suggest: the cart *mutation* endpoints (`/cart/update.js`,
+`/cart/change.js`, `/cart/clear.js`) do echo private attributes back to their
+caller, measured against the live storefront. The private name removes the passive
+read that any app gets from `/cart.js`; it does not hide the token from an app that
+writes to the cart itself, so the token stays a bearer secret on this side. No
 storefront source is edited in this repository's sibling checkout.
 
 ### Canary
@@ -165,7 +175,7 @@ storefront source is edited in this repository's sibling checkout.
 the same per-job `Sidekiq::Cron::Job` registration pattern as patch 7. It reads
 the last `UMI_SHOPIFY_ORDER_LINK_CANARY_DAYS` days of orders through the existing
 `Umi::Shopify::ClientFactory`, follows cursor pagination, counts total orders,
-orders with `_cw`, and the ratio, and never writes Chatwoot or Shopify data. A
+orders with `__cw`, and the ratio, and never writes Chatwoot or Shopify data. A
 successful run requires at least one tagged order and emits a safe summary line;
 zero orders or zero tagged orders is a failed canary and emits an exception
 tracker event. The configured `UMI_SHOPIFY_ORDER_LINK_CANARY_HEARTBEAT` path is touched
@@ -200,8 +210,8 @@ any other path that bypasses the storefront cart remain outside attribution.
 
 | Outcome | HTTP | Redis claim | Attribution row |
 |---|---:|---|---|
-| no `_cw` | 200 | none | none |
-| blank/duplicate/malformed `_cw` or order ID | 200 | none | none |
+| no `__cw` | 200 | none | none |
+| blank/duplicate/malformed `__cw` or order ID | 200 | none | none |
 | invalid/expired/account-mismatched/replayed token | 200 | already absent | none |
 | missing usable order identity | 200 | consumed | `unavailable` |
 | identity mismatch / forwarded token | 200 | consumed | `unverified` |
@@ -223,7 +233,7 @@ Focused specs must prove:
 - an account/shop mismatch cannot resolve a conversation in another account;
 - email mismatch does not fall back to phone, and strict E.164 phone matching
   handles root/billing/shipping precedence;
-- organic orders without `_cw` are acknowledged and untouched; and
+- organic orders without `__cw` are acknowledged and untouched; and
 - customer redaction detaches attribution PII while preserving only the
   anonymized aggregate fact; and
 - the canary reports a positive tagged-order outcome and touches its heartbeat
