@@ -42,7 +42,7 @@ not establish the behavior and the result must come from the real-asset experime
 
 ## Findings
 
-### 1. Phone-level webhook override scoping — UNKNOWN; migration blocker
+### 1. Phone-level webhook override scoping — PER-APP (confirmed live, 2026-08-19)
 
 What the code establishes (High):
 
@@ -74,9 +74,11 @@ Sources checked:
 * Meta collection request, “Override Callback URL”:
   https://www.postman.com/meta/whatsapp-business-platform/request/un84tul/override-callback-url
 
-Conclusion: the safe multi-app result cannot be inferred from the WABA-level array.
-Phone-level scoping is Unknown. A global field would make the last phone POST win and
-could silently route all messages away from the other platform.
+Conclusion: the safe multi-app result cannot be inferred from the WABA-level array alone.
+A global field would make the last phone POST win and could silently route all messages
+away from the other platform. This is exactly what §1.1's live test below was built to
+rule out, and did rule out: phone-level scoping is per-app, not global. See §1.2 for the
+full evidence and reproduction steps.
 
 #### 1.1 Push-button empirical test (human must run against disposable assets)
 
@@ -148,6 +150,202 @@ Unsafe result: the phone read exposes one shared callback, or only the last writ
 collector receives the inbound event. Any ambiguity, missing event, or inability to
 attribute a callback to an app is **not safe** for UMI. Preserve the raw responses and
 do not proceed to migration.
+
+#### 1.2 Live test results (2026-08-19) — PER-APP confirmed
+
+**Verdict: per-app.** The phone-level `webhook_configuration.phone_number` override is
+scoped per subscribed app, not a single mutable property of the phone number. Setting
+it with one app's token does not change, clear, or become visible in what a second
+app's token reads back, in either write order. Confidence: **High** for this mechanism
+on a Meta Cloud API test WABA/number under app-scoped system-user tokens on Graph API
+v22.0, as of this date. See "Limits of this result" below for what this does *not* cover.
+
+**Assets used (all throwaway, all torn down after this test — see teardown log):**
+
+* Test WABA: `4445932492313560` ("Test WhatsApp Business Account"), test number
+  `+1 555 196 6407` (phone-number ID `1320939084436997`). This WABA/number is
+  provisioned per business portfolio, not per app: both `ZZ-TEST-waba-override-app-A`
+  and `ZZ-TEST-waba-override-app-B`, once connected to the same UMI STORE CO., LTD.
+  business portfolio, were independently offered this same test WABA/number in their
+  own API Setup screens with no linking step required. That answers the open question
+  in the practical notes above the decision gate: **for two apps under the same
+  business portfolio, the free test number is not a blocker** — a real spare number is
+  only required if the two platforms live under different portfolios.
+* App A: `ZZ-TEST-waba-override-app-A` (App ID `1359276892996213`).
+  App B: `ZZ-TEST-waba-override-app-B` (App ID `3626989434121176`).
+* System users `Zztest sysuser a` / `Zztest sysuser b`, Employee-role, each scoped to
+  exactly 2 business assets: their own app and the throwaway WABA. **Confirmed via
+  Business Settings → System users, both before and after the test run: role
+  "Employee access" (not Admin), "can access 2 business assets," listing only their own
+  `ZZ-TEST-waba-override-app-*` and "Test WhatsApp Business Account" — no production
+  app, no production WABA, no portfolio-admin role.** Tokens generated with
+  `whatsapp_business_management` + `whatsapp_business_messaging` only.
+* Two collector endpoints on n8n (`umi-vps`), `ZZ-TEST-waba-collector-a` and `-b`,
+  each a Webhook(GET)→verify-token check→Respond-with-challenge chain plus a
+  Webhook(POST) for delivery, published so they had stable production URLs. Used only
+  as a side-channel to see whether Meta's own verification-challenge callback (fired
+  automatically when a callback URL is set or changed) reached one or both apps — not
+  used for a real inbound-message test (see "Limits" below).
+
+**Prerequisite discovered:** `POST /{phone-number-id}` with `webhook_configuration`
+fails with `(#100) Before override the current callback uri, your app must be
+subscribed to receive messages for WhatsApp Business Account` unless the app has
+first: (a) a Callback URL + verify token saved and verified under that app's own
+WhatsApp → Configuration → Webhook panel in the developer dashboard, and (b) the
+`messages` field toggled to Subscribed there. `POST /{waba-id}/subscribed_apps` alone
+is not sufficient. Both apps were configured this way (App A → collector-a, App B →
+collector-b) before the phone-level override calls below would succeed.
+
+**Raw evidence — reads before/after each write, both directions.** All calls are
+`GET https://graph.facebook.com/v22.0/1320939084436997?fields=webhook_configuration`,
+differing only by which app's bearer token was used. Callback URLs are the throwaway
+n8n endpoints themselves, not secrets, so they are shown in full; no token value is
+reproduced anywhere in this document.
+
+1. App A sets its override
+   (`POST` with `override_callback_uri=https://n8n.umi.store/webhook/zz-test-waba-collector-a`,
+   `verify_token=throwaway-a`) → `{"success":true}`.
+2. Read with **Token A**:
+   ```json
+   {"webhook_configuration":{"phone_number":"https://n8n.umi.store/webhook/zz-test-waba-collector-a","application":"https://n8n.umi.store/webhook/zz-test-waba-collector-a"},"id":"1320939084436997"}
+   ```
+3. Read with **Token B** (App B has not set an override yet):
+   ```json
+   {"webhook_configuration":{"application":"https://n8n.umi.store/webhook/zz-test-waba-collector-b"},"id":"1320939084436997"}
+   ```
+   Note the `phone_number` key is **absent entirely** from B's read — not null, not
+   A's value, simply not present. B sees only its own app-level dashboard callback
+   (`application`), never A's override.
+4. App B sets its override (`override_callback_uri=.../zz-test-waba-collector-b`,
+   `verify_token=throwaway-b`) → `{"success":true}`.
+5. Read with **Token A** again (reverse-direction check):
+   ```json
+   {"webhook_configuration":{"phone_number":"https://n8n.umi.store/webhook/zz-test-waba-collector-a","application":"https://n8n.umi.store/webhook/zz-test-waba-collector-a"},"id":"1320939084436997"}
+   ```
+   Unchanged from step 2. A's own override survived B's write, byte-for-byte.
+6. Read with **Token B**:
+   ```json
+   {"webhook_configuration":{"phone_number":"https://n8n.umi.store/webhook/zz-test-waba-collector-b","application":"https://n8n.umi.store/webhook/zz-test-waba-collector-b"},"id":"1320939084436997"}
+   ```
+   B now sees its own override, as expected.
+
+This is the strongest form of the safe result contemplated in §1.1's "Safe result"
+paragraph: after A-then-B, each token's `phone_number` read is either app-keyed or
+absent, never leaking the other app's URL — and it held with the write order reversed.
+
+**Corroborating delivery signal (not the full delivery test).** Setting a phone-level
+override makes Meta immediately fire a real verification GET at the new
+`override_callback_uri` (`hub.mode=subscribe`, `hub.challenge`, `hub.verify_token`,
+`user-agent: facebookplatform/1.0`) to confirm the endpoint is live, independent of any
+inbound customer message. n8n's execution log captured this directly:
+* When A set its override, collector-a logged a verification GET at 08:03:45
+  (execution #7840) with `hub.verify_token=throwaway-a`. Collector-b's log shows no
+  execution at that time at all.
+* When B set its override (08:06:29, execution #7841 on collector-b), collector-a's
+  log gained no new execution — #7840 remained its latest.
+So the write that changes one app's override only pings that app's own collector; the
+sibling app's collector is not contacted. This is consistent with per-app scoping and
+is real delivery evidence, but it is Meta's own handshake callback, not a customer
+message or status update, so it does not by itself prove how an actual inbound
+`messages` webhook would fan out. See below.
+
+**Limits of this result — read before trusting it for the production cutover:**
+
+* **No real inbound-message or outbound-status delivery test was completed.** The
+  original plan was to have a human message the test number, or have one app send a
+  template message to a verified recipient and watch which collector received the
+  `messages`/`statuses` webhook. That was abandoned as disproportionate: it required
+  three separate human touchpoints (an n8n login, an OTP to verify a recipient number,
+  and reading opaque tokens off a masked field — see below), for a question the
+  read-back test above already answers with a clean bidirectional result. If the
+  read-back result had been ambiguous, the delivery test would have been necessary and
+  worth that friction; it was not ambiguous, so it was not run. **This is the one gap
+  between "confirmed" and "certain":** it remains theoretically possible that Meta
+  reads `webhook_configuration` per-app for GET purposes while fanning inbound
+  `messages` events out differently at delivery time. We judge this unlikely — the
+  verification-challenge evidence above is a real delivery event, not just a read, and
+  it followed the same per-app pattern — but a single controlled inbound message
+  before the real migration (per the pre-migration gate, item 1) is still the
+  documented requirement, precisely to close this gap with production-shaped traffic
+  rather than a test WABA.
+* **Meta's free Cloud API test number cannot receive messages from arbitrary
+  senders.** This is the reason the inbound test is expensive, and it will trip up
+  anyone re-running this: the test number only exchanges messages with numbers on its
+  verified-recipient allow-list, and adding a recipient requires an OTP sent to that
+  recipient's own WhatsApp/SMS, entered by that recipient. ("Your customers can not
+  send messages to your test phone number" — confirmed via WANotifier's Cloud API
+  documentation, matching the observed Meta behavior.) There is no way to trigger a
+  genuine inbound `messages` event on a test number without a human owning a
+  WhatsApp-capable phone completing that OTP step themselves. This does not apply to
+  UMI's real production number, which is not subject to the test-number allow-list.
+* **Tested only within one business portfolio, with Employee-role system users, on a
+  test WABA.** Not verified against UMI's actual WABA, against apps living under
+  different business portfolios, or against a Tech-Provider/Solution-Partner-style
+  onboarding.
+* **A masked-token display field is not reliably human-readable, and an earlier
+  conclusion drawn from it was wrong.** While generating system-user tokens through
+  Business Settings, tokens were repeatedly transcribed by eye from zoomed screenshots
+  of the token field (permitted, since reading a value already visible on the page is
+  not clipboard or JS extraction). Every self-transcribed token failed Graph API
+  validation with "the access token could not be decrypted." At the time, End-key and
+  Select-All-highlight checks on the field were taken as proof the field showed the
+  complete value with no hidden overflow, and the failures were attributed to
+  misreading individual similar-looking characters. **That conclusion was wrong and is
+  retracted here.** Once the real tokens were supplied directly (each ~250 characters,
+  with the `ZB`/`ZC` encoding pairs typical of long-lived Graph API tokens, versus the
+  ~55 characters being captured by transcription), they validated immediately. The
+  actual cause was that the token field is a custom masked-value display, not a normal
+  scrollable `<input>`: standard keyboard navigation and selection do not reveal or
+  select content past what is initially rendered, so the verification checks used were
+  not meaningful for this component. This bears on methodology and teardown handling
+  (tokens for this test therefore had to be supplied directly rather than
+  self-generated-and-read), not on the phone-override verdict itself, which was
+  obtained using validated, working tokens throughout.
+
+**How to reproduce.** Using a throwaway WABA/number, two throwaway apps in the same
+business portfolio, and two system-user tokens scoped only to their own app + the
+throwaway WABA (never a production asset):
+
+```sh
+export GRAPH_VERSION=v22.0
+export WABA_ID='<throwaway waba id>'
+export PHONE_NUMBER_ID='<throwaway phone-number id>'
+export TOKEN_A='<system-user token, app A, whatsapp_business_management+messaging>'
+export TOKEN_B='<system-user token, app B, whatsapp_business_management+messaging>'
+export CALLBACK_A='<https endpoint A controls>'
+export CALLBACK_B='<https endpoint B controls>'
+export VERIFY_A='<verify token A>'
+export VERIFY_B='<verify token B>'
+
+# Prerequisite: in each app's dashboard, WhatsApp -> Configuration -> Webhook, set
+# Callback URL + verify token, click "Verify and save", then toggle the "messages"
+# row to Subscribed. Do this for both apps before the calls below.
+
+curl -X POST "https://graph.facebook.com/$GRAPH_VERSION/$WABA_ID/subscribed_apps" \
+  -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
+  --data '{"subscribed_fields":["messages"]}'
+curl -X POST "https://graph.facebook.com/$GRAPH_VERSION/$WABA_ID/subscribed_apps" \
+  -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
+  --data '{"subscribed_fields":["messages"]}'
+
+curl -X POST "https://graph.facebook.com/$GRAPH_VERSION/$PHONE_NUMBER_ID" \
+  -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
+  --data "{\"webhook_configuration\":{\"override_callback_uri\":\"$CALLBACK_A\",\"verify_token\":\"$VERIFY_A\"}}"
+
+curl "https://graph.facebook.com/$GRAPH_VERSION/$PHONE_NUMBER_ID?fields=webhook_configuration" -H "Authorization: Bearer $TOKEN_A"
+curl "https://graph.facebook.com/$GRAPH_VERSION/$PHONE_NUMBER_ID?fields=webhook_configuration" -H "Authorization: Bearer $TOKEN_B"
+
+curl -X POST "https://graph.facebook.com/$GRAPH_VERSION/$PHONE_NUMBER_ID" \
+  -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
+  --data "{\"webhook_configuration\":{\"override_callback_uri\":\"$CALLBACK_B\",\"verify_token\":\"$VERIFY_B\"}}"
+
+curl "https://graph.facebook.com/$GRAPH_VERSION/$PHONE_NUMBER_ID?fields=webhook_configuration" -H "Authorization: Bearer $TOKEN_A"
+curl "https://graph.facebook.com/$GRAPH_VERSION/$PHONE_NUMBER_ID?fields=webhook_configuration" -H "Authorization: Bearer $TOKEN_B"
+```
+
+Safe/per-app result: step-5 read (Token A, after B's write) matches step-2 read
+(Token A, before B's write) exactly, and every read exposes only the reading app's own
+`phone_number`/`application` values, never the other app's. That is what was observed.
 
 ### 2. Chatwoot as the second app — current path is conditionally unsafe
 
@@ -409,5 +607,8 @@ Rollback is a controlled stop, not deletion:
   phone-override semantics.
 * Local regression spike: `spec/services/whatsapp/shared_number_spike_spec.rb` pins the
   unknown-status no-op. It does not prove Meta delivery behavior.
-* No live Meta experiment was run. The two-app runbook in §1.1 is mandatory human
-  work against disposable assets.
+* Live Meta experiment run 2026-08-19 against disposable assets per the §1.1 runbook;
+  results in §1.2. Phone-level override scoping is confirmed per-app. A real
+  inbound-message delivery test on a production-shaped number was not run (test
+  numbers cannot receive messages from arbitrary senders); the pre-migration gate
+  item 1 controlled inbound test remains required before cutover.
