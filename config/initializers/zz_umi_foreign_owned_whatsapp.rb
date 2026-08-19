@@ -10,12 +10,15 @@ Rails.application.reloader.to_prepare do
   channel = Channel::Whatsapp
   setup_service = Whatsapp::WebhookSetupService
 
-  unless channel.private_method_defined?(:should_auto_setup_webhooks?)
-    raise 'UMI zz_umi_foreign_owned_whatsapp: Channel::Whatsapp#should_auto_setup_webhooks? is gone — rebase the patch'
+  unless channel.private_method_defined?(:should_auto_setup_webhooks?) && channel.method_defined?(:enable_voice_calling!)
+    raise 'UMI zz_umi_foreign_owned_whatsapp: Channel::Whatsapp contract changed — rebase the patch'
   end
 
+  # build_callback_url is private, and the operator rake task reads it to print the URL that
+  # must be pasted into the Meta dashboard — losing it would break the only supported setup path.
   unless setup_service.method_defined?(:perform) && setup_service.method_defined?(:register_callback) &&
-         setup_service.private_method_defined?(:register_phone_number)
+         setup_service.private_method_defined?(:register_phone_number) &&
+         setup_service.private_method_defined?(:build_callback_url)
     raise 'UMI zz_umi_foreign_owned_whatsapp: Whatsapp::WebhookSetupService contract changed — rebase the patch'
   end
 

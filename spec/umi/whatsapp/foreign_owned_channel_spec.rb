@@ -54,6 +54,27 @@ RSpec.describe 'UMI foreign-owned WhatsApp channel' do
     it 'is on when a channel opts in' do
       expect(foreign_channel.umi_foreign_owned?).to be true
     end
+
+    # provider_config arrives through the JSON channel API, so the marker realistically shows up
+    # as a string — and the string 'false' is truthy in Ruby, which would arm the mode by accident.
+    it 'is on for the string "true"' do
+      manual_channel.provider_config = base_config.merge('umi_foreign_owned' => 'true')
+
+      expect(manual_channel.umi_foreign_owned?).to be true
+    end
+
+    it 'is off for the string "false"' do
+      manual_channel.provider_config = base_config.merge('umi_foreign_owned' => 'false')
+
+      expect(manual_channel.umi_foreign_owned?).to be false
+    end
+
+    it 'is off on a 360dialog channel, whose setup never reaches the Cloud API calls this mode guards' do
+      dialog_channel = build(:channel_whatsapp, phone_number: '+66975311306', provider: 'default',
+                                                provider_config: base_config.merge('umi_foreign_owned' => true))
+
+      expect(dialog_channel.umi_foreign_owned?).to be false
+    end
   end
 
   describe 'Whatsapp::WebhookSetupService#perform' do
@@ -81,6 +102,8 @@ RSpec.describe 'UMI foreign-owned WhatsApp channel' do
       expect(foreign_channel.provider_config).not_to have_key('verification_pin')
     end
 
+    # The body is asserted exactly, not with `include`: this is the one declaration Chatwoot
+    # makes on the incumbent's WABA, so a change to it should turn this red and be looked at.
     it 'subscribes this app to the WABA with exactly the fields Chatwoot consumes' do
       Whatsapp::WebhookSetupService.new(foreign_channel).perform
 
@@ -149,6 +172,40 @@ RSpec.describe 'UMI foreign-owned WhatsApp channel' do
     end
   end
 
+  # POST /{phone-number-id}/settings sets calling status on the NUMBER, not on the calling app,
+  # so unlike the writes this mode allows it changes something the incumbent shares. The damaging
+  # outcome is the call succeeding, which is why a toggle that merely raises on failure is not
+  # enough protection.
+  describe 'enabling WhatsApp calling' do
+    before do
+      allow_any_instance_of(Account).to receive(:feature_enabled?).with('channel_voice').and_return(true) # rubocop:disable RSpec/AnyInstance
+    end
+
+    it 'turns calling on at Meta for an ordinary manual channel' do
+      manual_channel.save!(validate: false)
+
+      manual_channel.enable_voice_calling!
+
+      expect(a_request(:post, %r{graph\.facebook\.com/[^/]+/#{phone_number_id}/settings})).to have_been_made
+    end
+
+    it 'refuses on a foreign-owned channel, and writes nothing to the number' do
+      foreign_channel.save!(validate: false)
+
+      expect { foreign_channel.enable_voice_calling! }.to raise_error do |error|
+        expect(error.class.name).to eq('Umi::Channel::ForeignOwnedWhatsapp::ForeignNumberCapabilityWrite')
+      end
+      expect(a_request(:post, %r{graph\.facebook\.com/[^/]+/#{phone_number_id}/settings})).not_to have_been_made
+    end
+
+    it 'leaves the local calling_enabled flag off, so the inbox cannot report voice it never enabled' do
+      foreign_channel.save!(validate: false)
+
+      expect { foreign_channel.enable_voice_calling! }.to raise_error(StandardError)
+      expect(foreign_channel.reload.provider_config['calling_enabled']).to be_nil
+    end
+  end
+
   # The factory forces its own phone_number_id and business_account_id onto every created
   # channel, so persisted examples assert on the request body and method rather than on ids.
   describe 'channel creation' do
@@ -189,7 +246,10 @@ RSpec.describe 'UMI foreign-owned WhatsApp channel' do
       ).to have_been_made.once
     end
 
-    it 'never unsubscribes the app from the WABA, which is shared with the incumbent' do
+    # Upstream gates the WABA unsubscribe on source == 'embedded_signup' precisely because a
+    # manually-keyed app subscription belongs to whoever issued the token. A foreign-owned
+    # channel is never embedded_signup, so this pins that gate against an upstream rebase.
+    it 'never unsubscribes the app from the WABA, which upstream leaves to the token owner' do
       persisted_foreign_channel.destroy!
 
       expect(a_request(:delete, %r{graph\.facebook\.com/[^/]+/[^/]+/subscribed_apps})).not_to have_been_made

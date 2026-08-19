@@ -64,6 +64,8 @@ module Umi::Whatsapp::ForeignOwnedWebhookSetup
     super
   end
 
+  # These guards run ahead of upstream's `validate_parameters!`, which is what turns a nil
+  # channel into "Channel is required" — so this has to tolerate one rather than raise first.
   def umi_foreign_owned_channel?
     @channel.respond_to?(:umi_foreign_owned?) && @channel.umi_foreign_owned?
   end

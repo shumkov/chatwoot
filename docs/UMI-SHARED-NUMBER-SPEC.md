@@ -463,19 +463,21 @@ error 100, whose text blames the WABA subscription the call just made successful
 foreign-owned path appends what actually has to change, so the operator is not sent in a
 loop re-subscribing the WABA.
 
-**Two further writes considered and deliberately left to the runbook.** Both reach assets
-the incumbent shares, and both were weighed against the same bar the guards above meet —
-does it fire on its own, behind an operator's back, and swallow the result?
+**(e) Never enable WhatsApp calling — added on review.** `Channel::Whatsapp#enable_voice_calling!`
+→ `update_calling_status('ENABLED')` POSTs `/{phone-number-id}/settings` with
+`{calling: {status:}}` (`enterprise/app/services/enterprise/whatsapp/providers/whatsapp_cloud_service.rb:45`).
+That is **number-scoped, not app-scoped** — the same class as `/register` — and it is reachable
+from the inbox UI and the admin API. This was initially left to the runbook freeze on the
+grounds that it is a deliberate operator toggle that raises on failure. That reasoning was
+wrong and is retracted: raising on *failure* is no protection at all, because the damaging
+outcome here is the call **succeeding** — the number silently gains a capability its owner did
+not ask for, and everyone sees success. It is now blocked, raising a message the inbox
+controller renders back to the admin who clicked the toggle. The disable path needs no guard:
+it never calls `update_calling_status`, only flipping the local flag and re-registering
+webhooks, which is app-scoped.
 
-* `Channel::Whatsapp#enable_voice_calling!` → `update_calling_status('ENABLED')` POSTs
-  `/{phone-number-id}/settings` with `{calling: {status:}}`
-  (`enterprise/app/services/enterprise/whatsapp/providers/whatsapp_cloud_service.rb:45`).
-  That is **number-scoped, not app-scoped** — the same class as `/register` — and it is
-  reachable from the inbox UI. It is not guarded because it fails the other half of the
-  bar: it only runs on a deliberate operator toggle, and it raises on failure rather than
-  swallowing (the disable path never calls it at all — it only flips the local flag and
-  re-registers webhooks, which is app-scoped). Freeze voice toggles on this inbox per the
-  runbook; if that rule ever needs mechanical enforcement, this is where it goes.
+**One further write considered and deliberately left to the runbook.**
+
 * `Whatsapp::CsatTemplateService` POSTs and DELETEs `/{waba-id}/message_templates`
   (`app/services/whatsapp/csat_template_service.rb:23`, `:99`) when CSAT is enabled or
   disabled on the inbox. It writes to the incumbent's template list and consumes their
@@ -483,6 +485,8 @@ does it fire on its own, behind an operator's back, and swallow the result?
   (`CsatTemplateNameService`), so it cannot touch a Klaviyo template. Deliberate operator
   action, loud result. Freeze CSAT template management on this inbox; treat unfamiliar
   Klaviyo templates appearing in the agent template picker as expected, not as corruption.
+  Unlike voice calling, this writes only under a Chatwoot-owned name on a WABA-scoped
+  collection, so the worst case is quota and clutter, not a capability change to the number.
 
 Everything else Chatwoot POSTs on a Cloud channel is `/{phone-number-id}/messages` — agent
 replies, the intended function — and is not configuration.
