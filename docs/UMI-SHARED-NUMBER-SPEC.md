@@ -396,6 +396,119 @@ Confidence: High for the Chatwoot call graph; Medium for the exact Meta error re
 by registering a number already registered by another Cloud API onboarding, because
 that requires a real number.
 
+#### 2.1 Guard decisions after the live experiment (implemented)
+
+§2's three recommended guards were written before §1.2. The live per-app result retires
+two of them and adds one §2 could not have known about. What shipped, and why:
+
+**(a) Never call `register_phone_number` — kept, and hardened.** Unchanged by §1.2:
+`/register` is scoped to the number, not to the calling app. Chatwoot invents the PIN with
+`SecureRandom` (`WebhookSetupService#fetch_or_create_pin`), so a **successful** call is the
+damaging one — it writes into the number's two-step-verification namespace and breaks the
+owner's next re-registration. Failure is no better: `register_phone_number` rescues to
+`Rails.logger.warn(… "but continuing")`, which on this install (no Sentry) nobody sees. The
+path is reached automatically, because the verification check rescues API failures to
+`false` and `!false` registers. On a foreign-owned channel `perform` drops straight to
+`register_callback`, and `register_phone_number` **raises** if any other caller reaches it —
+raised from a prepended method so the raise lands above upstream's own rescue rather than
+inside it.
+
+**(b) Never write the phone-level override — rejected.** §1.2 is direct evidence that this
+write is app-keyed: App A's override survived App B's write byte-for-byte in both orders,
+and B's read never contained A's URL (the `phone_number` key was absent, not null). It
+therefore cannot disturb the incumbent. Blocking it would also cost real capability — it is
+what routes this number to Chatwoot's `/webhooks/whatsapp/{+E164}` path, and the existing
+admin `POST /inboxes/:id/register_webhook` endpoint depends on it. The decisive point is
+§1.2's own prerequisite: the override only ever succeeds once this app's dashboard callback
+is saved, verified, and subscribed to `messages`, so by the time the write is possible an
+app-scoped callback already exists. The override adds routing precision, not risk surface.
+
+**(c) Disable foreign-number teardown — rejected.** Same evidence, same call: clearing our
+override cannot clear the incumbent's, and `unsubscribe_app_if_last_inbox` is already gated
+on `source == 'embedded_signup'` so a manual channel never touches the WABA subscription.
+The positive argument is stronger than the neutral one — suppressing teardown would leave
+Chatwoot's callback registered forever on a number UMI does not own, recoverable only by a
+manual Graph call. Cleaning up after ourselves on a foreign asset makes us a better tenant,
+not a worse one. §2's stated reason for (c) ("if that field is global") is retired by §1.2.
+
+Two consequences of rejecting (c) that the runbook still owns, because they are policy and
+not code: deleting the channel remains forbidden as a *rollback* step (it destroys Chatwoot
+conversations asynchronously — use `INACTIVE_WHATSAPP_NUMBERS` or deactivate instead), and a
+deleted foreign-owned channel leaves this app's WABA subscription behind by design, so
+`DELETE /{waba-id}/subscribed_apps` with Chatwoot's token is a manual decommissioning step.
+
+**(d) Never configure Meta implicitly — added, and the reason is new.** §1.2 established
+that `POST /{phone-number-id}` with `webhook_configuration` fails with error 100 unless the
+calling app already has a verified callback URL and `messages` subscribed in its **own
+dashboard panel**; `POST /{waba-id}/subscribed_apps` alone is not sufficient. That
+prerequisite lives outside Chatwoot, and the callback URL and verify token an operator must
+paste there only exist once the channel row is saved (`ensure_webhook_verify_token` runs
+`before_validation`). Meanwhile the automatic path swallows the result: `setup_webhook`
+re-raises, but `Channel::Whatsapp#setup_webhooks` catches it into a log line plus a
+reauthorization banner and the channel is created regardless — so a channel that pushed
+nothing, or pushed and failed, is indistinguishable in the UI from a working one.
+
+So a foreign-owned channel does not auto-configure Meta at all. The order is:
+
+1. Create the channel with `provider_config['umi_foreign_owned'] = true`. Zero Graph writes.
+2. Read `provider_config['webhook_verify_token']` and the callback URL off the saved row.
+3. In **this app's** Meta dashboard, WhatsApp → Configuration → Webhook: save that callback
+   URL and verify token, click "Verify and save", toggle `messages` to Subscribed.
+4. `bundle exec rake 'umi:whatsapp:foreign_owned_setup[<inbox_id>]'` — prints the two values
+   from step 2, then subscribes the app to the WABA and sets this app's own override.
+   Failures abort with the Meta error; nothing is swallowed. Re-runnable.
+
+Running step 4 before step 3 is the expected way to discover step 3: it fails with Meta's
+error 100, whose text blames the WABA subscription the call just made successfully. The
+foreign-owned path appends what actually has to change, so the operator is not sent in a
+loop re-subscribing the WABA.
+
+**(e) Never enable WhatsApp calling — added on review.** `Channel::Whatsapp#enable_voice_calling!`
+→ `update_calling_status('ENABLED')` POSTs `/{phone-number-id}/settings` with
+`{calling: {status:}}` (`enterprise/app/services/enterprise/whatsapp/providers/whatsapp_cloud_service.rb:45`).
+That is **number-scoped, not app-scoped** — the same class as `/register` — and it is reachable
+from the inbox UI and the admin API. This was initially left to the runbook freeze on the
+grounds that it is a deliberate operator toggle that raises on failure. That reasoning was
+wrong and is retracted: raising on *failure* is no protection at all, because the damaging
+outcome here is the call **succeeding** — the number silently gains a capability its owner did
+not ask for, and everyone sees success. It is now blocked, raising a message the inbox
+controller renders back to the admin who clicked the toggle. The disable path needs no guard:
+it never calls `update_calling_status`, only flipping the local flag and re-registering
+webhooks, which is app-scoped.
+
+**One further write considered and deliberately left to the runbook.**
+
+* `Whatsapp::CsatTemplateService` POSTs and DELETEs `/{waba-id}/message_templates`
+  (`app/services/whatsapp/csat_template_service.rb:23`, `:99`) when CSAT is enabled or
+  disabled on the inbox. It writes to the incumbent's template list and consumes their
+  template quota, but only under a Chatwoot-generated, inbox-scoped template name
+  (`CsatTemplateNameService`), so it cannot touch a Klaviyo template. Deliberate operator
+  action, loud result. Freeze CSAT template management on this inbox; treat unfamiliar
+  Klaviyo templates appearing in the agent template picker as expected, not as corruption.
+  Unlike voice calling, this writes only under a Chatwoot-owned name on a WABA-scoped
+  collection, so the worst case is quota and clutter, not a capability change to the number.
+
+Everything else Chatwoot POSTs on a Cloud channel is `/{phone-number-id}/messages` — agent
+replies, the intended function — and is not configuration.
+
+Not addressed here, and still owned by the gate: manual Cloud channels do not require an
+`X-Hub-Signature-256` unless `provider_config` carries an app secret
+(`REVIEW-SECURITY.md` S1 / `REVIEW-OPS.md` B2), the `statuses.first` truncation
+(`REVIEW-CHATWOOT.md` §2.1), and the `low`-queue capacity question (`REVIEW-OPS.md` B3).
+None of those are writes against the incumbent's configuration.
+
+One marker caveat: `provider_config` is a jsonb column that `PATCH /inboxes/:id` replaces
+wholesale, so an API client that sends a partial config drops `umi_foreign_owned` silently.
+Every path in this checkout preserves it — the dashboard spreads the serialized config
+(`ConfigurationPage.vue:171`) and `Whatsapp::ReauthorizationService` merges into the
+existing one — and losing it post-create cannot re-arm `/register`, because the auto-setup
+callback is `on: :create` only. Re-check the marker after any channel edit anyway.
+
+Implementation: `config/initializers/zz_umi_foreign_owned_whatsapp.rb`,
+`umi/app/models/channel/foreign_owned_whatsapp.rb`,
+`umi/app/services/whatsapp/foreign_owned_webhook_setup.rb`, `lib/tasks/umi_whatsapp.rake`,
+`spec/umi/whatsapp/foreign_owned_channel_spec.rb`.
+
 ### 3. Status webhooks for messages unknown to Chatwoot — ignored cleanly
 
 Established from code (High): `Webhooks::WhatsappEventsJob` dispatches a Cloud API
