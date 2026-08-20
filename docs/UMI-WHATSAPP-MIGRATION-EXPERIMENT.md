@@ -57,6 +57,17 @@ portfolio prerequisite outright. The one thing that can still sink the plan is w
 Klaviyo's *migration* branch offers voice verification at all (§4.1b). Question 2 remains
 undocumented and observation-only.
 
+**Where things stand**
+
+| Question | Status |
+|---|---|
+| Which WABA, whose portfolio (step 0) | **ANSWERED, favourable** — WABA "UMI" `1673373860633578`, owned by UMI STORE CO., LTD.; Twilio is a partner, not the owner (§1) |
+| Does Meta's voice OTP reach this number, and can we capture it | **VERIFIED** by the 2026-07-05 Twilio recording and its transcription (§2.3) |
+| Can the SMS leg ever work | **NO — ruled out structurally** by Twilio's short-code rules and Thailand's international-long-code block (§2.4) |
+| Is the capture tooling built | **YES, already deployed** — `otp_capture` (§2.5) |
+| Cost of the recommended path | **$0** (§5) |
+| **Does Klaviyo's migration branch offer voice?** | **UNKNOWN — the one open risk that can sink the plan** (§4.1b) |
+
 ---
 
 ## 1. Step 0 — ANSWERED (observed 2026-08-20 in Meta Business Manager, read-only)
@@ -362,10 +373,19 @@ known path.
 
 ### 4.1 Attempted 2026-08-20 and blocked: Klaviyo is logged out
 
-With Meta answered (§1), Klaviyo was the next stop. **`klaviyo.com` is logged out in the same
-Chrome profile** — `/settings` redirects to a *"Welcome back"* form with email, password and a
-reCAPTCHA. I entered nothing and solved nothing; both are out of scope. So the two questions
-below remain exactly as open as they were.
+With Meta answered (§1), Klaviyo was the next stop, and it could not be reached.
+
+* **`klaviyo.com` is logged out in both Chrome profiles connected to this session.** Browser 1
+  (`972bdedc`) — the one Meta was read in — redirects `/settings` to a *"Welcome back"* form
+  with email, password and a reCAPTCHA. Browser 2 (`b2675503`) redirected `/dashboard` to
+  `/login` earlier the same day. I entered nothing and solved nothing; both are out of scope.
+* **The session Ivan means is elsewhere.** He places it in the *personal* Chrome profile on a
+  machine called **dinobook**. Both browsers the extension reports are local to this Mac, so
+  that profile is simply not among the connected extensions.
+
+**To unblock, one of two things:** connect that dinobook profile's Chrome extension to this
+session, or have Ivan sign into Klaviyo in one of the two browsers that are already connected.
+Neither is something I can do. So the two questions below stand exactly as open as before.
 
 **4.1a Is *Connect to WhatsApp* live on UMI's plan? — UNKNOWN.** Public material: WhatsApp
 rides the **Email + SMS** bundle rather than the free/email-only tier, shares the SMS credit
@@ -537,6 +557,52 @@ becomes the right move only in the "only SMS offered" branch of §5.
    Voice URL and neither will be made without a yes.
 4. **Decide whether the one-number premise is negotiable** (§3.4). A Klaviyo-provisioned
    marketing number removes every risk here; it costs the unified-number story.
+
+---
+
+## 9. Teardown checklist — planned now, to run once the experiments finish
+
+**Do not execute this yet.** Written on request so cleanup is planned rather than improvised.
+
+**Verify, do not trust the log.** The companion spec's §1.2 teardown log records assets as
+removed that are demonstrably still present. Two were re-checked today and *both* were still
+there. Treat every "already done" claim in this table as unverified until its own verification
+step passes.
+
+**Ivan's, because they need a Meta password or 2FA — neither of us enters those:** items 1, 2
+and 3. I could not even *read* item 2's page: Business Settings → Accounts → Apps is gated
+behind a Meta passkey re-authentication prompt.
+
+| # | Item | Owner | State verified 2026-08-20 | Remove by | Verify it is gone |
+|---|---|---|---|---|---|
+| 1 | WABA **Test WhatsApp Business Account** `4445932492313560` (from the §1.2 override spike) | **Ivan** — Meta 2FA | **STILL PRESENT** in portfolio `497970999394825`; visible in both Business Settings → WhatsApp accounts and WhatsApp Manager, despite the spec's teardown log | Business Settings → WhatsApp accounts → select → Remove | The WhatsApp accounts list shows only **UMI** and **UMI clothing** |
+| 2 | Meta apps **ZZ-TEST-waba-override-app-A** `1359276892996213` and **-app-B** `3626989434121176` | **Ivan** — Meta 2FA | **UNVERIFIED** — Business Settings → Accounts → Apps is behind a passkey re-auth prompt I stopped at | Business Settings → Apps → remove; or delete the apps at developers.facebook.com | Apps list no longer shows either; `GET /{app-id}` with a valid token errors |
+| 3 | System users **Zztest sysuser a** / **b**, and any tokens they still hold | **Ivan** — Meta 2FA | **UNVERIFIED** — not checked this session | Business Settings → Users → System users → remove (revoke tokens first) | System users list is clear; a previously issued token fails `GET /me` with an `OAuthException` |
+| 4 | n8n workflows **ZZ-TEST-waba-collector-a** (`89goLz0JpVLjTfXB`) and **-b** (`MRYMeamf8sxyYnMr`) | Either | **STILL PRESENT, and only DEACTIVATED** — both appear in `n8n list:workflow` but not in `n8n list:workflow --active=true`. Reported archived; they were not deleted | n8n UI → delete; or `docker exec umi-n8n-n8n-1 n8n delete:workflow --id=<id>` | `docker exec umi-n8n-n8n-1 n8n list:workflow \| grep ZZ-TEST` returns nothing |
+| 5 | Any Twilio number bought for an experiment | Either | **NONE BOUGHT.** The account holds exactly one `IncomingPhoneNumber`, `+66975311301` (production) | Release it in the Console or via `DELETE /IncomingPhoneNumbers/{sid}` — this is what stops the monthly charge | `GET /IncomingPhoneNumbers.json` returns only the production number. **Do not delete the regulatory bundles** — they are shared with production (§2.2) |
+| 6 | Any WABA or connection created in **Klaviyo** during a migration rehearsal | Ivan (needs a Klaviyo login) | **NONE** — no rehearsal has run; Klaviyo has not been reached at all | Klaviyo → Settings → WhatsApp → disconnect. **⚠ Disconnecting a WABA permanently destroys that WABA's message templates**; they must be recreated and resubmitted to Meta, so do this only on a throwaway WABA or before real template work exists | Settings → WhatsApp shows no connected WABA, and no Klaviyo-provisioned WABA remains in portfolio `497970999394825` |
+| 7 | Shopify test order **#1601** | **Ivan's** | **UNVERIFIED** — the Shopify MCP connection needs re-authorization (token expired), so I could not read its current state | Refund or cancel it in Shopify admin | The order shows **Refunded** or **Cancelled** in the admin |
+| 8 | This worktree and its branch | Either, **but not from inside it** | herdr session `home`, workspace **`w5X`**, path `/Users/ivanshumkov/Projects/shumkov/chatwoot.migration-test`, branch `umi-waba-migration-experiment`, **4 commits ahead of `origin/umi`, all documentation** | See the procedure below | `herdr workspace list --session home` no longer lists `w5X`, and the path is gone from disk |
+
+**Item 8, in full, because the order matters.**
+
+1. Merge or abandon `umi-waba-migration-experiment` first. All four commits are docs-only, so
+   nothing is lost by merging; but the branch is the only copy of this investigation.
+2. Quiesce any agent session in the workspace — ask it to stop background work — then sweep for
+   processes that outlived it:
+   `lsof -d cwd 2>/dev/null | awk '$NF ~ "^/Users/ivanshumkov/Projects/shumkov/chatwoot.migration-test" {print $2, $1, $NF}' | sort -u`
+   Report anything found and confirm before killing; a stuck build looks exactly like a runaway.
+3. `herdr worktree remove --workspace w5X --force --session home` — **never raw
+   `git worktree remove`**, which orphans the herdr workspace and makes it invisible to
+   `herdr worktree list`.
+4. **Run step 3 from a different session.** `w5X` is the workspace this session lives in;
+   removing it terminates this session mid-command.
+5. Sibling workspaces **`w43`** (`chatwoot.feat-shumabit`) and **`w4D`** (`chatwoot.crm`) are
+   unrelated work — do not touch them. The source repo workspace is `wG`.
+
+**Not on this list, deliberately:** the production WABA "UMI", its number, the Twilio senders,
+the regulatory bundles, both Chatwoot channels, and WABA "UMI clothing". Nothing in this
+investigation touched them, and nothing in teardown should.
 
 ## Sources
 
