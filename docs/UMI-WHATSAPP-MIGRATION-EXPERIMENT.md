@@ -51,68 +51,77 @@ runbook. But UMI already owns primary evidence that **Meta's verification voice 
 failed because UMI's voice handler errored mid-sentence, not because the code never arrived.
 SMS is **structurally impossible** for this number, per Twilio's own documented short-code
 rules. And the tooling to capture the code cleanly **already exists and is deployed**. The
-recommended path therefore costs **nothing**. Question 2 remains undocumented and
-observation-only.
+recommended path therefore costs **nothing**. Step 0 is now answered (§1): the WABA is
+**UMI's own**, in UMI's own portfolio, with Twilio as a partner — which satisfies Klaviyo's
+portfolio prerequisite outright. The one thing that can still sink the plan is whether
+Klaviyo's *migration* branch offers voice verification at all (§4.1b). Question 2 remains
+undocumented and observation-only.
 
 ---
 
-## 1. Step 0 — which WABA is the number in, and who owns it?
+## 1. Step 0 — ANSWERED (observed 2026-08-20 in Meta Business Manager, read-only)
 
-### 1.1 Status: NOT OBSERVED. Blocked on a login I am not permitted to perform.
+**H1 is confirmed.** The WABA is UMI's own, in UMI's own portfolio, with Twilio attached as a
+partner rather than as the owner. All VERIFIED, all read from Business Settings and WhatsApp
+Manager; nothing was changed and no confirmation was clicked.
 
-Only visible in Meta Business Manager (Business Settings → Accounts → WhatsApp Accounts, or
-WhatsApp Manager). Twilio's Senders API returns an empty `waba_id`, and Chatwoot cannot help:
-the number's two rows are `Channel::TwilioSms` — id 2 (`+66975311301`, `medium: sms`, inbox 5,
-created 2026-07-04) and id 3 (`whatsapp:+66975311301`, `medium: whatsapp`, inbox 6, created
-2026-07-05) — and that model stores no WABA or phone-number ID.
+| Fact | Value |
+|---|---|
+| Business portfolio | **UMI STORE CO., LTD.**, `business_id 497970999394825`. Business verification **Verified**; account status **Approved** |
+| WABA | **"UMI"**, ID **`1673373860633578`** |
+| Owner | *"Owned by: UMI STORE CO., LTD."* — **not** a Twilio-provisioned portfolio |
+| Phone number | **+66 97 531 1301**, Thailand. Display name **"UMI"** (visible to customers). Status **Connected** |
+| Quality rating | **High** |
+| Messaging limit | **2,000** business-initiated conversations per rolling 24 h (updated 20 Aug 14:39 GMT+7) |
+| Next tier | 10,000 — requires 1,000 unique customers in a rolling 7 days; currently **14** |
+| People | **Ivan Shumkov only**, Full access. Sole admin. |
+| Partners | **Twilio, Inc — "Partners with full control"** |
+| Payment method | **Credit line — TWILIO INC.** |
 
-Ivan's Chrome profile is **logged out of both `business.facebook.com` and `klaviyo.com`**
-(VERIFIED: both redirect to a password form). **To unblock (about two minutes):** log in to
-Facebook in that profile, then say go. The extension already holds permission for
-`business.facebook.com`.
+Two other WABAs sit in the same portfolio: **"UMI clothing"**, holding **+66 80 005 3593** (the
+Cloud-API-direct number behind the "Whatsapp" inbox), and **"Test WhatsApp Business Account"**
+(`4445932492313560`).
 
-**What to read off the page, in this order:**
+**Housekeeping note, VERIFIED, unrelated to this migration:** that test WABA is the throwaway
+from the companion spec's §1.2 override experiment, whose teardown log records it as removed.
+**It is still present in the production portfolio.** Harmless, but the teardown log is wrong —
+remove the WABA or correct the spec.
 
-| Field | Where | Why it matters |
-|---|---|---|
-| WABA name and ID | Business Settings → Accounts → WhatsApp Accounts | Identity; needed for every later Graph call |
-| Owning portfolio | The portfolio switcher; a WABA owned elsewhere shows under *Shared with you* rather than *Owned* | Decides H1 vs H2 below |
-| Admin / people | WABA → People | Whether UMI can grant its own app access without Twilio |
-| Connected/subscribed apps | WABA → Apps (or `GET /{waba-id}/subscribed_apps`) | The seat patch 26 wants |
-| Business verification state | Security Centre | Meta gates parts of migration and sending on it |
-| Two-step verification PIN | WhatsApp Manager → the number → Two-step verification | Must be **off** to migrate, and cannot be turned off via API |
+### 1.1 Not obtained, and why — the subscribed-apps list
 
-### 1.2 The two hypotheses
+`GET /{waba-id}/subscribed_apps` needs either a Graph token or Business Settings → Accounts →
+**Apps**, and that page is gated behind a **Meta 2FA passkey re-authentication** prompt
+("Confirm that it's you with your passkey"). I stopped there rather than work an authentication
+challenge. **UNKNOWN.**
 
-The number was registered through **Twilio Console → Senders → WhatsApp senders → "Continue
-with Facebook" → create a new WABA in that flow**. That is Meta Embedded Signup running under
-Twilio's tech-provider app, and it can land either way:
+What is known instead: the WABA's Partners tab lists exactly one partner — **Twilio, Inc, with
+full control** — and the conversation credit line is Twilio's. **INFERRED (high)**: Twilio's app
+is the only subscriber today. To settle it, either complete the passkey prompt and open
+Business Settings → Apps, or ask a system-user token with `whatsapp_business_management`.
 
-**H1 — the WABA sits in the UMI STORE CO., LTD. portfolio, with Twilio's app subscribed.**
-The ordinary Embedded Signup contract and, on balance, the likelier outcome.
+### 1.2 What H1 means — better than expected, but not a shortcut
 
-**H2 — the WABA belongs to a Twilio-owned portfolio, with UMI granted access.** Possible if
-the signup dialog defaulted to a portfolio that is not UMI's.
+Genuinely good news:
 
-### 1.3 Even H1 is not "just add Klaviyo as a connected app"
+* **Klaviyo's hard prerequisite is already satisfied.** *"You must use the same Meta Business
+  Portfolio"* — the WABA is in UMI's own portfolio, and Klaviyo names a mismatched portfolio as
+  the most common cause of failed migrations. Nothing has to be prised out of Twilio first.
+* **Ivan is the sole person with full access**, so no third party approves anything Meta-side.
+* **The asset is healthy** — verified portfolio, Connected, quality High, 2,000/24h — and Meta
+  documents that a migrated number keeps its display name, quality rating, messaging limit and
+  approved templates.
+* **Patch 26 has somewhere to point:** UMI can grant its own Meta app access to a WABA it owns.
 
-Klaviyo's own migration article forecloses it, verbatim:
+The limit is unchanged, and it is worth restating because H1 is the outcome that tempts people
+to assume a shortcut. Klaviyo requires a *new* WABA — *"Create a new WABA for Klaviyo within
+that portfolio. Do not reuse your existing WABA."* The number still moves out of WABA "UMI"
+into a Klaviyo-provisioned one. What H1 buys is that the move is **intra-portfolio** — Meta's
+supported and lighter path — rather than a cross-business BSP handover.
 
-> "**Create a new WABA for Klaviyo** within that portfolio. Do not reuse your existing WABA."
-
-So the number changes WABAs regardless. Klaviyo does not attach itself as a second app to
-someone else's WABA — it provisions its own and expects the number to move in. The "second
-app on one WABA" architecture in the companion spec is *Chatwoot's* role; Klaviyo is the
-incumbent, which is exactly why patch 26 exists.
-
-What H1 buys: Klaviyo's hard prerequisite is already satisfied (*"You must use the same Meta
-Business Portfolio"* — Klaviyo names a different portfolio as the most common cause of failed
-migrations); source and destination WABA under one portfolio is Meta's supported
-intra-business move; and patch 26 has somewhere to point.
-
-What H2 costs: Klaviyo's portfolio prerequisite is unsatisfiable as-is, and the WABA or number
-must be brought into UMI's portfolio first. **If step 0 returns H2, stop and fix ownership
-before anything else.**
+**A new question this observation raises.** Twilio holds **partner full control** over the
+source WABA. Whether a number can be migrated out from under a partner with full control
+without that partner's cooperation is **UNKNOWN**, and it is the same undocumented territory as
+§3.6. It does not change the recommended path, but it belongs on the risk list.
 
 ---
 
@@ -349,18 +358,39 @@ known path.
 
 ---
 
-## 4. Two things to check before committing to a migration window
+## 4. The Klaviyo side — still UNKNOWN, and it is now the only thing that can sink the plan
 
-### 4.1 Is Klaviyo's WhatsApp product available on UMI's plan? — UNKNOWN
+### 4.1 Attempted 2026-08-20 and blocked: Klaviyo is logged out
 
-Chrome is logged out of Klaviyo, so this is unobserved. Public material: WhatsApp rides the
-**Email + SMS** bundle rather than the free/email-only tier, shares the SMS credit pool, and
-requires **Owner or Admin**. No plan gate on *connecting* is documented — the gate, if any, is
-likelier on sending. That is an inference.
+With Meta answered (§1), Klaviyo was the next stop. **`klaviyo.com` is logged out in the same
+Chrome profile** — `/settings` redirects to a *"Welcome back"* form with email, password and a
+reCAPTCHA. I entered nothing and solved nothing; both are out of scope. So the two questions
+below remain exactly as open as they were.
 
-**Settle it by looking:** Klaviyo → Settings → WhatsApp. If **Connect to WhatsApp** is present
-and clickable, the path in §5 is open. If it shows an upsell or "contact sales", stop there.
-**Do not buy a plan upgrade to find out.**
+**4.1a Is *Connect to WhatsApp* live on UMI's plan? — UNKNOWN.** Public material: WhatsApp
+rides the **Email + SMS** bundle rather than the free/email-only tier, shares the SMS credit
+pool, and requires **Owner or Admin**. No plan gate on *connecting* is documented — the gate,
+if any, is likelier on sending. That is an inference, not an observation.
+
+**4.1b Does the migration-from-another-BSP branch offer a phone-call option, or SMS only? —
+UNKNOWN, and this is the decisive question.** Everything else now points one way: Meta's voice
+OTP demonstrably reaches this number and the code is capturable (§2.3); SMS structurally
+cannot (§2.4); Klaviyo's *general connect* article does offer a choice — *"Pick how you want to
+verify this number (either text message or phone call)"* — and explicitly tells VoIP users to
+*"choose to verify by a phone call."* But that text is from the **new-number** flow. The
+**migration** article says only *"Enter the verification code sent to your number"* and never
+names the delivery method. **If the migration branch hard-codes SMS, the plan stops** — and no
+amount of Twilio-side preparation fixes it, because the message never reaches Thailand.
+
+**How to settle both, read-only, in about two minutes:** log into Klaviyo, open Settings →
+WhatsApp, and step *into* the Connect flow as far as the verification screen **without
+submitting anything** — the question is simply whether a "phone call" radio/option appears
+beside "text message" on the migration path. Back out there. Do not enter the number, do not
+request a code.
+
+If it turns out to be SMS-only, the fallbacks in order are: ask Klaviyo support to trigger a
+voice verification (with §2.3 and §2.4 as evidence — this is the one branch where support is
+the right move); or take the separate-number option in §3.4.
 
 ### 4.2 Does connecting pollute the real Klaviyo account? — partly
 
@@ -386,7 +416,7 @@ migration window.
 
 **Exact steps.**
 
-0. **Prerequisites:** step 0 answered and it is H1 (§1.2); Klaviyo's *Connect to WhatsApp* is
+0. **Prerequisites:** step 0 answered and it is H1 — **done, §1**; Klaviyo's *Connect to WhatsApp* is
    available (§4.1); 2SV off on the number in WhatsApp Manager (§3.5); an agreed off-hours
    window, because inbound customer calls will be diverted for its duration.
 1. **Record the current Voice URL** so it can be restored verbatim:
@@ -471,29 +501,38 @@ becomes the right move only in the "only SMS offered" branch of §5.
 
 ## 7. What this still does not prove
 
-1. **Klaviyo's migration branch.** Whether it offers voice verification at all. The single
-   largest remaining unknown, and only §5 answers it.
-2. **Step 0.** Ownership is still unobserved; H2 changes the plan (§1.2).
-3. **Question 2 — voice surviving deregistration.** Undocumented (§3.6); §5 step 7 observes it,
+1. **Klaviyo's migration branch.** Whether it offers voice verification at all (§4.1b). With
+   step 0 answered, this is now **the** open question — and the only one that can sink the
+   plan outright, because SMS cannot reach this number by any route.
+2. **Whether Twilio's partner full control blocks the move.** New, raised by §1.2: Twilio holds
+   *"full control"* as partner on the source WABA. Whether the number can be migrated out
+   without Twilio's cooperation is undocumented, and the same silence as §3.6 covers it.
+3. **The subscribed-apps list** (§1.1) — behind a 2FA passkey prompt. Twilio being the sole
+   partner makes "Twilio's app only" likely, not certain.
+4. **Question 2 — voice surviving deregistration.** Undocumented (§3.6); §5 step 7 observes it,
    but only after the fact, on the production number. There is no risk-free way to learn this
    first, which is an argument for a short window and a rollback plan, not for a rehearsal.
-4. **What the number keeps.** HIGH quality rating, approved display name, messaging tier and
-   any OBA status. Meta documents that migrated numbers retain these; not verified for this
-   number.
-5. **Downtime length.** Klaviyo warns the number cannot send or receive from the start of
+5. **What the number keeps.** Quality **High**, display name "UMI", the 2,000/24h limit and any
+   approved templates — all now confirmed present (§1). Meta documents that a migrated number
+   retains them; that it does so *for this number* is not verified.
+6. **Downtime length.** Klaviyo warns the number cannot send or receive from the start of
    migration until Meta's review completes. Duration unknown and not simulable.
-6. **The 11200 error code.** Permanently unrecoverable (§2.3). The audible symptom is verified;
+7. **The 11200 error code.** Permanently unrecoverable (§2.3). The audible symptom is verified;
    the code is not, and nobody should later cite it as established.
-7. **Chatwoot as the second app under real load.** §1.2 of the companion spec still has no real
+8. **Chatwoot as the second app under real load.** §1.2 of the companion spec still has no real
    inbound `messages` delivery test on a two-app number.
-8. **Whether the other five 2026-07-05 calls were Meta's.** Only the recorded one is verified.
+9. **Whether the other five 2026-07-05 calls were Meta's.** Only the recorded one is verified.
 
 ---
 
 ## 8. Open decisions for Ivan
 
-1. **Log in to Facebook in Chrome** so step 0 can be observed. Everything branches on H1 vs H2.
-2. **Look at Klaviyo → Settings → WhatsApp** — is *Connect to WhatsApp* clickable?
+1. **Log into Klaviyo and answer §4.1b** — step into Settings → WhatsApp → Connect, on the
+   *migration* branch, far enough to see whether a **phone call** option sits beside "text
+   message", then back out without submitting. This is now the whole ballgame; everything else
+   is settled or prepared. Say the word once you are logged in and I will read it.
+2. **Optionally clear the passkey prompt** so the subscribed-apps list (§1.1) can be read, and
+   decide what to do about the leftover `Test WhatsApp Business Account` (§1).
 3. **Approve the $0 dry-run in §6**, or skip straight to §5. Both are production changes to the
    Voice URL and neither will be made without a yes.
 4. **Decide whether the one-number premise is negotiable** (§3.4). A Klaviyo-provisioned
