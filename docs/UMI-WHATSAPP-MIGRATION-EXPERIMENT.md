@@ -66,7 +66,8 @@ undocumented and observation-only.
 | Can the SMS leg ever work | **NO — ruled out structurally** by Twilio's short-code rules and Thailand's international-long-code block (§2.4) |
 | Is the capture tooling built | **YES, already deployed** — `otp_capture` (§2.5) |
 | Cost of the recommended path | **$0** (§5) |
-| **Does Klaviyo's migration branch offer voice?** | **UNKNOWN — the one open risk that can sink the plan** (§4.1b) |
+| Is Klaviyo's WhatsApp product available to UMI | **YES, and not yet activated** — Settings → WhatsApp offers *"Try WhatsApp for free"*, no paywall or sales gate (§4.1a) |
+| **Does Klaviyo's migration branch offer voice?** | **STILL UNKNOWN — the one open risk that can sink the plan.** It sits behind the activation button, which is Ivan's to click (§4.1b) |
 
 ---
 
@@ -369,48 +370,65 @@ known path.
 
 ---
 
-## 4. The Klaviyo side — still UNKNOWN, and it is now the only thing that can sink the plan
+## 4. The Klaviyo side — reached 2026-08-20; one question answered, the decisive one not
 
-### 4.1 Attempted 2026-08-20 and blocked: Klaviyo is logged out
+### 4.1 What Klaviyo actually shows (observed read-only, submitting nothing)
 
-With Meta answered (§1), Klaviyo was the next stop, and it could not be reached.
+Reached at last, in the `personal@shumabook` Chrome profile after Ivan paired it. Everything
+below is read from the UI; no button that connects, confirms or submits was clicked.
 
-* **`klaviyo.com` is logged out in both Chrome profiles connected to this session.** Browser 1
-  (`972bdedc`) — the one Meta was read in — redirects `/settings` to a *"Welcome back"* form
-  with email, password and a reCAPTCHA. Browser 2 (`b2675503`) redirected `/dashboard` to
-  `/login` earlier the same day. I entered nothing and solved nothing; both are out of scope.
-* **The session Ivan means is elsewhere.** He places it in the *personal* Chrome profile on a
-  machine called **dinobook**. Both browsers the extension reports are local to this Mac, so
-  that profile is simply not among the connected extensions.
+**4.1a Is the product available on UMI's plan? — VERIFIED: yes, and it is not yet turned on.**
 
-**To unblock, one of two things:** connect that dinobook profile's Chrome extension to this
-session, or have Ivan sign into Klaviyo in one of the two browsers that are already connected.
-Neither is something I can do. So the two questions below stand exactly as open as before.
+There is **no "Connect to WhatsApp" on this account today.** Settings → WhatsApp is a marketing
+splash — *"Unlock the world's #1 mobile messaging app"* — whose only control is a single
+**"Try WhatsApp for free"** button. That is the important nuance: not a paywall, not a "contact
+sales" upsell, not a tier gate. The product is offered, free to start, and simply has not been
+started.
 
-**4.1a Is *Connect to WhatsApp* live on UMI's plan? — UNKNOWN.** Public material: WhatsApp
-rides the **Email + SMS** bundle rather than the free/email-only tier, shares the SMS credit
-pool, and requires **Owner or Admin**. No plan gate on *connecting* is documented — the gate,
-if any, is likelier on sending. That is an inference, not an observation.
+The supporting entitlement is already there. Billing → Overview, cycle 13 Aug – 13 Sep 2026:
 
-**4.1b Does the migration-from-another-BSP branch offer a phone-call option, or SMS only? —
-UNKNOWN, and this is the decisive question.** Everything else now points one way: Meta's voice
-OTP demonstrably reaches this number and the code is capturable (§2.3); SMS structurally
-cannot (§2.4); Klaviyo's *general connect* article does offer a choice — *"Pick how you want to
-verify this number (either text message or phone call)"* — and explicitly tells VoIP users to
-*"choose to verify by a phone call."* But that text is from the **new-number** flow. The
-**migration** article says only *"Enter the verification code sent to your number"* and never
-names the delivery method. **If the migration branch hard-codes SMS, the plan stops** — and no
-amount of Twilio-side preparation fixes it, because the message never reaches Thailand.
+| Plan line | Value |
+|---|---|
+| Monthly total | **$30.00** |
+| Profiles | 1,000 active (**734 used, 73%**) |
+| Emails | 10,000 sends (0 used) |
+| **Mobile messaging** | **$5.00 SMS spend** (0 used) — the pool WhatsApp shares |
+| Reviews | 50 orders processed |
+| Composer | 10,000 AI credits, 82 days remaining |
 
-**How to settle both, read-only, in about two minutes:** log into Klaviyo, open Settings →
-WhatsApp, and step *into* the Connect flow as far as the verification screen **without
-submitting anything** — the question is simply whether a "phone call" radio/option appears
-beside "text message" on the migration path. Back out there. Do not enter the number, do not
-request a code.
+So the earlier inference in this document — that WhatsApp rides the mobile-messaging bundle and
+that the gate, if any, is on sending rather than connecting — holds up: the mobile-messaging
+line exists, and the WhatsApp tab shows an activation CTA rather than an upsell.
 
-If it turns out to be SMS-only, the fallbacks in order are: ask Klaviyo support to trigger a
-voice verification (with §2.3 and §2.4 as evidence — this is the one branch where support is
-the right move); or take the separate-number option in §3.4.
+**4.1b Does the migration branch offer a phone call, or SMS only? — STILL UNKNOWN, and now for
+a precise reason.**
+
+The verification screen is behind that **"Try WhatsApp for free"** button, and pressing it
+starts WhatsApp onboarding on UMI's live Klaviyo account. That is an activation, not a read, so
+I stopped. It is a `<button>` with no `href`, so its destination could not be inspected without
+pressing it either.
+
+This is the whole remaining risk, unchanged in substance and sharper in shape:
+
+* Klaviyo's **new-number** flow demonstrably offers the choice — *"Pick how you want to verify
+  this number (either text message or phone call)"* — and tells VoIP users *"choose to verify
+  by a phone call."*
+* Klaviyo's **migration** article says only *"Enter the verification code sent to your number"*
+  and never names a method.
+* **SMS cannot reach `+66975311301` by any route** (§2.4). So if the migration branch hard-codes
+  SMS, the shared-number plan is dead and UMI falls back to two identities (§3.4) — a
+  Klaviyo-provisioned marketing number alongside `+66975311301` for support and voice.
+
+**To settle it, Ivan clicks "Try WhatsApp for free" and walks the migration branch to the
+verification screen** — stopping there, entering no number and requesting no code. The single
+thing to look for: whether a *phone call* option appears beside *text message*. I can drive
+everything up to that click and read the screen afterwards; the click itself is his.
+
+**One caution before he does.** Activating the trial is the first step that leaves residue in
+the real Klaviyo account, and §4.2 is why it matters: the WhatsApp connection is account-level
+and singular, and disconnecting a WABA later **permanently destroys that WABA's message
+templates**. Right now that costs nothing — no templates exist yet — which makes now the
+cheapest moment this will ever be. It gets more expensive the moment template work starts.
 
 ### 4.2 Does connecting pollute the real Klaviyo account? — partly
 
@@ -436,7 +454,7 @@ migration window.
 
 **Exact steps.**
 
-0. **Prerequisites:** step 0 answered and it is H1 — **done, §1**; Klaviyo's *Connect to WhatsApp* is
+0. **Prerequisites:** step 0 answered and it is H1 — **done, §1**; Klaviyo's WhatsApp product is
    available (§4.1); 2SV off on the number in WhatsApp Manager (§3.5); an agreed off-hours
    window, because inbound customer calls will be diverted for its duration.
 1. **Record the current Voice URL** so it can be restored verbatim:
@@ -547,10 +565,12 @@ becomes the right move only in the "only SMS offered" branch of §5.
 
 ## 8. Open decisions for Ivan
 
-1. **Log into Klaviyo and answer §4.1b** — step into Settings → WhatsApp → Connect, on the
-   *migration* branch, far enough to see whether a **phone call** option sits beside "text
-   message", then back out without submitting. This is now the whole ballgame; everything else
-   is settled or prepared. Say the word once you are logged in and I will read it.
+1. **Click "Try WhatsApp for free" and answer §4.1b.** Walk the *migration* branch as far as the
+   verification screen and stop — enter no number, request no code. The only thing to look for:
+   does a **phone call** option sit beside "text message"? This is the whole ballgame; every
+   other question is settled or prepared. The click is yours because it activates the product on
+   the live account; I can drive the rest and read the screen. Cheapest moment to do it is now,
+   before any template work exists (§4.1b, §4.2).
 2. **Optionally clear the passkey prompt** so the subscribed-apps list (§1.1) can be read, and
    decide what to do about the leftover `Test WhatsApp Business Account` (§1).
 3. **Approve the $0 dry-run in §6**, or skip straight to §5. Both are production changes to the
