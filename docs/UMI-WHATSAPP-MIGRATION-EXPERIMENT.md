@@ -53,9 +53,11 @@ SMS is **structurally impossible** for this number, per Twilio's own documented 
 rules. And the tooling to capture the code cleanly **already exists and is deployed**. The
 recommended path therefore costs **nothing**. Step 0 is now answered (§1): the WABA is
 **UMI's own**, in UMI's own portfolio, with Twilio as a partner — which satisfies Klaviyo's
-portfolio prerequisite outright. The one thing that can still sink the plan is whether
-Klaviyo's *migration* branch offers voice verification at all (§4.1b). Question 2 remains
-undocumented and observation-only.
+portfolio prerequisite outright. And Klaviyo's migration branch has now been walked (§4.1b):
+it never asks how to verify — it collects the number and hands off to **Meta's** embedded
+sign-up, which owns that choice. So the last risk is no longer "Klaviyo might force SMS"; it is
+"Meta's sign-up must offer the call", and Meta's voice OTP has already been observed reaching
+this number. Question 2 remains undocumented and observation-only.
 
 **Where things stand**
 
@@ -67,7 +69,7 @@ undocumented and observation-only.
 | Is the capture tooling built | **YES, already deployed** — `otp_capture` (§2.5) |
 | Cost of the recommended path | **$0** (§5) |
 | Is Klaviyo's WhatsApp product available to UMI | **YES, and not yet activated** — Settings → WhatsApp offers *"Try WhatsApp for free"*, no paywall or sales gate (§4.1a) |
-| **Does Klaviyo's migration branch offer voice?** | **STILL UNKNOWN — the one open risk that can sink the plan.** It sits behind the activation button, which is Ivan's to click (§4.1b) |
+| **Does Klaviyo's migration branch offer voice?** | **Klaviyo never asks.** Its wizard collects number + display name, then hands off to **Meta's embedded sign-up**, which owns the SMS-vs-voice choice. Not visible without committing a number (§4.1b) |
 
 ---
 
@@ -400,35 +402,68 @@ So the earlier inference in this document — that WhatsApp rides the mobile-mes
 that the gate, if any, is on sending rather than connecting — holds up: the mobile-messaging
 line exists, and the WhatsApp tab shows an activation CTA rather than an upsell.
 
-**4.1b Does the migration branch offer a phone call, or SMS only? — STILL UNKNOWN, and now for
-a precise reason.**
+**4.1b Does the migration branch offer a phone call, or SMS only? — Klaviyo never asks. The
+choice is Meta's, and it sits downstream of a phone number.**
 
-The verification screen is behind that **"Try WhatsApp for free"** button, and pressing it
-starts WhatsApp onboarding on UMI's live Klaviyo account. That is an activation, not a read, so
-I stopped. It is a `<button>` with no `href`, so its destination could not be inspected without
-pressing it either.
+With Ivan's authorisation the activation button was pressed and the migration branch walked to
+the point where it demands a number. What it contains, VERIFIED:
 
-This is the whole remaining risk, unchanged in substance and sharper in shape:
+1. **"Are you currently using WhatsApp for your business?"** — *"Select the best option for your
+   business to get instructions for **Meta's embedded sign-up experience**."* Options: *No, I am
+   not using WhatsApp for business* / *Yes, I currently use WhatsApp for business*. The second is
+   the migration branch and is the one taken.
+2. **"Tips for a successful migration"** — two items, both matching this document's expectations:
+   * *"Turn off two-step verification for phone in Meta"* — tooltip: *"In the WhatsApp Business
+     account you're migrating from, go to WhatsApp Manager, find your phone number settings, and
+     turn off 2FA."* This confirms §3.5 from Klaviyo's own UI.
+   * *"Disable WhatsApp business app (only for business app users)"* — tooltip: *"This only
+     applies for the official WhatsApp Business app for small businesses. It is not the same as
+     the WhatsApp Business platform, which is for service providers like Klaviyo."* Not
+     applicable to UMI, which is on the platform via Twilio.
+3. **"Are you ready to connect?"** — *"Add your phone number. When migrating, using your current
+   WhatsApp phone number is strongly recommended."* A checkbox **"Use my current WhatsApp
+   number — Recommended"**, ticked by default (tooltip: *"By using your current number, you can
+   continue to message customers in the same WhatsApp thread."*), then a country selector
+   (defaulting to +1) and an empty number field, then *"What's your current display name?"*.
+   Header controls: **Save & close / Back / Next**.
 
-* Klaviyo's **new-number** flow demonstrably offers the choice — *"Pick how you want to verify
-  this number (either text message or phone call)"* — and tells VoIP users *"choose to verify
-  by a phone call."*
-* Klaviyo's **migration** article says only *"Enter the verification code sent to your number"*
-  and never names a method.
-* **SMS cannot reach `+66975311301` by any route** (§2.4). So if the migration branch hard-codes
-  SMS, the shared-number plan is dead and UMI falls back to two identities (§3.4) — a
-  Klaviyo-provisioned marketing number alongside `+66975311301` for support and voice.
+**Stopped there.** Entering a number was not authorised, and it is the gate: **the verification
+method is not visible without committing a number** — precisely the outcome named in advance as
+a real finding rather than a failure.
 
-**To settle it, Ivan clicks "Try WhatsApp for free" and walks the migration branch to the
-verification screen** — stopping there, entering no number and requesting no code. The single
-thing to look for: whether a *phone call* option appears beside *text message*. I can drive
-everything up to that click and read the screen afterwards; the click itself is his.
+**But the walk reframes the question, and favourably.** Klaviyo's wizard never presents a
+verification-method choice at all, and now it is clear why its migration article never names
+one: **Klaviyo does not own that screen.** By its own words on screen 1 it collects the number
+and display name and then hands off to *Meta's embedded sign-up experience*. The SMS-vs-voice
+choice belongs to Meta, downstream of the number.
 
-**One caution before he does.** Activating the trial is the first step that leaves residue in
-the real Klaviyo account, and §4.2 is why it matters: the WhatsApp connection is account-level
-and singular, and disconnecting a WABA later **permanently destroys that WABA's message
-templates**. Right now that costs nothing — no templates exist yet — which makes now the
-cheapest moment this will ever be. It gets more expensive the moment template work starts.
+Grading this carefully, because over-claiming is the failure mode this document already had to
+retract once:
+
+* **VERIFIED** — Klaviyo's migration branch collects a number and display name and then defers
+  to Meta's embedded sign-up; Klaviyo itself never offers or restricts a verification method.
+* **VERIFIED** — the method cannot be seen without committing a number.
+* **INFERRED (moderate)** — since the choice is Meta's, and Meta's embedded sign-up is the same
+  flow that elsewhere offers *"either text message or phone call"*, and Meta's own API exposes
+  `code_method: SMS | VOICE` with no documented country or number-type restriction (§3.3), the
+  voice option is likely present on this path too. **Likely is not proven.** Nobody has seen
+  Meta's verification screen on a migration where the number is already registered to another
+  BSP, and that specific case is where a surprise would live.
+* **UNKNOWN** — whether that screen offers voice for `+66975311301` in particular.
+
+**What it means.** The one risk that could sink the plan is materially smaller than it looked,
+because it is no longer "Klaviyo might have hard-coded SMS" — Klaviyo has hard-coded nothing.
+It is now "Meta's embedded sign-up must offer the call", against a vendor whose API documents
+both methods and whose voice OTP has already been observed reaching this exact number (§2.3).
+The plan proceeds, with the residual risk retired at the moment someone enters the number.
+
+**State the Klaviyo account was left in: unchanged.** Re-opened Settings → WhatsApp after
+backing out — identical *"Try WhatsApp for free"* splash, no saved progress, no connection, no
+WABA, no phone number. Billing → Overview re-checked: still $30.00/month with the same four
+plan lines (Profiles 1,000 / 734 used, Emails 10,000, Mobile messaging $5.00 SMS spend,
+Reviews 50) and **no WhatsApp line item added**. **"Save & close" was never clicked** — the
+wizard was exited by navigating away, which discarded it. Nothing was created, so **nothing is
+added to the teardown checklist in §9**.
 
 ### 4.2 Does connecting pollute the real Klaviyo account? — partly
 
@@ -539,9 +574,11 @@ becomes the right move only in the "only SMS offered" branch of §5.
 
 ## 7. What this still does not prove
 
-1. **Klaviyo's migration branch.** Whether it offers voice verification at all (§4.1b). With
-   step 0 answered, this is now **the** open question — and the only one that can sink the
-   plan outright, because SMS cannot reach this number by any route.
+1. **Meta's verification screen on the migration path.** Klaviyo is cleared — it never asks
+   (§4.1b) — but the screen that does ask belongs to Meta's embedded sign-up and appears only
+   after the number is committed. Nobody has seen it for a number already registered to another
+   BSP. Still the largest open item, though smaller than it was: SMS cannot reach this number
+   by any route, so the call has to be on offer.
 2. **Whether Twilio's partner full control blocks the move.** New, raised by §1.2: Twilio holds
    *"full control"* as partner on the source WABA. Whether the number can be migrated out
    without Twilio's cooperation is undocumented, and the same silence as §3.6 covers it.
@@ -565,12 +602,12 @@ becomes the right move only in the "only SMS offered" branch of §5.
 
 ## 8. Open decisions for Ivan
 
-1. **Click "Try WhatsApp for free" and answer §4.1b.** Walk the *migration* branch as far as the
-   verification screen and stop — enter no number, request no code. The only thing to look for:
-   does a **phone call** option sit beside "text message"? This is the whole ballgame; every
-   other question is settled or prepared. The click is yours because it activates the product on
-   the live account; I can drive the rest and read the screen. Cheapest moment to do it is now,
-   before any template work exists (§4.1b, §4.2).
+1. **Decide whether to commit the number.** §4.1b is walked as far as it goes without one: the
+   verification method is Meta's, not Klaviyo's, and it appears only after the number is entered.
+   Entering `+66975311301` there starts the real migration — the number goes dark until Meta's
+   review completes — so it is a scheduled operation, not a probe. Do it in the §5 window, with
+   the Voice URL already pointed at `otp_capture`, so the code is captured on the first attempt.
+   Cheapest moment is still now, before any template work exists (§4.2).
 2. **Optionally clear the passkey prompt** so the subscribed-apps list (§1.1) can be read, and
    decide what to do about the leftover `Test WhatsApp Business Account` (§1).
 3. **Approve the $0 dry-run in §6**, or skip straight to §5. Both are production changes to the
@@ -600,7 +637,7 @@ behind a Meta passkey re-authentication prompt.
 | 3 | System users **Zztest sysuser a** / **b**, and any tokens they still hold | **Ivan** — Meta 2FA | **UNVERIFIED** — not checked this session | Business Settings → Users → System users → remove (revoke tokens first) | System users list is clear; a previously issued token fails `GET /me` with an `OAuthException` |
 | 4 | n8n workflows **ZZ-TEST-waba-collector-a** (`89goLz0JpVLjTfXB`) and **-b** (`MRYMeamf8sxyYnMr`) | Either | **STILL PRESENT, and only DEACTIVATED** — both appear in `n8n list:workflow` but not in `n8n list:workflow --active=true`. Reported archived; they were not deleted | n8n UI → delete; or `docker exec umi-n8n-n8n-1 n8n delete:workflow --id=<id>` | `docker exec umi-n8n-n8n-1 n8n list:workflow \| grep ZZ-TEST` returns nothing |
 | 5 | Any Twilio number bought for an experiment | Either | **NONE BOUGHT.** The account holds exactly one `IncomingPhoneNumber`, `+66975311301` (production) | Release it in the Console or via `DELETE /IncomingPhoneNumbers/{sid}` — this is what stops the monthly charge | `GET /IncomingPhoneNumbers.json` returns only the production number. **Do not delete the regulatory bundles** — they are shared with production (§2.2) |
-| 6 | Any WABA or connection created in **Klaviyo** during a migration rehearsal | Ivan (needs a Klaviyo login) | **NONE** — no rehearsal has run; Klaviyo has not been reached at all | Klaviyo → Settings → WhatsApp → disconnect. **⚠ Disconnecting a WABA permanently destroys that WABA's message templates**; they must be recreated and resubmitted to Meta, so do this only on a throwaway WABA or before real template work exists | Settings → WhatsApp shows no connected WABA, and no Klaviyo-provisioned WABA remains in portfolio `497970999394825` |
+| 6 | Any WABA or connection created in **Klaviyo** during a migration rehearsal | Ivan (needs a Klaviyo login) | **NONE.** The onboarding wizard was opened and walked to the number field on 2026-08-20, then abandoned by navigating away — "Save & close" was never clicked. Re-checked afterwards: Settings → WhatsApp is back to the untouched "Try WhatsApp for free" splash, and Billing shows no WhatsApp line item | Klaviyo → Settings → WhatsApp → disconnect. **⚠ Disconnecting a WABA permanently destroys that WABA's message templates**; they must be recreated and resubmitted to Meta, so do this only on a throwaway WABA or before real template work exists | Settings → WhatsApp shows no connected WABA, and no Klaviyo-provisioned WABA remains in portfolio `497970999394825` |
 | 7 | Shopify test order **#1601** | **Ivan's** | **UNVERIFIED** — the Shopify MCP connection needs re-authorization (token expired), so I could not read its current state | Refund or cancel it in Shopify admin | The order shows **Refunded** or **Cancelled** in the admin |
 | 8 | This worktree and its branch | Either, **but not from inside it** | herdr session `home`, workspace **`w5X`**, path `/Users/ivanshumkov/Projects/shumkov/chatwoot.migration-test`, branch `umi-waba-migration-experiment`, **4 commits ahead of `origin/umi`, all documentation** | See the procedure below | `herdr workspace list --session home` no longer lists `w5X`, and the path is gone from disk |
 
