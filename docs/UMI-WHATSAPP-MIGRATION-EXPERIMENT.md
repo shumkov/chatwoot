@@ -661,6 +661,56 @@ behind a Meta passkey re-authentication prompt.
 the regulatory bundles, both Chatwoot channels, and WABA "UMI clothing". Nothing in this
 investigation touched them, and nothing in teardown should.
 
+---
+
+## 10. Migration log — phase 1 (2026-08-22)
+
+Ivan authorised the migration and a phase-1 run that goes as far as Klaviyo's verification
+screen and stops. Patch 26 is live in production (`umi-v4.16.0-7@sha256:cbf934e5…`), so Chatwoot
+can be re-added to a Klaviyo-owned number afterwards. He has also decided **not** to repoint the
+public WhatsApp links — inbox 6 has had 13 messages ever, so a short dark window is acceptable.
+
+### 10.1 Restore point — `+66975311301` voice configuration before any change
+
+Read from Twilio at **2026-08-22T10:03:10Z**, `IncomingPhoneNumber`
+`PNf160f13eed1ae9ab96a25dc1bd9f6c55`. **This is the byte-for-byte restore target.** Only
+`voice_url` is being changed; every other field below must read identically afterwards.
+
+| Field | Value |
+|---|---|
+| `voice_url` | **`https://chat.umi.store/umi/voice/66975311301/incoming`** ← restore this |
+| `voice_method` | `POST` |
+| `voice_fallback_url` | `nil` |
+| `voice_fallback_method` | `POST` |
+| `voice_caller_id_lookup` | `false` |
+| `voice_application_sid` | `nil` |
+| `voice_receive_mode` | `voice` |
+| `trunk_sid` | `nil` |
+| `status_callback` | `https://chat.umi.store/umi/voice/66975311301/status` |
+| `status_callback_method` | `POST` |
+| `sms_url` | `https://demo.twilio.com/welcome/sms/reply` |
+| `sms_method` | `POST` |
+| `sms_fallback_url` / `_method` | `nil` / `POST` |
+| `sms_application_sid` | `""` |
+| `emergency_status` | `Inactive` |
+| `emergency_address_sid` | `nil` |
+| `bundle_sid` | `BUe5aff5a92082ef66d1896fab122164e6` |
+| `address_sid` | `AD6f0a37531f78fef3c48ece3095694958` |
+| `identity_sid` | `nil` |
+| `friendly_name` / `status` | `66975311301` / `in-use` |
+| `capabilities` | `voice: true, sms: true, mms: false, fax: false` |
+
+**Restore command** (one field, nothing else):
+
+```
+POST /2010-04-01/Accounts/{sid}/IncomingPhoneNumbers/PNf160f13eed1ae9ab96a25dc1bd9f6c55.json
+VoiceUrl=https://chat.umi.store/umi/voice/66975311301/incoming
+```
+
+**While the Voice URL is diverted, inbound customer calls do not ring agents** — they hit
+`otp_capture`, which records and transcribes instead. Keep the window short and restore as soon
+as the verification screen has been read.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
