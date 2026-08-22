@@ -772,6 +772,55 @@ and reversible. Phase 2 therefore begins at the "Connect to WhatsApp" click — 
 explicit go, because it accepts the terms above and starts WABA creation — and the divert should
 be live again before it happens, since a code becomes reachable from that point on.
 
+### 10.3 Phase 2 attempt (2026-08-22) — paused at Meta's popup, nothing created
+
+Authorised and attempted; **stopped by tooling, not by anything Meta or Klaviyo did.**
+
+**What was done.** The Klaviyo wizard was re-walked (migration branch, `+66 97 531 1301`
+pre-filled from the earlier run) to the guidance screen, and **"Connect to WhatsApp" was
+clicked** — which accepts the Klaviyo/WhatsApp/Meta terms quoted in §10.2. That was the
+authorised step.
+
+**What blocked it.** Meta's embedded sign-up opens via `window.open` as a separate popup
+**window**. The Chrome extension can only act on tabs inside its own MCP tab group, so the popup
+is invisible to it — not a permissions or login problem, a scoping one. Ivan pressed Continue in
+that popup manually, but the flow did not get far enough to create anything.
+
+**Verified state after the attempt — nothing moved:**
+
+* Portfolio `497970999394825` still holds **exactly three WABAs** (Test WhatsApp Business
+  Account, UMI, UMI clothing). **No new WABA was created**, so Meta's step 3 was never completed.
+* Twilio: **zero inbound calls and zero inbound SMS** to `+66975311301` all day. No code was
+  requested or sent.
+* Klaviyo: no connection, no stored number on the account.
+
+**The peekaboo fallback is also unavailable, for two independent reasons** — both verified, not
+assumed:
+
+1. **No display session.** Every application reports zero capturable windows — Chrome, Safari,
+   Finder, and Warp — and a full-screen capture hung until killed. The screen is locked or
+   asleep; WindowServer exposes nothing.
+2. **TCC grants do not cover the daemon.** `/Applications/Peekaboo.app` signs as
+   `boo.peekaboo.mac`; the CLI binary the daemon actually runs
+   (`/opt/homebrew/Cellar/peekaboo/4.0.0/bin/peekaboo`) signs as `boo.peekaboo.peekaboo`. TCC
+   keys on the signing identifier, so a grant to the app covers nothing the daemon does, even
+   though both display as "Peekaboo" in System Settings. Screen Recording read as granted only
+   because the running daemon predated the mismatch; **restarting it during this session
+   surfaced the gap and lost that borrowed grant.**
+
+**To resume, cheapest first:**
+
+1. **Allow popups for `klaviyo.com`** in the Chrome profile the extension is paired to. Meta's
+   sign-up then opens as an ordinary tab, drivable directly — no screen, no TCC, no peekaboo.
+2. Or, for the peekaboo route: add `/opt/homebrew/Cellar/peekaboo/4.0.0/bin/peekaboo` by path to
+   **both** Screen Recording and Accessibility (expect two "Peekaboo" rows in each list — the
+   app and the CLI are different clients), `launchctl kickstart -k
+   gui/502/com.ivanshumkov.peekaboo-daemon`, and unlock the screen.
+
+**Open operational item:** the Twilio `voice_url` is **still diverted** to `otp_capture`.
+Inbound calls are not ringing agents. Restore per §10.1 — the divert only needs to be live for
+the few minutes around an actual verification request, not between sessions.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
