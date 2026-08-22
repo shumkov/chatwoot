@@ -817,9 +817,19 @@ assumed:
    app and the CLI are different clients), `launchctl kickstart -k
    gui/502/com.ivanshumkov.peekaboo-daemon`, and unlock the screen.
 
-**Open operational item:** the Twilio `voice_url` is **still diverted** to `otp_capture`.
-Inbound calls are not ringing agents. Restore per §10.1 — the divert only needs to be live for
-the few minutes around an actual verification request, not between sessions.
+**Voice restored — CLOSED.** At **2026-08-22T15:41:17Z** the Voice URL was set back to
+`https://chat.umi.store/umi/voice/66975311301/incoming` and the record re-read: `RESTORE OK`,
+and **every field matches the §10.1 restore point exactly** — `voice_method` POST,
+`status_callback` `.../status` POST, `voice_fallback_url` nil / `_method` POST,
+`voice_caller_id_lookup` false, `voice_application_sid` nil, `trunk_sid` nil, `sms_url` the demo
+endpoint with `sms_method` POST, `emergency_status` Inactive, `bundle_sid`
+`BUe5aff5a92082ef66d1896fab122164e6`, `address_sid` `AD6f0a37531f78fef3c48ece3095694958`,
+`status` in-use. Inbound calls ring agents again. The divert was live roughly 5.5 hours.
+
+**Lesson for the next attempt:** the divert only needs to be live for the few minutes around an
+actual verification request. Do not open it until the flow is known to reach Meta's verification
+step — this run diverted first and then lost hours to tooling, with the line degraded throughout
+and no code ever requested.
 
 ## Sources
 
