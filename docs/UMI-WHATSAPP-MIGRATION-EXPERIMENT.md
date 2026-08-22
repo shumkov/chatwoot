@@ -69,7 +69,7 @@ this number. Question 2 remains undocumented and observation-only.
 | Is the capture tooling built | **YES, already deployed** — `otp_capture` (§2.5) |
 | Cost of the recommended path | **$0** (§5) |
 | Is Klaviyo's WhatsApp product available to UMI | **YES, and not yet activated** — Settings → WhatsApp offers *"Try WhatsApp for free"*, no paywall or sales gate (§4.1a) |
-| **Does Klaviyo's migration branch offer voice?** | **Klaviyo never asks.** Its wizard collects number + display name, then hands off to **Meta's embedded sign-up**, which owns the SMS-vs-voice choice. Not visible without committing a number (§4.1b) |
+| **Does Klaviyo's migration branch offer voice?** | **Settled by walking it: Klaviyo never offers a method at all.** Its wizard ends at a guidance screen and hands off to Meta's embedded sign-up, whose step 4 does the verifying. Entering the number is inert — no code is sent (§10.2) |
 
 ---
 
@@ -710,6 +710,67 @@ VoiceUrl=https://chat.umi.store/umi/voice/66975311301/incoming
 **While the Voice URL is diverted, inbound customer calls do not ring agents** — they hit
 `otp_capture`, which records and transcribes instead. Keep the window short and restore as soon
 as the verification screen has been read.
+
+### 10.2 Phase 1 result (2026-08-22) — the number is inert; the commitment point is one click later
+
+Walked with the Voice URL diverted to `otp_capture` as insurance. **Nothing was sent and
+nothing moved.**
+
+**What entering the number actually does: nothing.** Country set to Thailand, `+66 97 531 1301`
+entered, **Next** clicked. No verification code was requested, offered, or sent. VERIFIED
+afterwards from Twilio: **zero inbound calls to the number all day** (`Calls?To=+66975311301`
+since 2026-08-22 → count 0) and **zero inbound SMS in the preceding two hours**. The boundary is
+not where the brief feared — submitting the number is inert on Klaviyo's side, so this screen
+can be re-walked at any time at no cost.
+
+**Where the wizard actually ends.** Klaviyo's last screen is **"WhatsApp setup guidance"** — an
+outline of what Meta's embedded sign-up will do, not something Klaviyo performs:
+
+1. Get admin access — *"Get admin access to your company's Meta Business account / Log in to
+   Facebook and the Meta Business account."*
+2. Create or select your business portfolio
+3. Create a new WhatsApp Business account (WABA)
+4. **Add and verify phone number**
+5. Set up your business profile
+
+The only forward control is **"Connect to WhatsApp"** (external-link icon), which launches
+Meta's embedded sign-up in a popup.
+
+**So the §4.1b answer is now settled definitively, by walking it end to end: Klaviyo never
+offers a verification method at all.** Not "phone call alongside text message", not "SMS only" —
+the choice is not Klaviyo's to present. Step 4 above happens inside Meta's embedded sign-up.
+Klaviyo collects the number and display name purely to pre-fill Meta's flow.
+
+**Why phase 1 stopped exactly here.** "Connect to WhatsApp" carries an explicit terms
+acknowledgement rendered directly beneath it:
+
+> "By clicking "Connect to WhatsApp" you acknowledge and agree that this is subject to the
+> existing agreement you have in place with Klaviyo in connection with the services. You also
+> acknowledge and agree that all WhatsApp applications, software, features, services, and APIs
+> are separately provided by WhatsApp LLC or WhatsApp Ireland Limited … and that you are
+> governed by all applicable WhatsApp and/or Meta Platforms, Inc. ("Meta") policies, including
+> the WhatsApp Business Terms of Service and, if applicable, the WhatsApp Business Solution
+> Terms and/or the Beta Product Testing Terms."
+
+That is a substantive consent on Ivan's behalf, and the brief's hard stop covers it. It is also
+the genuine point of no return: the same click both accepts those terms and opens the flow that
+creates a WABA.
+
+**State left behind.**
+
+| Asset | State |
+|---|---|
+| Klaviyo account | **Untouched.** Re-opened Settings → WhatsApp after backing out — identical *"Try WhatsApp for free"* splash. No connection, no WABA, no stored number. "Save & close" never clicked; the wizard was abandoned by navigating away |
+| WABA "UMI" / `+66975311301` | **Unchanged.** Still Connected, still on Twilio, quality High |
+| Twilio `voice_url` | **STILL DIVERTED** to `.../otp_capture` — restore to `.../incoming` per §10.1 |
+| Codes sent | **None** |
+
+**What this means for phase 2.** The remaining unknown has moved from Klaviyo to Meta and
+narrowed to one screen: Meta's embedded sign-up, step 4, "Add and verify phone number", for a
+number already registered to another BSP. Everything up to that point is now known to be free
+and reversible. Phase 2 therefore begins at the "Connect to WhatsApp" click — which needs Ivan's
+explicit go, because it accepts the terms above and starts WABA creation — and the divert should
+be live again before it happens, since a code becomes reachable from that point on.
 
 ## Sources
 
