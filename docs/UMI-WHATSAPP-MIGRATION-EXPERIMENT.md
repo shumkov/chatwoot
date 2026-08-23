@@ -1147,6 +1147,62 @@ partially detached it.
 4. Press **Resubmit** in Klaviyo.
 5. Restore the voice URL.
 
+### 10.10 Deregistered from Twilio — it did NOT unblock the migration
+
+**The hypothesis in §10.8/§10.9 was wrong, and acting on it cost the Twilio sender.**
+
+Executed 2026-08-23 14:54Z with the divert live:
+
+* `DELETE /v2/Channels/Senders/XEa587e2c30f03901fec2c383dad8f5f07` → **204**, sender now **404**.
+  Pre-flight asserted `sender_id == whatsapp:+66975311301` before deleting.
+* **Twilio number untouched**, as designed: `in-use`, voice+SMS capabilities, `status_callback`,
+  `bundle_sid`, `address_sid` all unchanged.
+* Meta registered the change — in the **old** WABA the number flipped `Connected` → **`Offline`**
+  (quality still High). So Twilio's claim genuinely was released.
+
+**And Klaviyo's Resubmit still fails, identically.** Same error, no Meta dialog, and VERIFIED
+from Twilio that **no verification call or SMS was triggered** — still only the 03:25:10Z call
+from this morning.
+
+**Net effect: the number is now dark on both sides.** Old WABA `Offline`, new WABA `Unverified`,
+no Twilio sender. Before the deletion, WhatsApp was still serving through Twilio. That capability
+was spent for no gain.
+
+**What was misjudged.** The reasoning was that Meta would not transfer ownership while the
+losing BSP held a live registration. Releasing it changed the old WABA's status but moved the
+destination not at all — so the block is not, or not only, the Twilio registration. Klaviyo's
+banner said *"Please verify ownership **in Meta** and try again"*, which reads as an instruction
+to complete something Meta-side **before** pressing Resubmit; that wording deserved more weight
+than the Twilio hypothesis, and did not get it.
+
+**Current state:**
+
+| Asset | State |
+|---|---|
+| Old WABA `1673373860633578` | number present, **`Offline`**, quality High |
+| New WABA `914496898392950` | number present, **`Unverified`**, quality blank, **new phone-number ID `1242276345642600`** (old was `1101374313069948`) |
+| New WABA display name | **UMI — approved** |
+| Klaviyo | WABA **Active**, 2K/24hrs; banner *"phone number ownership could not be verified"*; Resubmit fails |
+| Twilio sender | **deleted** — restore point in §10.9 |
+| Twilio number | intact, `in-use`, voice restored to `.../incoming` |
+
+**Recommended next steps, in order:**
+
+1. **Look for a verify action on the number inside WhatsApp Manager** (new WABA → the number →
+   Settings/More). Klaviyo's error points at Meta-side verification, and the number carries a
+   fresh phone-number ID, so Meta may offer its own verification independent of Klaviyo's button.
+   This session could not read those menus reliably — the browser viewport was 500 px wide.
+2. **If there is no such action, open a Klaviyo support ticket.** The case is clean and fully
+   evidenced: WABA created and Active, tier carried over, display name approved, number present
+   but `Unverified`, ownership verification failing, Resubmit erroring, losing BSP released.
+3. **Do not delete or re-add anything further on inference.** Two irreversible steps have now
+   been taken; the second one did not help.
+
+**Rollback option if WhatsApp is needed before this resolves:** re-register the number as a
+Twilio WhatsApp sender using the §10.9 restore point. Twilio's documentation notes that
+re-registering a previously deleted sender requires two-step verification to be off for the
+number — it currently is (§10.5), so that path is open. Untested.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
