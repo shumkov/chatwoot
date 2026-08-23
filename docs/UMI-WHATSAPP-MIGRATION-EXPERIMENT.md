@@ -991,6 +991,70 @@ it applies: SMS cannot reach the number (§2.4), Meta's voice call demonstrably 
 intended end state (Chatwoot re-attaches as the second app via patch 26), but it is irreversible
 in the same motion. It needs an explicit go, with the divert live first.
 
+### 10.7 Migration executed (2026-08-23) — code captured, number moved, ownership check outstanding
+
+**The correct branch worked.** Taking *"Enter a new phone number"*, setting the country to
+Thailand and typing `97 531 1301` produced exactly the prompt §10.6 predicted:
+
+> "This phone number is already registered to a WhatsApp Business account with another partner.
+> If you continue, your number will be moved to your new account… Once moved, you won't be able
+> to send or receive messages on your old account."
+
+Portfolio was locked to **UMI STORE CO., LTD.** and the WABA field to **Create a WhatsApp
+Business account** — no choice needed, and no risk of reusing the old WABA.
+
+**The verification screen offers BOTH methods. VERIFIED — this is the question the whole
+document chased.**
+
+> "Choose how you would like to verify your number:  ◉ Text message   ○ Phone call"
+
+It **defaults to Text message and sends one immediately** ("We've sent a code via text message
+to +66975311301"). That SMS can never arrive (§2.4) — so on this path the default is the wrong
+one, and switching to *Phone call* then *Resend Code* is mandatory, not optional.
+
+**The capture rig worked end-to-end, against the exact failure from July.**
+
+* Inbound call `CA772e0e575de6b2a9d01bf078d62925df` at **03:25:10Z from `+1 949 531 7728`** —
+  the *same Meta originating number* as the 2026-07-05 attempt (§2.3).
+* Duration 35 s, answered by `otp_capture`, two recordings (29 s + 5 s), auto-transcribed.
+* Transcription `TRa762c3bf9b505e97a294dfbe710412a6`:
+  **"Your verification code is 431040. Your verification code is 431040. Your verification code
+  is 431040. Your verification code is."**
+
+Set that beside July's transcript on the same account — *"Your verification code is 503, we are
+sorry, an application error has occurred. Good bye."* — and the difference is entirely UMI's
+own voice handler. Same Meta, same number, same voice path; a working handler is all that was
+ever missing. No human answered a phone at any point.
+
+**Result — partially complete.**
+
+| Asset | State after migration |
+|---|---|
+| New WABA | **"UMI STORE CO., LTD."**, ID **`914496898392950`**, owned by UMI STORE CO., LTD., payment method **Credit line — Klaviyo, Inc.** |
+| Klaviyo → Settings → WhatsApp | WhatsApp Account **Active**, message limit **2K / 24hrs** — the 2,000/24 h tier **carried over** |
+| `+66 97 531 1301` in the new WABA | **`Unverified`**, quality rating blank |
+| `+66 97 531 1301` in old WABA `1673373860633578` | still listed **`Connected`, quality High** |
+| Klaviyo banner | *"Your phone number ownership could not be verified. Please verify ownership in Meta and try again."* + **Resubmit** |
+
+So the WABA connected and the messaging tier transferred, but **the ownership hand-off did not
+complete**: the number is listed in *both* WABAs. The captured code got through Meta's
+verification step; something after it did not finish. Not yet diagnosed — candidates are Meta
+not having released the number from the old WABA yet, or registration on the new WABA failing.
+
+**§3.6 is answered, and favourably. VERIFIED: the Twilio number survived.** Read straight after
+the migration — `phone_number` `+66975311301`, `status` **in-use**, `capabilities` voice+SMS
+intact, `status_callback`, `bundle_sid` `BUe5aff5…` and `address_sid` `AD6f0a37…` all unchanged.
+The only altered field was our own `voice_url` divert. Removing WhatsApp from Twilio did **not**
+disturb the number, its voice service, its regulatory bundle, or account ownership — the
+question Twilio documents nowhere.
+
+**Voice window:** diverted `03:19:38Z`, restored `03:49:58Z` — about 30 minutes, and the code
+was captured inside it.
+
+**Next:** press **Resubmit** on Klaviyo's banner. If it asks for a code again, choose **Phone
+call**, and re-divert voice *first* — the divert is currently restored, so a fresh OTP call
+would ring agents instead of being recorded.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
