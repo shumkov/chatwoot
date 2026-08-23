@@ -1055,6 +1055,45 @@ was captured inside it.
 call**, and re-divert voice *first* — the divert is currently restored, so a fresh OTP call
 would ring agents instead of being recorded.
 
+### 10.8 Resubmit fails — migration is stuck half-done
+
+**Klaviyo's Resubmit does not work.** Pressed at 04:01Z with the divert live: a toast reading
+**"Failed to resubmit WhatsApp account. Please try again."**, the red banner unchanged, no Meta
+dialog opened. VERIFIED from Twilio that **no verification call or SMS was triggered** — the
+only inbound call all day remains the 03:25:10Z one. So the resubmit dies before it reaches the
+code-sending stage; retrying the button changes nothing.
+
+**Current split state, and it is stable rather than in motion:**
+
+| | |
+|---|---|
+| New WABA `914496898392950` | **Active** in Klaviyo, message limit **2K / 24hrs** carried over |
+| `+66975311301` in the new WABA | **`Unverified`** |
+| `+66975311301` in old WABA `1673373860633578` | still **`Connected`, quality High`** |
+| Twilio number `PNf160f13eed…` | untouched — `in-use`, voice+SMS, bundle and address intact |
+| Twilio WhatsApp sender | **still registered** (not deleted) |
+
+**INFERRED, not verified — why it is stuck.** Meta cannot confirm ownership for Klaviyo while
+the number is still attached to the old WABA, and the old WABA's claim is plausibly held open by
+`+66975311301` still being a **registered WhatsApp sender on Twilio**. Releasing it from the
+losing BSP is the standard missing step in BSP-to-BSP migrations. This is a hypothesis; nothing
+observed states the cause.
+
+**Options, in the order this document recommends:**
+
+1. **Wait 30–60 minutes, press Resubmit again.** Meta's migrations propagate asynchronously and
+   the destination WABA is already Active. Zero cost, zero risk, and it may simply resolve.
+2. **If still stuck: delete the WhatsApp sender in Twilio**, then Resubmit. This is the
+   deliberate, one-way step — do it with the divert live, because it may trigger a fresh
+   verification call. **Not done, and not to be done on inference alone** — if the hypothesis is
+   wrong it costs the sender for nothing.
+
+**Nothing is broken meanwhile.** The Twilio number is intact and voice is restored
+(`04:04:30Z`, all §10.1 fields matching). WhatsApp on the number is expected to be dark from
+here — that was always the cost of the migration, and inbox 6 has had 13 messages ever.
+
+**Voice window this round:** diverted `04:01:31Z`, restored `04:04:30Z` — 3 minutes.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
