@@ -902,6 +902,50 @@ worked). **Checked and clear:** portfolio `497970999394825` still holds exactly 
 WhatsApp Business Account, UMI, UMI clothing) — **no WABA was created** by either attempt, so
 nothing is added to the §9 teardown list. The number remains Connected at quality High.
 
+### 10.5 Two-step verification cleared (2026-08-23) — and the number then *vanished* from the picker
+
+**2SV is off.** Turning it off is not a console-only action: clicking *"Turn off two-step
+verification"* in WhatsApp Manager produces a dialog reading *"Follow the instructions in the
+email sent to ivanshumkov@gmail.com to turn off two-step verification…"* — Meta sends a
+confirmation email and does nothing until it is actioned. Ivan completed it. WhatsApp Manager
+now shows the Two-step verification panel in its **"Turn on"** empty state, with no `Enabled`
+badge. This is exactly the prerequisite Klaviyo's tips screen leads with, and it had never been
+met on any prior attempt.
+
+**Then the re-check produced a third state nobody predicted.** Re-walking the wizard to Meta's
+*"Add your WhatsApp phone number"* picker (fresh dialog — the Session ID changed, so it re-fetched):
+
+| Option | 08:53, 2SV **on** | 09:52, 2SV **off** |
+|---|---|---|
+| Enter a new phone number | selectable | selectable |
+| Use a display name with a virtual number instead | selectable | selectable |
+| **UMI · `+66 97 531 1301`** | **`Ineligible`** | **absent — not listed at all** |
+| UMI clothing · `+66 80 005 3593` | `Ineligible` | `Ineligible` |
+| Test Number · `+1 555-196-6407` | selectable | selectable |
+
+So the number moved from *listed-but-ineligible* to *not offered*. The list itself still works —
+UMI clothing is still rendered, still ineligible — so this is specific to `+66975311301`, and it
+correlates with the 2SV change.
+
+**The production number is unharmed. VERIFIED immediately afterwards:** WhatsApp Manager shows
+`+66 97 531 1301`, name UMI, status **Connected**, quality **High** — unchanged. Whatever the
+picker is doing, it has not disturbed the live number.
+
+**Interpretation: UNKNOWN, deliberately.** Two readings, and this document is not going to pick
+one on a single observation:
+
+1. **Meta is re-evaluating eligibility** after the 2SV change and the number is transiently
+   between buckets. Favoured on timing, and cheap to test — wait, re-open the flow fresh, look
+   again.
+2. **It has entered some other state** that removes it from sharing candidates entirely.
+
+**Next checks, in order:** type `531` into the dropdown's search box to rule out a truncated
+list; then close the dialog, wait ~10 minutes, and re-open the flow from scratch. If it is still
+absent, stop guessing from the picker and read the number's state from the Graph API directly.
+
+**No clock is running:** voice is on its normal `incoming` handler, nothing is diverted, and no
+code has been requested. This can wait as long as it needs to.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
