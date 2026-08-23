@@ -1228,6 +1228,56 @@ approved, number present but `Unverified` with a new phone-number ID, losing WAB
 `Offline`, Twilio sender deregistered, Resubmit failing without triggering any verification
 attempt (confirmed from Twilio's call and message logs).
 
+### 10.12 Clean retry also fails — "already verified ownership" is persistent Meta state
+
+**Second inference also wrong.** §10.11 reasoned that Meta's *"You have already verified
+ownership of this phone number"* was a leftover from the first half-finished run, held in the
+destination WABA's `Unverified` stub, and that deleting the stub would clear it.
+
+Done and verified:
+
+* New WABA `914496898392950` → **empty** (*"hasn't added any phone numbers yet"*).
+* Old WABA `1673373860633578` → still holds `+66 97 531 1301`, `Offline`, quality **High**.
+* Twilio number → untouched (`in-use`, voice+SMS, `status_callback`, bundle, address).
+
+Then Klaviyo was disconnected and the whole embedded signup re-run from the splash, with 2SV
+off, no Twilio sender, and no stub. **Identical error**, new session
+`01a02f5f-17d8-7818-a228-15c791b2ab41`: *"You have already verified ownership of this phone
+number."* `Next` stays disabled; entering the still-valid code `431040` does not enable it.
+
+**So the state is persistent in Meta and not reachable from any UI we have.** It survives:
+deleting the destination WABA's copy of the number, disconnecting and reconnecting Klaviyo,
+deregistering the losing BSP, and a completely fresh signup session.
+
+**Score on this session's hypotheses: two proposed, both wrong, both irreversible.**
+
+1. §10.8 — "Twilio's live sender holds the old WABA's claim." Deleting it changed the old WABA
+   to `Offline` and did not unblock Klaviyo. Cost: WhatsApp service on the number.
+2. §10.11 — "the stub in the destination WABA holds the stale verification." Deleting it changed
+   nothing. Cost: the half-migrated record (which was worthless, so low).
+
+Both were plausible and both were wrong. **No further destructive steps should be taken on
+inference.** The remaining unknown is inside Meta's verification state, which neither WhatsApp
+Manager nor Klaviyo exposes.
+
+**This is now a vendor case, and the evidence is complete.** The decisive framing for it: **Meta
+says ownership is already verified; Klaviyo says it cannot be verified.** Both cannot be true,
+and everything on UMI's side is demonstrably correct — business verified, display name UMI
+approved, 2SV off, losing BSP released, number present in a UMI-owned WABA with quality High.
+
+Report through **both** channels:
+* The **"Report error to Klaviyo - WA Integration!"** link in Meta's own error panel, which
+  attaches Meta's error text and reference automatically.
+* A Klaviyo support ticket quoting error refs `#N/A:01a02f52-9dd6-7b57-86ad-0eb41377691b` and
+  `#N/A:01a02f5f-17d8-7818-a228-15c791b2ab41`, and the fact that **Resubmit triggers no
+  verification attempt at all** (confirmed from Twilio's call/message logs) — evidence of a
+  broken job on Klaviyo's side rather than a problem with the assets.
+
+**Service consideration:** WhatsApp on `+66975311301` is down and will stay down until this
+resolves. If that becomes painful before the vendors respond, re-register the Twilio sender from
+the §10.9 restore point — 2SV is off, which is Twilio's stated precondition. Untested, and it
+would need redoing before any future migration attempt.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
