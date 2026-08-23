@@ -1318,6 +1318,16 @@ Supporting facts, all verified:
   destination WABA, 2SV off, losing BSP released, number present in a UMI-owned WABA at quality
   High.
 
+### 11.2a Vendor ticket
+
+**Klaviyo ticket #4139654** — opened 2026-08-24, category **WhatsApp**, priority **Urgent**,
+status **Open**: *"Customer support WhatsApp number migration stuck 'already verified'"*.
+
+Anything further goes **into that thread**, not a new ticket. The three facts that make it
+actionable, if they are not already in it: both Meta error refs (§11.2), that Resubmit triggers
+**no** verification call or SMS at all (verified in Twilio's logs), and that WhatsApp is **down
+in production** on the number.
+
 ### 11.3 Options while waiting
 
 1. **Do nothing.** Voice is fine; only WhatsApp is dark. Lowest risk.
