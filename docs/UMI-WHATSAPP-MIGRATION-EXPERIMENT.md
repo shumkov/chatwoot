@@ -1278,6 +1278,79 @@ resolves. If that becomes painful before the vendors respond, re-register the Tw
 the §10.9 restore point — 2SV is off, which is Twilio's stated precondition. Untested, and it
 would need redoing before any future migration attempt.
 
+---
+
+## 11. Handover — state as of 2026-08-23 16:10Z
+
+Written so this does not live in one person's head while the vendors are chased.
+
+### 11.1 What is true right now
+
+| Asset | State | Notes |
+|---|---|---|
+| **Twilio number `+66975311301`** | **Healthy.** `in-use`, voice+SMS capabilities, `bundle_sid BUe5aff5…`, `address_sid AD6f0a37…` | Never disturbed by anything in this migration |
+| **Voice service** | **Working.** `voice_url` = `https://chat.umi.store/umi/voice/66975311301/incoming`, restored 16:10:42Z | Agents ring normally; Groundwire path intact |
+| **WhatsApp on that number** | **DOWN.** No Twilio sender; not live in any WABA | This is the outage; it persists until a vendor unblocks the migration |
+| **Twilio WhatsApp sender** | **Deleted** (`XEa587e2c30f03901fec2c383dad8f5f07`) | Restore point in §10.9 |
+| **Old WABA `1673373860633578` ("UMI")** | Holds the number, **`Offline`**, quality **High** | Reputation and display name intact |
+| **New WABA `914496898392950`** | **Empty** — no phone numbers | Created by Klaviyo; tainted by the failed run, do not reuse |
+| **Klaviyo** | **Disconnected.** Settings → WhatsApp is back at the "Try WhatsApp for free" splash | No WABA, no number, no templates lost (there were none) |
+| **Two-step verification** | **Off** on the number | Turned off 2026-08-23; required an email confirmation |
+| **Chatwoot inbox 6** | Receives nothing | 13 messages in its lifetime; deliberately not deleted |
+| **Meta portfolio `497970999394825`** | Business verified; WABAs: UMI, UMI clothing, new empty one, plus the `Test WhatsApp Business Account` leftover (§9 item 1) | |
+
+### 11.2 The blocker, stated for a vendor
+
+Meta's embedded signup refuses to verify `+66975311301` with **"You have already verified
+ownership of this phone number"**, while Klaviyo reports **"Your phone number ownership could not
+be verified."** Both cannot be true.
+
+Error references: `#N/A:01a02f52-9dd6-7b57-86ad-0eb41377691b` (22:53) and
+`#N/A:01a02f5f-17d8-7818-a228-15c791b2ab41` (23:06).
+
+Supporting facts, all verified:
+
+* Klaviyo's **Resubmit triggers no verification attempt at all** — no call, no SMS, across every
+  attempt, confirmed against Twilio's call and message logs. It fails before reaching Meta.
+* The error survives: deleting the destination WABA's copy of the number, disconnecting and
+  reconnecting Klaviyo, deregistering the losing BSP, and a fresh signup session.
+* Everything on UMI's side is correct: business verified, display name **UMI approved** on the
+  destination WABA, 2SV off, losing BSP released, number present in a UMI-owned WABA at quality
+  High.
+
+### 11.3 Options while waiting
+
+1. **Do nothing.** Voice is fine; only WhatsApp is dark. Lowest risk.
+2. **Restore WhatsApp service via Twilio** — re-register the sender from the §10.9 restore point
+   (profile, description, email, website, callback `https://chat.umi.store/twilio/callback`).
+   2SV is off, which Twilio requires for re-registration. **Untested**, and it would have to be
+   undone again before any future migration attempt.
+3. **Wait for Klaviyo/Meta**, then retry the §10.6 path — which is now known-good up to the
+   verification step.
+
+### 11.4 What this exercise did establish
+
+Worth keeping even though the migration is unfinished:
+
+* **Meta's voice OTP reaches a Twilio Thai mobile number and can be captured automatically.**
+  `otp_capture` recorded and transcribed `431040` from a 35 s call, unattended (§10.7). The July
+  failure was UMI's own broken voice handler, not Meta (§2.3).
+* **SMS can never work for this number** — Twilio's short-code rules plus Thailand's
+  international-long-code block (§2.4).
+* **Removing WhatsApp from Twilio does not disturb the phone number**, its voice service, its
+  regulatory bundle or account ownership (§10.10) — the question Twilio documents nowhere.
+* **The migration path is "Enter a new phone number", not the picker** (§10.6).
+* **A migrated number keeps its messaging tier** — 2K/24h carried to the new WABA (§10.7).
+
+### 11.5 Process notes
+
+* **The divert should be opened last and closed immediately.** First run left it open 5.5 hours
+  for a code that was never requested; later runs were 3–30 minutes (§10.3, §10.8).
+* **Two hypotheses were acted on and both were wrong** (§10.12). The Twilio deregistration was
+  the expensive one and caused the current outage. Neither was verified before acting; both were
+  plausible. The lesson is not "do not hypothesise" but "do not spend irreversible actions on
+  one."
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
