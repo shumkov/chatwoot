@@ -866,14 +866,22 @@ Note the third selectable row is `+1 555-196-6407` — the free test number belo
 leftover **Test WhatsApp Business Account** from the companion spec's §1.2 spike (§9 item 1). It
 is eligible precisely because no BSP owns it.
 
-**UNKNOWN — why `Ineligible`, and this is the whole question now.** Two candidate causes, not yet
-distinguished:
+**Cause identified 2026-08-23 — two-step verification was never turned off.** WhatsApp Manager →
+Phone numbers → `+66 97 531 1301` (phone-number ID **`1101374313069948`**) → Two-step
+verification reads **`Enabled`**: *"Any attempt to register your phone number on WhatsApp must be
+accompanied by the six-digit PIN that you created."* Klaviyo's own tips screen leads with
+*"Turn off two-step verification for phone in Meta"*, and neither attempt cleared it.
 
-1. **Two-step verification is still on.** Klaviyo's own tips screen leads with *"Turn off
-   two-step verification for phone in Meta"*, and this run's 2SV state was never confirmed. An
-   unmet prerequisite is exactly what an `Ineligible` badge would look like. **Cheap to test** —
-   turn 2SV off in WhatsApp Manager and re-walk the wizard, which costs nothing and creates
-   nothing.
+**Graded honestly: INFERRED, not proven.** 2SV being enabled is a documented migration blocker
+and the obvious suspect, but Meta does not say *why* it stamped the number ineligible. The test
+is cheap — clear it, wait, re-walk the wizard, and see whether the badge goes. That creates
+nothing and costs nothing. Turning it off does not require knowing the current PIN, and is safe
+from Chatwoot's side because patch 26 blocks `/register`, the one path that would otherwise
+invent a new PIN.
+
+The two candidate causes, in order of likelihood:
+
+1. **Two-step verification, confirmed `Enabled`** — the leading candidate, and untested.
 2. **The number is bound to a WABA that Twilio controls.** "Shared with this app" is precise
    language: a number already attached to WABA "UMI", whose only partner is Twilio with full
    control (§1), may simply not be shareable into a second BSP's app while that binding stands.
@@ -890,8 +898,9 @@ in §3.4, available immediately and with none of the risk.
 **State after this run — nothing created, nothing moved.** No selection was made, no number
 entered, no code requested. Voice was diverted at `01:49:14Z` and restored at `01:57:53Z` (~9
 minutes, versus 5.5 hours on the previous attempt — the §10.3 sequencing lesson applied and
-worked). **Outstanding check:** whether a new WABA was created in portfolio `497970999394825`
-before the number step; if so it belongs on the §9 teardown list.
+worked). **Checked and clear:** portfolio `497970999394825` still holds exactly three WABAs (Test
+WhatsApp Business Account, UMI, UMI clothing) — **no WABA was created** by either attempt, so
+nothing is added to the §9 teardown list. The number remains Connected at quality High.
 
 ## Sources
 
