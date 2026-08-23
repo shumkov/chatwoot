@@ -1203,6 +1203,31 @@ Twilio WhatsApp sender using the §10.9 restore point. Twilio's documentation no
 re-registering a previously deleted sender requires two-step verification to be off for the
 number — it currently is (§10.5), so that path is open. Untested.
 
+### 10.11 There is no Meta-side verify action — checked exhaustively
+
+Klaviyo's banner instructs *"verify ownership in Meta"*. **VERIFIED: no such control exists.**
+Read from the accessibility tree of the number's detail panel in WhatsApp Manager (new WABA
+`914496898392950`, phone-number ID `1242276345642600`):
+
+* Tabs on the number: **Insights, Profile, Automations, Message links, Two-step verification,
+  Call settings, Call logs**. No verification tab.
+* Row controls: **Delete** and **Settings** only. No verify action.
+
+So ownership verification is not something an admin can perform in Meta's UI — it has to be
+driven by the BSP, which is exactly the call that is failing inside Klaviyo. Klaviyo's error text
+points at an action the user cannot take.
+
+**Remaining route that is not a support ticket:** Klaviyo's WhatsApp settings page has an
+**"Add number"** button under *WhatsApp Phone Number*, distinct from the Resubmit banner.
+Resubmit appears to retry a stored, broken job; *Add number* may open a fresh verification for
+`+66975311301` on a different code path. Untried, and free.
+
+**If that fails, escalate to Klaviyo support.** The evidence package is complete: WABA
+`914496898392950` created and Active with the 2K/24 h tier carried over, display name UMI
+approved, number present but `Unverified` with a new phone-number ID, losing WABA released to
+`Offline`, Twilio sender deregistered, Resubmit failing without triggering any verification
+attempt (confirmed from Twilio's call and message logs).
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
