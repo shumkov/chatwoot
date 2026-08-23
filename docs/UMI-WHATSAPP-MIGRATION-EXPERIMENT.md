@@ -946,6 +946,51 @@ absent, stop guessing from the picker and read the number's state from the Graph
 **No clock is running:** voice is on its normal `incoming` handler, nothing is diverted, and no
 code has been requested. This can wait as long as it needs to.
 
+### 10.6 Correction — the picker was never the migration path
+
+**Retracting a steer given in this session.** Twice I told Ivan not to select *"Enter a new phone
+number"* on Meta's dialog, on the reasoning that it would provision a *different* number. **That
+was wrong, and it is why two runs dead-ended.** Ivan recalled the actual flow — you type the
+number, Meta recognises it as already registered elsewhere, and offers to migrate — and the
+documentation backs him.
+
+**The two branches do different things:**
+
+* **The dropdown list** offers numbers eligible to be **shared** with the calling app. A number
+  already bound to a WABA another BSP controls is not shareable, which is precisely what
+  `Ineligible` meant, and why the wording was *"not eligible to be **shared** with this app."*
+  Sharing was never the operation we wanted.
+* **"Enter a new phone number"** means *a number not in that list* — including one registered
+  elsewhere. This is the migration path. Per Birdeye's BSP-migration documentation: *"The phone
+  number entered is already linked to a WhatsApp Business Account with another provider… If the
+  user continues, the number will be moved to the new WABA connected to your platform… Once
+  moved, the number will no longer work with the previous provider."*
+
+So `Ineligible`, and then the number vanishing from the list entirely, were both **red herrings**
+— states of a mechanism we were never supposed to be using.
+
+**Prerequisites for the real path, checked against what we know:**
+
+| Requirement | State |
+|---|---|
+| Two-step verification disabled on the number | ✅ done 2026-08-23 (§10.5) |
+| Meta Business Account verified | ✅ UMI STORE CO., LTD. shows Verified (§1) |
+| Display name approved | ✅ "UMI", visible to customers (§1) |
+| No pending display-name change | ✅ none observed |
+| Losing and destination WABA in the same portfolio | ✅ both under `497970999394825` |
+| Valid payment method on the destination WABA | ⚠️ unverified — Klaviyo's new WABA will need one |
+| Ability to receive the OTP | ⚠️ **this is where §2.3–§2.5 finally matter** |
+
+**The OTP question is un-mooted.** §10.4 recorded it as moot because the number was never
+offered. On the correct branch it is live again, and everything this document established about
+it applies: SMS cannot reach the number (§2.4), Meta's voice call demonstrably can (§2.3), and
+`otp_capture` is deployed and ready to record and transcribe it (§2.5).
+
+**This is the real migration, not a probe.** Continuing past Meta's warning moves the number and
+**it stops working on Twilio** — WhatsApp on `+66975311301` leaves Twilio inbox 6, which is the
+intended end state (Chatwoot re-attaches as the second app via patch 26), but it is irreversible
+in the same motion. It needs an explicit go, with the divert live first.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
