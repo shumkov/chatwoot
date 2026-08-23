@@ -69,7 +69,8 @@ this number. Question 2 remains undocumented and observation-only.
 | Is the capture tooling built | **YES, already deployed** — `otp_capture` (§2.5) |
 | Cost of the recommended path | **$0** (§5) |
 | Is Klaviyo's WhatsApp product available to UMI | **YES, and not yet activated** — Settings → WhatsApp offers *"Try WhatsApp for free"*, no paywall or sales gate (§4.1a) |
-| **Does Klaviyo's migration branch offer voice?** | **Settled by walking it: Klaviyo never offers a method at all.** Its wizard ends at a guidance screen and hands off to Meta's embedded sign-up, whose step 4 does the verifying. Entering the number is inert — no code is sent (§10.2) |
+| Does Klaviyo's migration branch offer voice? | **MOOT.** Klaviyo never offers a method; and Meta's dialog never offers the number (§10.2, §10.4) |
+| **Can `+66975311301` enter Klaviyo's flow at all?** | **NO — Meta marks it `Ineligible`, "not eligible to be shared with this app", and offers no migrate option.** Whether that is caused by two-step verification still being on, or by Twilio's binding, is the one open question (§10.4) |
 
 ---
 
@@ -830,6 +831,67 @@ endpoint with `sms_method` POST, `emergency_status` Inactive, `bundle_sid`
 actual verification request. Do not open it until the flow is known to reach Meta's verification
 step — this run diverted first and then lost hours to tooling, with the line degraded throughout
 and no code ever requested.
+
+### 10.4 Phase 2, manual run (2026-08-23) — **Meta marks the number `Ineligible`. The OTP question is moot.**
+
+Ivan drove Meta's embedded sign-up manually while this session called the steps. The flow got
+one screen further than any previous attempt, and stopped at a gate nobody had anticipated.
+
+**VERIFIED — the number cannot be selected at all.** Meta's *"Add your WhatsApp phone number"*
+step (Facebook Login for Business dialog, Klaviyo app id `1424473751557007`) presents a picker
+whose full contents are:
+
+| Option | State |
+|---|---|
+| Enter a new phone number | selectable (defaults to **GB +44** — the wrong branch; provisions a *different* number) |
+| Use a display name with a virtual number instead | selectable |
+| **UMI · `+66 97 531 1301` · UMI STORE CO., LTD.** | **`Ineligible`** |
+| UMI clothing · `+66 80 005 3593` · UMI STORE CO., LTD. | **`Ineligible`** |
+| Test Number · `+1 555-196-6407` · UMI STORE CO., LTD. | selectable |
+
+Hovering the ineligible row gives: **“This number isn't eligible to be shared with this app.”**
+
+**VERIFIED — there is no "migrate an existing number" option.** The dropdown contains exactly the
+five rows above. Klaviyo's wizard asks the migration question and shows migration tips, but the
+Meta dialog it hands off to offers only *share an eligible number*, *provision a new one*, or
+*take a virtual one*.
+
+**What this does to the whole investigation.** Everything from §2.3 onward chased one question:
+would Meta's verification screen offer a voice call, given SMS structurally cannot reach this
+number? **That question is moot for this path.** The gate is one step earlier: the number is
+never offered for selection, so no verification screen is ever reached. All the OTP evidence
+remains true and remains useless here.
+
+Note the third selectable row is `+1 555-196-6407` — the free test number belonging to the
+leftover **Test WhatsApp Business Account** from the companion spec's §1.2 spike (§9 item 1). It
+is eligible precisely because no BSP owns it.
+
+**UNKNOWN — why `Ineligible`, and this is the whole question now.** Two candidate causes, not yet
+distinguished:
+
+1. **Two-step verification is still on.** Klaviyo's own tips screen leads with *"Turn off
+   two-step verification for phone in Meta"*, and this run's 2SV state was never confirmed. An
+   unmet prerequisite is exactly what an `Ineligible` badge would look like. **Cheap to test** —
+   turn 2SV off in WhatsApp Manager and re-walk the wizard, which costs nothing and creates
+   nothing.
+2. **The number is bound to a WABA that Twilio controls.** "Shared with this app" is precise
+   language: a number already attached to WABA "UMI", whose only partner is Twilio with full
+   control (§1), may simply not be shareable into a second BSP's app while that binding stands.
+
+**If cause 2 holds, the shared-number plan is finished on this route.** Clearing it would mean
+deregistering from Twilio *first* — taking the number dark with no guarantee Meta then makes it
+eligible, and no tested way back. That is a materially worse bet than the fallback, and this
+document recommends against it.
+
+**The fallback is now visible inside the flow itself:** *"Use a display name with a virtual
+number instead"* — Klaviyo provisioning its own marketing number, exactly the two-identity option
+in §3.4, available immediately and with none of the risk.
+
+**State after this run — nothing created, nothing moved.** No selection was made, no number
+entered, no code requested. Voice was diverted at `01:49:14Z` and restored at `01:57:53Z` (~9
+minutes, versus 5.5 hours on the previous attempt — the §10.3 sequencing lesson applied and
+worked). **Outstanding check:** whether a new WABA was created in portfolio `497970999394825`
+before the number step; if so it belongs on the §9 teardown list.
 
 ## Sources
 
