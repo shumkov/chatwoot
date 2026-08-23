@@ -1094,6 +1094,59 @@ here — that was always the cost of the migration, and inbox 6 has had 13 messa
 
 **Voice window this round:** diverted `04:01:31Z`, restored `04:04:30Z` — 3 minutes.
 
+### 10.9 Waiting did not help — and the sender restore point before deregistering
+
+**Re-checked 2026-08-23 08:38Z, ~4.5 h after the migration. Option 1 (§10.8) is exhausted:**
+
+* Twilio sender `XEa587e2c30f03901fec2c383dad8f5f07` — **still `ONLINE`, quality `HIGH`**. Twilio
+  has not been told anything, and WhatsApp on the number is very likely still serving through it.
+* `+66975311301` in the new WABA — **still `Unverified`**, quality blank.
+* **But the display name went through:** WhatsApp Manager shows *"Congratulations! Your display
+  name UMI was approved"* on the new WABA.
+
+That last point matters: Meta **is** processing this WABA, so the delay is not a generic backlog.
+It is the **number's ownership transfer specifically** that is stuck. Meta will not finish it
+unaided.
+
+**Working conclusion (INFERRED, and now the last lever):** the old WABA still holds the number
+because Twilio still has it registered as a live sender, and Meta will not hand ownership to
+Klaviyo while that is true. Deregistering at Twilio is the remaining action.
+
+**Be clear what deregistering costs.** This is not tidying up something already dead. The sender
+is `ONLINE`; deleting it is **what actually takes WhatsApp down** on `+66975311301`, and
+returning to Twilio afterwards means re-registering from scratch. If Meta then still refuses,
+the number has no working WhatsApp until it is resolved.
+
+**Restore point — WhatsApp sender `XEa587e2c30f03901fec2c383dad8f5f07`, captured before deletion:**
+
+| Field | Value |
+|---|---|
+| `sender_id` | `whatsapp:+66975311301` |
+| `status` | `ONLINE` |
+| `properties.quality_rating` | `HIGH` |
+| `properties.messaging_limit` | `Unavailable` |
+| `webhook.callback_url` | **`https://chat.umi.store/twilio/callback`** |
+| `webhook.status_callback_method` | `POST` |
+| `profile.name` | `UMI` |
+| `profile.emails` | `info@umi.store` (label "Email") |
+| `profile.websites` | `https://umi.store/` (label "Website") |
+| `profile.description` | *"UMI is a clothing brand born in the tropics, inspired by the sea. Dedicated to modern minimalism and sensual elegance, uniting lightness and comfort with refined cuts and natural fabrics - a gentle touch on the body."* |
+| `profile.about` / `address` / `vertical` / `logo_url` | empty |
+
+To rebuild the sender on Twilio, that profile block and the callback URL are what must be
+re-entered. Note `messaging_limit` already reads `Unavailable` — a hint the migration has
+partially detached it.
+
+**Order of operations for the deregistration** (each step verified before the next):
+
+1. Divert voice to `otp_capture` — deregistering may trigger a fresh verification.
+2. `DELETE /v2/Channels/Senders/XEa587e2c30f03901fec2c383dad8f5f07`, with a pre-flight assertion
+   that `sender_id == whatsapp:+66975311301` so the wrong sender cannot be deleted.
+3. Re-read the sender, and re-read the **IncomingPhoneNumber** to confirm the number itself,
+   its `voice_url`, `bundle_sid` and `address_sid` are untouched.
+4. Press **Resubmit** in Klaviyo.
+5. Restore the voice URL.
+
 ## Sources
 
 * [Klaviyo — How to migrate from another WhatsApp Business Solution Provider to Klaviyo](https://help.klaviyo.com/hc/en-us/articles/40116637850651)
