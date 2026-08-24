@@ -1362,6 +1362,44 @@ immediately — so the number receives verification calls without difficulty.
 
 **Voice:** diverted 02:09:34Z for the attempt, restored 09:34:16Z when it was called off.
 
+### 11.2c Third attempt, left in place for Klaviyo (2026-08-24)
+
+Klaviyo support asked for two things: resend screenshots, and **re-run the setup and leave the
+result in place** so their backend can capture error codes. Both done — and the second matters,
+because every previous attempt was cleaned up afterwards, which is plausibly why they had nothing
+to inspect.
+
+**Third failure, session `01a0350c-f15f-74d1-8919-dd4850387486`** (~18:36Z). Same error: *"You
+have already verified ownership of this phone number."* **Left in place, not disconnected.**
+
+Two new observations worth giving support:
+
+1. **The WABA dropdown defaulted to the existing `914496898392950`**, not *Create a WhatsApp
+   Business account* — so this run **reused** a WABA rather than minting one. The error is
+   therefore **independent of the WABA choice**.
+2. **Meta still describes the number as "already registered to a WhatsApp Business account with
+   another partner"** — although Twilio was deregistered on 2026-08-23 and the old WABA shows
+   `Offline`. **Meta's view of the number is stale.** This is the sharpest evidence so far that
+   the stuck state is Meta-side.
+
+**Three attempts, three starting states, one error:**
+
+| Run | Starting state | WABA | Outcome |
+|---|---|---|---|
+| 1 (23 Aug 03:2x) | 2SV **on**, Twilio sender live | **new** `914496898392950` | Verification **succeeded** (code `431040` captured), number moved, then **ownership hand-off failed** |
+| 2 (23 Aug 23:06) | 2SV off, Twilio deregistered, stub deleted, Klaviyo reconnected | new | **"already verified"** — blocked *before* verification |
+| 3 (24 Aug 18:36) | as run 2, plus nothing cleaned | **reused** `914496898392950` | **"already verified"** — blocked *before* verification |
+
+The pattern: **the wall appeared only after run 1**, and has persisted through every variation
+since. It tracks the **number**, not the WABA, not the BSP registration, and not 2SV. Run 1 is
+where a state got written that Meta will not clear and neither vendor's UI exposes.
+
+**Twilio, checked after every attempt:** no verification call and no SMS for runs 2 or 3. The
+only inbound call in the entire window remains run 1's, 2026-08-23 03:25:10Z. The dialogs claim a
+code was sent; Twilio's logs say nothing arrived.
+
+**Voice:** diverted 17:50:53Z, restored 18:46:41Z.
+
 ### 11.3 Options while waiting
 
 1. **Do nothing.** Voice is fine; only WhatsApp is dark. Lowest risk.
