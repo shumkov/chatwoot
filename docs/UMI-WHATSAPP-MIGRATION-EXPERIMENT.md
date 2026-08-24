@@ -1328,6 +1328,40 @@ actionable, if they are not already in it: both Meta error refs (§11.2), that R
 **no** verification call or SMS at all (verified in Twilio's logs), and that WhatsApp is **down
 in production** on the number.
 
+### 11.2b Klaviyo support reply, and why step 1 was NOT executed (2026-08-24)
+
+Keith at Klaviyo Support proposed five steps. **Four of them were already done** — same portfolio
+`497970999394825`, a new WABA created not reused, 2SV off including Meta's confirmation email,
+Twilio fully deregistered, and the whole flow re-run from scratch as a fresh session.
+
+His **step 1** was the only untried one: remove the number from the old WABA
+`1673373860633578`, where it still sits `Offline`. Meta's own delete dialog was opened to check
+the cost, and it is explicit:
+
+> **Delete phone number** — "If you delete, you will lose access to its: Display name and
+> profile · Official business account status (if applicable) · **Messaging limit tier and quality
+> rating** · Chat history and insights data."
+>
+> "You can migrate this number to another WhatsApp Business account to **save all of your account
+> information**, except for chat history and insights data."
+
+**Cancelled, not executed.** Meta states that migration is the mechanism for preserving exactly
+what deletion destroys, and this is a production number at quality **High** with an established
+2K/24 h tier. Deleting it would forfeit both on a hypothesis the same dialog argues against.
+
+The reasoning matters beyond this ticket: **a number still attached to its previous WABA is the
+normal precondition for a migration, not a blocker.** Meta's own warning during the flow said the
+number *"will be moved"* from the account it is registered to. So step 1 is not obviously the fix
+— and the earlier evidence points the same way, since deleting the *destination* WABA's copy
+changed nothing (§10.12).
+
+Replied to Keith with the dialog as evidence, asking him to confirm whether deletion is genuinely
+advised given Meta's wording, and re-stating the isolating fact: **Resubmit triggers no
+verification attempt at all**, while the embedded signup's own request produced a call
+immediately — so the number receives verification calls without difficulty.
+
+**Voice:** diverted 02:09:34Z for the attempt, restored 09:34:16Z when it was called off.
+
 ### 11.3 Options while waiting
 
 1. **Do nothing.** Voice is fine; only WhatsApp is dark. Lowest risk.
