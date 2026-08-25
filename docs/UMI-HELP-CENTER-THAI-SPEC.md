@@ -119,9 +119,9 @@ That matters for §6: an equality gate applied to `summary_html` would fail on m
 and read as "the data is untrustworthy" when the truth is "these two fields were produced by
 different methods". The gate covers `body_html` only.
 
-**Deliberately out of scope here.** Fixing it rewrites 29 English summaries, changes their
-digests, and marks every Thai summary outdated — the exact churn this spec exists to prevent.
-It wants its own patch, sequenced *after* this one so the repair flows through the new pipe.
+**Deliberately out of scope here.** Fixing it rewrites the affected English summaries, changes
+their digests, and marks the corresponding Thai outdated — the exact churn this spec exists to
+prevent. It wants its own patch, sequenced *after* this one so the repair flows through the pipe.
 
 ## 3. Chosen approach
 
@@ -360,7 +360,7 @@ equivalent. Zero refusals.
 
 The Assistance drawer fetches `/hc/<portal>/<locale>/articles.json`
 (`app/javascript/widget/api/endPoints.js:118`), and the import is a prerequisite for ever running
-it in Thai. See §13 — this is not a prediction, it is measured against production.
+it in Thai. See §12 — this is not a prediction, it is measured against production.
 
 ## 7. The staleness signal
 
@@ -453,8 +453,8 @@ Shopify (§5.1).
 | D3 | The 10 changed summaries (§6.2) | Recommend letting the fallback recompute. The alternative preserves a translated truncation bug. Reviewable in the import report either way. |
 | D4 | Should `th` articles be `published` in Chatwoot? | Yes — publish status gates whether the translation exists in Shopify (§5.1). A Thai draft means "no Thai on the storefront". |
 | D5 | `meta_title` — 26 Thai SEO titles differ from their article titles | **Resolved by the reconciler rule (§4.1).** They are present and not outdated, so nothing overwrites them, and no export is needed because nothing is lost. Two earlier positions on this were wrong and are recorded because the reasoning matters: mirroring English was argued on the premise that the 26 were machine output being deduplicated (they are pre-existing human translation), and an export-then-overwrite compromise was then proposed (superseded — there is nothing to export). The residual limit: a Thai `meta_title` can only be refreshed by the outdated flag, never by editing the Thai title in Chatwoot, because Chatwoot has no SEO-title field. Giving articles one, in `meta`, for **both** languages would fix that properly. Not built. |
-| D6 | Mai's three "quick question guide" strings match no surface that exists (§13.3) | **Product decision, not a translation one.** The drawer has no quick-reply prompts. Building them to hold three translated strings would be inventing a feature off a translation ticket. Recommend asking Mai where she saw them before deciding; her Thai is kept in §13.3 either way. |
-| D7 | 25 widget chrome strings were translated here rather than by the translator (§13.4) | They are Chatwoot's own UI (day names, emoji picker, "we will be back online…"), not brand copy, and the alternative was leaving a Thai reader with English. Listed in §13.4 for Mai to correct. |
+| D6 | Mai's three "quick question guide" strings match no surface that exists (§12.3) | **Product decision, not a translation one.** The drawer has no quick-reply prompts. Building them to hold three translated strings would be inventing a feature off a translation ticket. Recommend asking Mai where she saw them before deciding; her Thai is kept in §12.3 either way. |
+| D7 | 25 widget chrome strings were translated here rather than by the translator (§12.4) | They are Chatwoot's own UI (day names, emoji picker, "we will be back online…"), not brand copy, and the alternative was leaving a Thai reader with English. Listed in §12.4 for Mai to correct. |
 
 ## 11. Verification — what was actually run
 
@@ -474,20 +474,64 @@ that replays those captured responses and records every mutation:
   and no `handle` → editing the English writes **no** translation and flags the pair as behind →
   editing the Thai clears it → a no-op save does not, `translation_reviewed` does → unpublishing
   and deleting each issue `translationsRemove` for `th` only and leave the English article alone.
-- **Specs:** 342 examples across `spec/{services,models,jobs,controllers}/umi/`, 0 failures,
-  including the pre-existing English sync spec (unchanged behaviour after the shared-helper
-  extraction). Rubocop clean on every touched file.
+- **Specs:** 353 backend examples across `spec/{services,models,jobs,controllers}/umi/` and 240
+  widget tests, 0 failures, including the pre-existing English sync spec (unchanged behaviour after
+  the shared-helper extraction). Rubocop and prettier clean on every touched file.
 
-**Not run:** a real `translationsRegister` against the production store. That is a production
-write and Ivan's call. Note it would be a no-op for `title`/`body_html`/`meta_description` and is
-invisible to customers regardless, since `th` is unpublished — but it is still a write.
+For the drawer:
 
-## 13. The Assistance drawer
+- **The failure was measured on production**, not predicted: `?locale=th` returns Thai chrome and
+  **no FAQ block at all** (§12.1).
+- **The fix was measured locally**: against a seeded portal that allows `th` and holds the imported
+  Thai articles, the exact call the drawer makes —
+  `/hc/umi-help/th/articles.json?sort=views&status=1&per_page=6` — returns Thai titles
+  (`เครดิตร้านค้าใช้งานอย่างไร?`, `อ่านเรื่องราวของ UMI เพิ่มเติม`, …) where the `en` call returns the English
+  ones. That is the data path for acceptance criterion 2, end to end.
+- A **locale-coverage spec** now fails the build if a `UMI.*` string ships without Thai, or if any
+  reachable widget string reverts to English.
+
+- **The drawer was read in a browser, in Thai, at both of its real widths** — 640px (the desktop
+  drawer's `width: 40rem`) and 390px (mobile, full-width). It renders end to end:
+
+  ```
+  ช่วยเหลือ
+  ทีมงานของเราจะพร้อมให้บริการในอีก 4 ชั่วโมง 36 นาที (9 โมงเช้า GMT+7) …
+  คำถามที่พบบ่อย
+  เครดิตร้านค้าใช้งานอย่างไร?
+  อ่านเรื่องราวของ UMI เพิ่มเติมได้ที่ไหน?
+  …
+  หัวข้อทั้งหมด
+  แชทกับเราได้ที่
+  WhatsApp  LINE  Messenger  Instagram  โทร
+  ขับเคลื่อนโดย Chatwoot
+  ```
+
+  **No clipping and no overflow at either width**, checked programmatically as well as by eye:
+  `document.scrollWidth == clientWidth`, and no element whose `scrollWidth`/`scrollHeight` exceeds
+  its client box. Tone marks are not cut; the long titles wrap to two lines at 390px with the
+  chevron staying aligned. Thai line-breaking inside a compound (`สั่ง` / `ซื้อไปแล้ว`) is the
+  browser's ICU behaviour, identical on any site, not something this layout causes.
+
+  The same page at `?locale=en` is unchanged, so the `UMI.CHANNELS_HEADING` / `UMI.CALL` extraction
+  did not regress English.
+
+**Not run:** a real `translationsRegister` against the production store.
+
+**Note for whoever runs the preview next:** the `chatwoot-widget-preview` skill is stale.
+`~/Projects/shumkov/chatwoot-umi-widget-drawer` no longer exists; the stack in
+`~/Projects/shumkov/chatwoot` serves the same purpose. Two things bite: the `vite` service's
+entrypoint does not `bundle install` (only `rails`'s does, and gems land in the image layer rather
+than a volume), and Vite 6 rejects vite_ruby's proxy with a 403 unless it is started with
+`__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=vite`. Rails also has to reach it by the `vite` hostname,
+which a `docker compose run` container only gets with an explicit
+`docker network connect --alias vite`.
+
+## 12. The Assistance drawer
 
 Content existing is not the bar. Thai has to reach the reader, and the drawer is where it fails
 quietly.
 
-### 13.1 Measured against production, not predicted
+### 12.1 Measured against production, not predicted
 
 The widget resolves its own locale from `chatwootSettings.locale` on the host page
 (`entrypoints/sdk.js:51` → `$chatwoot.locale` → the `config-set` message → `App.vue#setLocale`),
@@ -516,7 +560,7 @@ work ships. It is also a hard sequencing constraint: the storefront must not sta
 `locale: th` until the portal allows `th` and holds Thai articles, or the drawer gets worse rather
 than better.
 
-### 13.2 What was wrong in the widget itself
+### 12.2 What was wrong in the widget itself
 
 - **`UmiInboxLinks.vue` hardcoded `'Chat with us on'`** as a JavaScript literal, and labelled the
   phone link `'Call'` the same way. Nothing outside that file mentioned either string, so no
@@ -535,12 +579,12 @@ than better.
 
 **These 25 strings are Chatwoot's own chrome, not brand copy, and they were written here rather
 than by the translator.** Day names and "Frequently used" carry no brand voice; the register was
-matched to the existing `UMI.*` Thai. They should still go past Mai — §13.4 lists them.
+matched to the existing `UMI.*` Thai. They should still go past Mai — §12.4 lists them.
 
 There is **no search box** in this drawer, so there is no search placeholder to translate. Patch #2
 replaced the upstream home with welcome → articles → links → composer.
 
-### 13.3 What "the quick question guide" turned out to be
+### 12.3 What "the quick question guide" turned out to be
 
 Mai's three strings — *"what are your shipping details"*, *"what is your return policy?"*,
 *"what is your contact info?"* — **are not defined anywhere.** Checked, in order:
@@ -562,7 +606,7 @@ a surface outside these two systems. Her Thai is good and worth keeping either w
 quick-reply feature to hold it would be inventing a feature off a translation ticket. That is a
 product decision, not a translation one — see D6.
 
-### 13.4 Thai written here, for review
+### 12.4 Thai written here, for review
 
 | Key | Thai |
 |---|---|
@@ -589,14 +633,19 @@ product decision, not a translation one — see D6.
 `BACK_IN_HOURS` carries the singular and plural forms as the same string on purpose: Thai has no
 plural inflection, and the branch is upstream's, not ours.
 
-### 13.5 The storefront side
+### 12.5 Verified in the drawer
+
+Both acceptance criteria were read in a browser rather than inferred — see §11 for the Thai render
+at 640px and 390px, the overflow/clipping check, and the English no-regression pass.
+
+### 12.6 The storefront side
 
 `snippets/chatwoot-embed.liquid` passes no locale, so the widget falls back to the inbox's
 language. It now passes `locale: {{ request.locale.iso_code | json }}`, which is one line and is
-the whole of surface 2's storefront half — with the §13.1 sequencing constraint attached to it in
+the whole of surface 2's storefront half — with the §12.1 sequencing constraint attached to it in
 a comment, because shipping it early makes the drawer worse.
 
-## 12. Out of scope
+## 13. Out of scope
 
 The `summary_html` truncation bug and the apostrophe drift (§2.4, §2.5) — both are English-side
 sync artifacts that manufacture false staleness, and both want their own patch, sequenced *after*
