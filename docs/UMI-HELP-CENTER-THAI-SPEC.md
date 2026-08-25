@@ -219,14 +219,22 @@ an author can edit it directly:
 | `body_html` | `Article#content` | |
 | `summary_html` | `Article#description` | only when the article has one |
 | `meta_description` | `Article#description` | only when the article has one |
-| `meta_title` | — | **never backed** |
+| `meta_title` | — | backed only where the locale's own `meta_title` still equals its `title` |
 
-`meta_title` has no field of its own; it is derived from the title. Several Thai `meta_title`s were
-phrased independently of their titles by a human working in Translate & Adapt, which presents the
-two as separate fields and invites exactly that. A derived value must not overwrite deliberate
-human phrasing, so `meta_title` is absent-or-outdated only, permanently. The same reasoning covers
-`summary_html` on the articles whose English source has no description: there, the summary is a
-truncation of the body rather than something anyone edits.
+`summary_html` on an article whose source has no description is a truncation of the body rather
+than something anyone edits, so it is not backed there.
+
+**`meta_title` is the interesting one.** Chatwoot has no SEO-title field — it is derived from the
+article title — so nothing in Chatwoot can answer whether it is ours to keep in step. The *locale*
+can: if its `meta_title` still equals its `title`, nobody ever pulled the two apart, and a title fix
+should carry. Where they differ, somebody phrased them separately in Translate & Adapt (which
+presents them as two fields and invites exactly that), and the difference **is** the intent.
+
+Against the live data that splits precisely along the line that matters: the **26 that differ** are
+protected permanently and can only be refreshed by the outdated flag; the **22 that match** stay in
+step with a Thai title edit instead of silently rotting away from the visible heading. The
+heuristic is self-evident rather than clever — two identical strings express no intent to keep them
+apart.
 
 ### 4.2 What this writes to Shopify today: nothing
 
@@ -240,6 +248,9 @@ the "leave it alone" bucket:
 | `summary_html` | 48 | 0 |
 | `meta_title` | 48 | 0 |
 | `meta_description` | 36 | 0 |
+
+`translation_status` reports the same thing per field — `0 would change` on all five, asserted in
+the end-to-end run against the real corpus.
 
 This is a stronger guarantee than the one an earlier draft of this spec offered. It is not "we
 compared the values carefully and believe they match" — it is "the pipe does not write over current
@@ -257,7 +268,8 @@ not modified.
 
 | File | Role |
 |---|---|
-| `umi/app/services/shopify/article_translation_sync_service.rb` | New. Resolves the Shopify article for the root English article, reads digests, registers or removes the locale's translations. |
+| `umi/app/services/shopify/article_translation_sync_service.rb` | New. Resolves the Shopify article for the root English article, reads digests and the locale's current state, registers or removes. |
+| `umi/app/services/shopify/translation_reconciler.rb` | New. The policy half, with no Shopify calls: what the locale should hold, and which of those fields may be written (§4.1). Kept apart so the dry-run report asks the same question the pipe answers, without standing up the pipe. |
 | `umi/app/services/shopify/help_center_graphql.rb` | New. The GraphQL plumbing the sync, importer and status report share: client, help-blog article lookup by `custom.chatwoot_id`, and a query helper that treats a GraphQL error as a failure rather than as empty data. |
 | `umi/app/services/shopify/help_center_locales.rb` | New. The single place that decides which locales sync and how. |
 | `umi/app/services/shopify/help_center_content.rb` | New. Body and summary mapping, shared with the English sync so the two languages cannot drift in shape. |
@@ -284,11 +296,11 @@ translations at all.
 
 **Removal is off by default (`UMI_HC_TRANSLATION_REMOVE`), and that is not timidity.** An earlier
 draft had draft/archived/deleted issue `translationsRemove`, reasoning that Chatwoot saying "not
-published" while the storefront serves Thai is a silent divergence. It is. But `translationsRemove`
-erases *every field for the locale in one call*, including values a human wrote in Translate &
-Adapt that this sync never touched — and on a store whose locale was populated by hand before
-Chatwoot owned it, which is exactly the state of a first rollout, one mis-saved draft takes the
-whole article's translation with it.
+published" while the storefront serves Thai is a silent divergence. It is. But that draft passed
+**every** `TRANSLATABLE_KEYS` entry to the mutation, so it erased the whole locale for that article
+— including values a human wrote in Translate & Adapt that this sync never touched. On a locale
+populated by hand before Chatwoot owned it, which is exactly the state of a first rollout, one
+mis-saved draft takes the whole article's translation with it.
 
 That combination was live: the staging sequence in §8 creates the locale as **drafts**, so
 "deploy the fork, then import as drafts" would have fired 48 removes and wiped all 228 Thai fields
@@ -300,10 +312,17 @@ matches, don't touch" should not have a branch that erases wholesale. So the div
 reported instead: `translation_status` carries an `unpublished` state meaning "Chatwoot is not
 publishing this, Shopify still serves it", and clearing it is a person's decision.
 
-**The honest limit:** with removal off, unpublishing a Thai article in Chatwoot does not take it off
-the Thai storefront. The report is a mitigation, not a fix. Making unpublish mean unpublish safely
-needs per-field removal of only the fields Chatwoot wrote, which needs provenance this does not
-track. Not built.
+**The limit, stated accurately.** With removal off, unpublishing a Thai article in Chatwoot does not
+take it off the Thai storefront, and the report is a mitigation rather than a fix.
+
+Note what the limit is *not*: `translationsRemove` takes `translationKeys: [String!]!` — required —
+so removal is inherently per-field and there is no whole-locale wipe to be afraid of. The blast
+radius above was chosen by the caller, not imposed by the API. And the provenance needed to choose
+better already exists: **the `backed` predicate** (§4.1) answers "is this field Chatwoot's" for
+exactly this purpose. So "unpublish means unpublish" reduces to passing an article's backed keys
+instead of all of them — Mai's 26 `meta_title`s and the derived summaries survive because they are
+not in that list, the same predicate protecting them in both directions. Not wired up yet; that is
+a small, well-understood gap rather than missing tracking.
 
 ### 5.2 Ordering
 
@@ -452,7 +471,7 @@ Shopify (§5.1).
 | D2 | Where should the drift report shout? | See §7. Needs a call. |
 | D3 | The 10 changed summaries (§6.2) | Recommend letting the fallback recompute. The alternative preserves a translated truncation bug. Reviewable in the import report either way. |
 | D4 | Should `th` articles be `published` in Chatwoot? | Yes — publish status gates whether the translation exists in Shopify (§5.1). A Thai draft means "no Thai on the storefront". |
-| D5 | `meta_title` — 26 Thai SEO titles differ from their article titles | **Resolved by the reconciler rule (§4.1).** They are present and not outdated, so nothing overwrites them, and no export is needed because nothing is lost. Two earlier positions on this were wrong and are recorded because the reasoning matters: mirroring English was argued on the premise that the 26 were machine output being deduplicated (they are pre-existing human translation), and an export-then-overwrite compromise was then proposed (superseded — there is nothing to export). The residual limit: a Thai `meta_title` can only be refreshed by the outdated flag, never by editing the Thai title in Chatwoot, because Chatwoot has no SEO-title field. Giving articles one, in `meta`, for **both** languages would fix that properly. Not built. |
+| D5 | `meta_title` — 26 Thai SEO titles differ from their article titles | **Closed by the reconciler rule (§4.1).** They are present and not outdated, so nothing overwrites them, and no export is needed because nothing is lost. Two earlier positions were wrong and are recorded because the reasoning matters: mirroring English was argued on the premise that the 26 were machine output being deduplicated (they are pre-existing human translation), and an export-then-overwrite compromise followed (superseded — there is nothing to export). The residual limit is now confined to those 26 rather than all 48: a `meta_title` that matches its title stays in step with a Thai title edit; one that differs can only be refreshed by the outdated flag. Giving Chatwoot articles a real SEO-title field, in `meta`, for **both** languages would remove even that. Not built. |
 | D6 | Mai's three "quick question guide" strings match no surface that exists (§12.3) | **Product decision, not a translation one.** The drawer has no quick-reply prompts. Building them to hold three translated strings would be inventing a feature off a translation ticket. Recommend asking Mai where she saw them before deciding; her Thai is kept in §12.3 either way. |
 | D7 | 25 widget chrome strings were translated here rather than by the translator (§12.4) | They are Chatwoot's own UI (day names, emoji picker, "we will be back online…"), not brand copy, and the alternative was leaving a Thai reader with English. Listed in §12.4 for Mai to correct. |
 

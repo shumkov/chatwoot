@@ -26,25 +26,6 @@ class Umi::Shopify::ArticleTranslationSyncService
   # URLs away from the English ones for no gain.
   TRANSLATABLE_KEYS = %w[title body_html summary_html meta_title meta_description].freeze
 
-  # Which Chatwoot field each key is *backed by* — the field an author edits to
-  # change it. A backed key is one Chatwoot owns, so a Chatwoot edit is allowed to
-  # replace what Shopify holds.
-  #
-  # `meta_title` is deliberately absent. Chatwoot has no SEO-title field; it is
-  # derived from the article title. Several Thai `meta_title`s were phrased
-  # independently of their titles by a human working in Translate & Adapt, which
-  # presents the two as separate fields, and a derived value must not overwrite
-  # that. `summary_html` is backed only when the article has a description of its
-  # own — otherwise it too is derived, from a truncation of the body.
-  BACKING_FIELD = {
-    'title' => :title,
-    'body_html' => :content,
-    'summary_html' => :description,
-    'meta_description' => :description
-  }.freeze
-
-  META_DESCRIPTION_LIMIT = 320
-
   def initialize(attrs)
     @attrs = attrs.respond_to?(:with_indifferent_access) ? attrs.with_indifferent_access : attrs
   end
@@ -64,64 +45,33 @@ class Umi::Shopify::ArticleTranslationSyncService
 
   # ---- pure helpers (unit-testable without Shopify) ----
 
-  # The translated values, keyed exactly as Shopify's translatable keys. Body and
-  # summary go through the same helpers as the English article so the two
-  # languages render identically on the same page.
+  # The values this locale should hold, and the decision about which of them may
+  # actually be written, both live in the reconciler — see it for the rule.
   def translation_values
-    {
-      'title' => Umi::Shopify::HelpCenterContent.single_line(@attrs[:title]),
-      'body_html' => Umi::Shopify::HelpCenterContent.body_html(@attrs[:content]).presence,
-      'summary_html' => Umi::Shopify::HelpCenterContent.summary_html(@attrs[:description], @attrs[:content]).presence,
-      'meta_title' => Umi::Shopify::HelpCenterContent.single_line(@attrs[:title]),
-      'meta_description' => Umi::Shopify::HelpCenterContent.single_line(@attrs[:description], limit: META_DESCRIPTION_LIMIT)
-    }.compact
+    reconciler.values
   end
 
-  # The sync is a reconciler, not a writer. Per field:
-  #
-  #   absent in Shopify            -> write it
-  #   present but marked outdated  -> replace it
-  #   present, current, backed by a Chatwoot field, and our value differs
-  #                                -> write it (Chatwoot is the source of truth)
-  #   present and current otherwise-> leave it alone
-  #
-  # The third clause is the only thing that lets a Chatwoot edit reach the
-  # storefront; without it Chatwoot would be the source of truth for everything
-  # except the edits people actually make. The `backed` qualifier is what keeps it
-  # from stepping on a translator's independently-phrased derived value.
-  #
-  # A key the source article does not expose has no digest to pin against and so
-  # cannot be written at all, whatever the state says.
+  # One TranslationInput per key the reconciler says to write. A key the source
+  # article does not expose has no digest to pin against and so cannot be written
+  # at all, whatever the rule says about it.
   def translation_inputs(digests, state = {})
     translation_values.filter_map do |key, value|
       digest = digests[key]
       next if digest.blank?
-      next unless write?(key, value, state[key])
+      next unless write?(key, value, state)
 
       { locale: locale, key: key, value: value, translatableContentDigest: digest }
     end
   end
 
-  def write?(key, value, current)
-    return true if current.nil? || current[:value].nil?
-    return true if current[:outdated]
-
-    backed?(key) && !same?(key, value, current[:value])
+  def write?(key, value, state)
+    reconciler.write?(key, value, state)
   end
 
-  def backed?(key)
-    field = BACKING_FIELD[key]
-    field.present? && @attrs[field].present?
-  end
-
-  # HTML values are compared the way the importer compares them — entity spelling
-  # and the trailing newline Shopify strips carry no meaning, a changed word does.
-  def same?(key, value, current)
-    if key.end_with?('_html')
-      Umi::HelpCenter::HtmlToMarkdown.equivalent?(value, current)
-    else
-      value == current
-    end
+  def reconciler
+    @reconciler ||= Umi::Shopify::TranslationReconciler.new(
+      title: @attrs[:title], content: @attrs[:content], description: @attrs[:description]
+    )
   end
 
   private
@@ -139,11 +89,16 @@ class Umi::Shopify::ArticleTranslationSyncService
   # Shopify translation closes it, and is off by default anyway, because the cost
   # of the two mistakes is not symmetric.
   #
-  # `translationsRemove` erases every field for the locale in one call, including
-  # values a human wrote in Translate & Adapt that this sync never touched. On a
-  # store whose locale was populated by hand before Chatwoot owned it — which is
-  # exactly the state a first rollout is in — a single mis-saved draft would take
-  # the whole article's translation with it. Reconciling is not deleting.
+  # The mutation is per-field (`translationKeys` is required), but this passes
+  # every key, so it erases the whole locale for the article — including values a
+  # human wrote in Translate & Adapt that this sync never touched. On a locale
+  # populated by hand before Chatwoot owned it, which is the state a first rollout
+  # is in, one mis-saved draft would take the whole article's translation with it.
+  # Reconciling is not deleting.
+  #
+  # Narrowing this to the article's *backed* keys (see #backed?) would make
+  # unpublish mean unpublish without touching anything Chatwoot does not own —
+  # same predicate, both directions. Not wired up; the report is the mitigation.
   #
   # So the divergence is reported by `umi:help_center:translation_status` instead,
   # and removal happens only where an operator has turned it on deliberately.
@@ -187,7 +142,7 @@ class Umi::Shopify::ArticleTranslationSyncService
     end
     return log_error("translationsRegister rejected: #{format_errors(errors)}") if errors.any?
 
-    log_done('register', inputs.map { |input| input[:key] })
+    log_done('register', inputs.pluck(:key))
   end
 
   def register(gid, inputs)
@@ -219,11 +174,17 @@ class Umi::Shopify::ArticleTranslationSyncService
     return @source_state if defined?(@source_state) && !refresh
 
     resource = shopify.call(TRANSLATABLE_CONTENT_QUERY, id: gid, locale: locale)['translatableResource'] || {}
-    digests = (resource['translatableContent'] || []).to_h { |entry| [entry['key'], entry['digest']] }
-    state = (resource['translations'] || []).to_h do |entry|
+    @source_state = [digests_from(resource), held_translations_from(resource)]
+  end
+
+  def digests_from(resource)
+    (resource['translatableContent'] || []).to_h { |entry| [entry['key'], entry['digest']] }
+  end
+
+  def held_translations_from(resource)
+    (resource['translations'] || []).to_h do |entry|
       [entry['key'], { value: entry['value'], outdated: entry['outdated'] }]
     end
-    @source_state = [digests, state]
   end
 
   def shopify

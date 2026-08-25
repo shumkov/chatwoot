@@ -124,64 +124,78 @@ RSpec.describe Umi::Shopify::ArticleTranslationSyncService do
   describe '#write?' do
     subject(:sync) { described_class.new(attrs) }
 
-    def current(value, outdated: false)
-      { value: value, outdated: outdated }
+    def state(values, outdated: [])
+      values.transform_values { |v| { value: v, outdated: false } }
+            .tap { |h| outdated.each { |k| h[k] = h[k].merge(outdated: true) } }
     end
 
     it 'writes a field the locale does not have yet' do
-      expect(sync.write?('title', 'ใหม่', nil)).to be(true)
+      expect(sync.write?('title', 'ใหม่', {})).to be(true)
     end
 
     it 'replaces a field Shopify has marked outdated' do
-      expect(sync.write?('title', 'ใหม่', current('เก่า', outdated: true))).to be(true)
+      expect(sync.write?('title', 'ใหม่', state({ 'title' => 'เก่า' }, outdated: ['title']))).to be(true)
     end
 
     it 'leaves an identical field alone' do
-      expect(sync.write?('title', 'เดิม', current('เดิม'))).to be(false)
+      expect(sync.write?('title', 'เดิม', state({ 'title' => 'เดิม' }))).to be(false)
     end
 
     # Without this clause Chatwoot would be the source of truth for everything
     # except the edits people actually make there.
     it 'writes a current field when the Chatwoot field behind it has changed' do
-      expect(sync.write?('title', 'แก้ไขแล้ว', current('เดิม'))).to be(true)
+      expect(sync.write?('title', 'แก้ไขแล้ว', state({ 'title' => 'เดิม' }))).to be(true)
     end
 
-    # Chatwoot has no SEO-title field — meta_title is derived from the article
-    # title. Several Thai meta_titles were phrased independently by a human in
-    # Translate & Adapt, and a derived value must never overwrite that.
-    it 'never overwrites a current meta_title, however different ours is' do
-      expect(sync.write?('meta_title', 'ของเรา', current('ของนักแปล'))).to be(false)
-    end
+    # Chatwoot has no SEO-title field. Whether meta_title is ours to keep in step
+    # is answered by the locale itself: if it still equals the title, nobody ever
+    # pulled the two apart.
+    describe 'meta_title' do
+      it 'never overwrites one that was phrased separately from the title' do
+        separate = state({ 'title' => 'ชื่อเรื่อง', 'meta_title' => 'ถ้อยคำของนักแปล' })
 
-    it 'still fills in a meta_title the locale is missing' do
-      expect(sync.write?('meta_title', 'ของเรา', nil)).to be(true)
-    end
+        expect(sync.write?('meta_title', 'ของเรา', separate)).to be(false)
+      end
 
-    it 'still replaces a meta_title Shopify says is outdated' do
-      expect(sync.write?('meta_title', 'ของเรา', current('ของนักแปล', outdated: true))).to be(true)
+      it 'keeps a plainly derived one in step with a title edit' do
+        derived = state({ 'title' => 'ชื่อเดิม', 'meta_title' => 'ชื่อเดิม' })
+
+        expect(sync.write?('meta_title', 'ชื่อใหม่', derived)).to be(true)
+      end
+
+      it 'still fills in one the locale is missing' do
+        expect(sync.write?('meta_title', 'ของเรา', state({ 'title' => 'ชื่อเรื่อง' }))).to be(true)
+      end
+
+      it 'still replaces one Shopify says is outdated' do
+        stale = state({ 'title' => 'ชื่อเรื่อง', 'meta_title' => 'ถ้อยคำของนักแปล' }, outdated: ['meta_title'])
+
+        expect(sync.write?('meta_title', 'ของเรา', stale)).to be(true)
+      end
     end
 
     context 'when the article has no description of its own' do
       let(:attrs) { super().merge('description' => nil) }
 
       # Then the summary is a truncation of the body rather than a field somebody
-      # edits, so it gets the same protection as meta_title.
+      # edits, so it gets the same protection.
       it 'never overwrites a current summary it only derived' do
-        expect(sync.write?('summary_html', '<p>ของเรา</p>', current('<p>ของนักแปล</p>'))).to be(false)
+        expect(sync.write?('summary_html', '<p>ของเรา</p>', state({ 'summary_html' => '<p>ของนักแปล</p>' }))).to be(false)
       end
     end
 
     context 'when the article does have a description' do
       it 'writes a changed summary, because the description backs it' do
-        expect(sync.write?('summary_html', '<p>ของเรา</p>', current('<p>ของนักแปล</p>'))).to be(true)
+        expect(sync.write?('summary_html', '<p>ของเรา</p>', state({ 'summary_html' => '<p>ของนักแปล</p>' }))).to be(true)
       end
     end
 
     # Entity spelling and the trailing newline Shopify strips are not content, and
     # treating them as content would make every run rewrite the same articles.
     it 'does not treat an entity-spelling difference as a change' do
-      expect(sync.write?('body_html', %(<a href="/a?q=O&#x27;clock">x</a>), current(%(<a href="/a?q=O'clock">x</a>))))
-        .to be(false)
+      held = state({ 'body_html' => %(<a href="/a?q=O'clock">x</a>) })
+
+      expect(sync.write?('body_html', %(<a href="/a?q=O&#x27;clock">x</a>), held)).to be(false)
     end
   end
 

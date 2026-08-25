@@ -79,12 +79,22 @@ class Umi::HelpCenter::TranslationStatusService
   private
 
   def summary_lines
+    counts_lines + outdated_lines + pending_lines
+  end
+
+  def counts_lines
     ["  missing translation: #{missing.length}",
      "  behind source:       #{drifted.length}",
-     "  not published in chatwoot but still served by shopify: #{unpublished.length}",
-     "  shopify says outdated (advisory cross-check): #{shopify_outdated.length}"] +
-      shopify_outdated.map { |row| "    ##{row.article_id} #{row.shopify_outdated_keys.join(', ')}" } +
-      ["  the sync would change in shopify: #{pending.length}"] +
+     "  not published in chatwoot but still served by shopify: #{unpublished.length}"]
+  end
+
+  def outdated_lines
+    ["  shopify says outdated (advisory cross-check): #{shopify_outdated.length}"] +
+      shopify_outdated.map { |row| "    ##{row.article_id} #{row.shopify_outdated_keys.join(', ')}" }
+  end
+
+  def pending_lines
+    ["  the sync would change in shopify: #{pending.length}"] +
       pending.map { |row| "    ##{row.article_id} #{row.pending_keys.join(', ')} — #{row.title.to_s.truncate(50)}" }
   end
 
@@ -136,19 +146,14 @@ class Umi::HelpCenter::TranslationStatusService
     state = shopify_state[article.id.to_s]
     return nil if state.nil?
 
-    sync = sync_for(translation)
-    sync.translation_values.filter_map do |key, value|
+    reconciler = Umi::Shopify::TranslationReconciler.new(
+      title: translation.title, content: translation.content, description: translation.description
+    )
+    reconciler.values.filter_map do |key, value|
       next unless state[:source_keys].include?(key)
 
-      key if sync.write?(key, value, state[:translations][key])
+      key if reconciler.write?(key, value, state[:translations])
     end
-  end
-
-  def sync_for(translation)
-    Umi::Shopify::ArticleTranslationSyncService.new(
-      'locale' => locale, 'title' => translation.title,
-      'content' => translation.content, 'description' => translation.description
-    )
   end
 
   # ---- Shopify (cross-check + diff source) ----

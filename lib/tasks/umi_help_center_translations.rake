@@ -26,8 +26,9 @@ namespace :umi do
       apply = args[:apply].to_s == 'apply'
       status = args[:status].presence || 'published'
       abort("Unknown status '#{status}' — use 'published' or 'draft'") unless %w[published draft].include?(status)
-      result = Umi::HelpCenter::TranslationImportService.new(portal: portal, locale: locale, apply: apply,
-                                                            status: status).perform
+      result = Umi::HelpCenter::TranslationImportService.new(
+        portal: portal, locale: locale, apply: apply, status: status
+      ).perform
 
       puts "#{apply ? 'IMPORT (writing)' : 'DRY RUN'} — portal '#{portal.slug}', locale '#{locale}', status '#{status}'"
       puts result.report_lines(applied: apply)
