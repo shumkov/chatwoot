@@ -128,7 +128,7 @@ describe Umi::Fbig::ConversationReconService do
 
     def chained_pages(count)
       pages = Array.new(count) do |index|
-        page = fake_page_class.new([message_item("mid-#{index}", (index + 1).hours.ago)])
+        page = fake_page_class.new([message_item("mid-#{index}", (index + 1).minutes.ago)])
         page.paging = { 'next' => 'cursor' }
         page
       end
