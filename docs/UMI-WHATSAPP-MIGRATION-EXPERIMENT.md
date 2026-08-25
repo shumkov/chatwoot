@@ -1433,6 +1433,37 @@ disabled, and the delete dialog's tier/quality warning).
 
 **Status: blocked on vendor.** WhatsApp on `+66975311301` has been down since 2026-08-23.
 
+### 11.2e TEMPORARY mitigation — public links repointed to +66800053593 (2026-08-26)
+
+WhatsApp on `+66975311301` had been dead for three days while every public link still pointed at
+it. Both customer-facing surfaces were repointed to **`+66800053593`** — the Cloud API number in
+WABA "UMI clothing" that was never part of the migration and is still live.
+
+| Surface | Change | Shipped |
+|---|---|---|
+| Storefront theme | `templates/page.contact.json` and `templates/page.stand.json` — `whatsapp_url` → `https://wa.me/66800053593` | `umi-store-theme` **`cd92928`** on `main` |
+| Chatwoot widget | `UmiInboxLinks.vue` + its spec — WhatsApp entry → `https://wa.me/66800053593` | **PR #50** → `umi`, branch `umi-widget-whatsapp-fallback` |
+
+**Deliberately unchanged:** the displayed phone, `phone_number`, and the widget's `tel:` Call
+entry all still read `+66975311301`. Voice on that number is healthy and was never affected.
+
+**Consequence to communicate:** WhatsApp replies now arrive in the **"Whatsapp"** inbox (the
+Cloud API channel), **not inbox 6**. Whoever is on support duty must watch that inbox.
+
+**THIS IS TEMPORARY. To revert once `+66975311301`'s WhatsApp is recovered:**
+
+1. Theme — set both `whatsapp_url` values back to `https://wa.me/66975311301` in
+   `templates/page.contact.json` and `templates/page.stand.json`.
+2. Widget — revert PR #50 (or set the WhatsApp entry and its spec assertion back), then build and
+   deploy per `chatwoot-prod-deploy`.
+3. Tell support duty that replies return to inbox 6.
+
+**Also needs correcting, and it is actively misleading today:**
+`docs/UMI-CRM-STACK-SPEC.md:15` still reads *"Consolidate on **+66975311301**… **Retire
++66800053593**"* — the exact reverse of the current arrangement. Anyone following that document
+would undo this mitigation. Not changed here because it is a strategy document whose direction is
+Ivan's call, not a stale fact.
+
 ### 11.3 Options while waiting
 
 1. **Do nothing.** Voice is fine; only WhatsApp is dark. Lowest risk.
