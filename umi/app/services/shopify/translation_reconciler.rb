@@ -55,7 +55,11 @@ class Umi::Shopify::TranslationReconciler
   # #derived_meta_title?.
   def write?(key, value, state)
     current = state[key]
-    return true if current.nil? || current[:value].nil?
+    # Blank counts as absent, not as a value to protect. Nothing in the live
+    # corpus is blank (228/228 have content), but a field emptied by hand would
+    # otherwise be unfillable forever: a blank `meta_title` can never equal its
+    # title, so it would read as "phrased separately" and be skipped on every run.
+    return true if current.nil? || current[:value].blank?
     return true if current[:outdated]
 
     backed?(key, state) && !same?(key, value, current[:value])

@@ -97,5 +97,46 @@ RSpec.describe Umi::HelpCenter::HtmlToMarkdown do
     it 'still catches a dropped element' do
       expect(described_class.equivalent?('<p>a</p>', "<p>a</p>\n<p>b</p>")).to be(false)
     end
+
+    # This predicate decides whether the sync overwrites a translator's work, and
+    # it was verified against a corpus of well-formed bodies. These are the inputs
+    # the corpus does not contain. A false "same" hides a stale translation; a
+    # false "different" overwrites a good one — both matter, so both directions
+    # are pinned rather than just the happy path.
+    describe 'inputs the real corpus does not contain' do
+      it 'does not treat a numeric entity as different from the character' do
+        expect(described_class.equivalent?('<p>&#3585;</p>', '<p>ก</p>')).to be(true)
+      end
+
+      it 'does not confuse a non-breaking space with a plain one' do
+        expect(described_class.equivalent?('<p>a&nbsp;b</p>', '<p>a b</p>')).to be(false)
+      end
+
+      it 'sees through attribute order' do
+        expect(described_class.equivalent?('<a href="/a" title="t">x</a>', '<a title="t" href="/a">x</a>'))
+          .to be(false)
+      end
+
+      it 'does not silently drop an HTML comment' do
+        expect(described_class.equivalent?('<p>a</p><!--note-->', '<p>a</p>')).to be(false)
+      end
+
+      it 'notices a script element rather than treating it as empty text' do
+        expect(described_class.equivalent?('<p>a</p><script>x()</script>', '<p>a</p>')).to be(false)
+      end
+
+      it 'is not fooled by an unclosed tag that the parser repairs' do
+        expect(described_class.equivalent?('<p>a', '<p>a</p>')).to be(true)
+      end
+
+      it 'treats an empty string and blank markup as different' do
+        expect(described_class.equivalent?('', '<p></p>')).to be(false)
+      end
+
+      it 'compares nil as empty rather than raising' do
+        expect(described_class.equivalent?(nil, '')).to be(true)
+        expect(described_class.equivalent?(nil, '<p>a</p>')).to be(false)
+      end
+    end
   end
 end
