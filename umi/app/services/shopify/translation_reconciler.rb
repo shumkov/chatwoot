@@ -67,7 +67,11 @@ class Umi::Shopify::TranslationReconciler
     return derived_meta_title?(state) if key == 'meta_title'
 
     field = BACKING_FIELD[key]
-    field.present? && instance_variable_get(:"@#{field}").present?
+    field.present? && chatwoot_fields[field].present?
+  end
+
+  def chatwoot_fields
+    { title: @title, content: @content, description: @description }
   end
 
   # Chatwoot has no SEO-title field, so `meta_title` is ours to keep in step only

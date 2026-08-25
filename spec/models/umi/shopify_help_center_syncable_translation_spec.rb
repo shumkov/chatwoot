@@ -124,5 +124,20 @@ RSpec.describe Umi::ShopifyHelpCenterSyncable do
       expect_routed_to(Umi::Shopify::ArticleTranslationSyncService,
                        'locale' => 'th', 'event' => 'upserted', 'id' => 2, 'root_id' => 1)
     end
+
+    # A locale it does not recognise must not fall through to the article sync:
+    # that would mint a second Shopify article competing for the English handle,
+    # which is the failure the old locale gate existed to prevent. The model gate
+    # should never enqueue one, so reaching here at all is a bug — drop it loudly
+    # rather than acting on a guess.
+    it 'drops a locale it cannot route rather than guessing' do
+      allow(Umi::Shopify::HelpCenterSyncService).to receive(:new)
+      allow(Umi::Shopify::ArticleTranslationSyncService).to receive(:new)
+
+      described_class.perform_now('locale' => 'fr', 'event' => 'upserted', 'id' => 3)
+
+      expect(Umi::Shopify::HelpCenterSyncService).not_to have_received(:new)
+      expect(Umi::Shopify::ArticleTranslationSyncService).not_to have_received(:new)
+    end
   end
 end
