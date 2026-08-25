@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Daily cron entry point for the FB/IG reconciliation
+# Hourly cron entry point for the FB/IG reconciliation
 # (docs/UMI-FBIG-RECON-SPEC.md). Registered by
 # config/initializers/zz_umi_fbig_recon.rb. Serial Graph HTTP for potentially
 # minutes — must not occupy a default-queue worker.

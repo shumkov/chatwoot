@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Daily reconciliation of a Facebook-page channel (Messenger + linked
+# Hourly reconciliation of a Facebook-page channel (Messenger + linked
 # Instagram) against Meta's Conversations API — the ground truth for which
 # messages exist. Webhook-side code cannot see messages Meta never delivered
 # (subscription outages, misconfigured fields, drops predating the pipeline
@@ -19,10 +19,10 @@
 #              caps_hit=… [missing_lines_capped=true] [error=…]
 # The summary is emitted for every platform on every run, including failures.
 class Umi::Fbig::ConversationReconService
-  # The 48 h window is structurally coupled to the daily cron cadence: every
-  # period is covered by two consecutive runs, so one failed run leaves no
-  # gap. Change them together or not at all.
-  WINDOW_HOURS = 48
+  # The window is structurally coupled to the cron cadence: every period is
+  # covered by six consecutive hourly runs, so coverage only gaps after five
+  # runs fail in a row. Change them together or not at all.
+  WINDOW_HOURS = 6
   # Webhooks still in flight are not "missing" yet.
   RECENT_GRACE_MINUTES = 15
   # Meta can return entries slightly out of order when a thread is touched
@@ -69,9 +69,9 @@ class Umi::Fbig::ConversationReconService
     error = nil
     each_in_window_thread(platform) { |thread_id| recon_thread(platform, thread_id) }
   rescue Koala::Facebook::AuthenticationError => e
-    # A 401 is not transient: retrying 3x daily adds sustained errors against
-    # Meta (a subscription-health risk) for zero benefit. Log and stand down;
-    # the send path owns reauthorization semantics.
+    # A 401 is not transient: retrying it every run adds sustained errors
+    # against Meta (a subscription-health risk) for zero benefit. Log and stand
+    # down; the send path owns reauthorization semantics.
     error = e
     @auth_failed = true
   rescue StandardError => e

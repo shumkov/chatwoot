@@ -8,7 +8,7 @@ subscription outages/misconfiguration (the `message_echoes` gap found
 2026-07-22 is a live example), delivery throttling after sustained errors, and
 anything dropped before the patches deployed. The only ground truth for "what
 messages exist" is Meta's own **Conversations API**. Reconciliation closes the
-loop: daily, compare Meta's message ids against Chatwoot's
+loop: hourly, compare Meta's message ids against Chatwoot's
 `messages.source_id` and report what's missing. It automates the check the
 message-loss spec's runbook tells a human to do by hand ("absence of
 `webhook_received` = Meta never delivered").
@@ -83,15 +83,15 @@ log prefix is load-bearing — the journald trail and planned Netdata check grep
    path, including failures:
    `[UMI-FBIG] stage=reconcile_summary platform=… threads=N mids=M missing=K threads_failed=F caps_hit=C [error=<class>]`.
    `missing=K` is always the full count (only the per-mid lines are capped),
-   and is a **windowed re-count**: a 48 h window × daily cadence re-reports a
-   still-missing mid ~2×, so the future alert must treat `missing>0` as the
-   signal, not accumulate counts across days.
+   and is a **windowed re-count**: a 6 h window × hourly cadence re-reports a
+   still-missing mid up to 6×, so the alert must treat `missing>0` as the
+   signal, not accumulate counts across runs.
 
 Failure semantics (from the failure-modes review):
 
 - `Koala::Facebook::AuthenticationError` → summary with `error=auth`,
   **no re-raise and skip the remaining platform** — a 401 is not transient;
-  3× daily Sidekiq retries would add sustained 4xx against Meta (which is
+  retrying it every run would add sustained 4xx against Meta (which is
   itself a subscription-health risk) and dead-set churn with no Sentry in
   prod. The send path owns reauth semantics; recon never calls
   `authorization_error!`.
@@ -101,8 +101,8 @@ Failure semantics (from the failure-modes review):
   transients.
 
 Constants (deliberately not env: the window is structurally coupled to the
-hardcoded daily cadence — exposing one without the other invites breaking the
-double-cover invariant): `WINDOW_HOURS = 48`, `RECENT_GRACE_MINUTES = 15`
+hardcoded cadence — exposing one without the other invites breaking the
+multi-cover invariant): `WINDOW_HOURS = 6`, `RECENT_GRACE_MINUTES = 15`
 (in-flight webhooks aren't "missing"), `MAX_THREAD_PAGES`, `MAX_MESSAGE_PAGES`,
 `MAX_MISSING_LINES`, `OUT_OF_WINDOW_STOP = 3`.
 
@@ -111,7 +111,7 @@ per-channel isolation; **first line of `perform` re-checks the kill switch**
 (a job already enqueued before a disabling restart must no-op). Queue: `low`
 (serial HTTP for minutes must not hold a default-queue worker).
 
-Cron: daily **20:30 UTC (03:30 Bangkok, off-peak)**, registered in
+Cron: **hourly, on the hour**, registered in
 `config/initializers/zz_umi_fbig_recon.rb` mirroring the proven
 `zz_umi_shopify_contacts.rb` pattern exactly: `after_initialize` +
 `next unless Sidekiq.server?`, fixed job name `umi_fbig_recon`, per-job
@@ -125,7 +125,9 @@ schedule firing).
 **Default ON, kill switch `UMI_FBIG_RECON_DISABLED=true`.** The precedent is
 patch #8 (read-only observability, default-on, opt-out), not patch #7's
 opt-in — #7 defaults off because it *writes* the CRM; recon's blast radius is
-log lines and ~dozens of read calls against a ~4800/day page budget.
+log lines and a few Graph reads per run against a ~4800/day page budget:
+measured against a month of real traffic, hourly runs over a 6 h window cost a
+median of 4 calls per run (peak 26) — about 116 a day, ~2 % of the budget.
 
 ## Phase 2 — auto-heal (in this patch, flag-gated, default OFF)
 
@@ -181,6 +183,56 @@ summaries, then enable via env + restart.
   only ids ever reach the log lines.
 - **No outbound healing** (see above).
 
+## Cadence revision (2026-08-26)
+
+A full-month audit of August ran the same anti-join by hand over every Meta
+thread touched since 1 August (186 threads, 952 messages) and settled what the
+patch actually catches:
+
+- **Inbound**: 7 message ids Meta had and Chatwoot did not. Six arrived inside
+  a burst — another message from the same customer within a minute was
+  delivered, so the agent was not blind, though a shared post or attachment is
+  missing from the transcript. One was genuinely invisible: an Instagram
+  message on 24 August that nobody answered for two days. It is the
+  unsupported class above, so no automated repair could have recovered it.
+- **Outbound**: 119 page replies Meta had and Chatwoot did not, 104 of them
+  isolated (not multi-part artifacts), across 37 threads and almost entirely
+  Messenger. They stop on 20 August — the point where the team began replying
+  only from Chatwoot. Outbound gaps are therefore a symptom of replying
+  outside Chatwoot, not of a broken pipeline.
+
+Three changes follow.
+
+**Hourly instead of daily** (`WINDOW_HOURS` 48 → 6, cron `0 * * * *`). Daily
+detection bounds a customer's invisible wait at 24 h, which is worse than the
+median human reply time by two orders of magnitude. It also misplaces repairs:
+heal cannot set a historical `created_at`, so on a daily cycle the recovered
+row lands up to a day below where it belongs in the thread. Hourly bounds both
+at ~1 h, and the 6 h window keeps six-fold coverage — five consecutive failed
+runs still leave no gap. Cost, measured against August's real traffic:
+
+| window / cadence | calls per run (median / peak) | calls per day |
+|---|---|---|
+| 48 h, daily (before) | 15 / 64 | ~20 |
+| 6 h, hourly (now) | 4 / 26 | ~116 |
+| 2 h, every 30 min (rejected) | 2 / 18 | ~148 |
+
+Half-hourly was rejected: it buys ~30 min of latency for a third more calls,
+and the 15-minute in-flight grace already floors how fast detection can be.
+
+**Auto-heal on in production** (`UMI_FBIG_RECON_HEAL=true`, set in the infra
+repo's `env.j2`, not in the image). The code default stays off so a fresh
+deployment is still detect-only.
+
+**An alarm, because a log line nobody greps is not a signal.** The
+`umi-vps-infra` netdata role watches the journald trail and publishes marker
+files: a heartbeat refreshed by every `reconcile_summary` (a dead-man's-switch
+for the job itself) and a clean-marker withdrawn while hard misses go
+unhealed. `missing − missing_suspect − healed > 0`, `heal_failed > 0`,
+`threads_failed`, `caps_hit` and `error=` all count as unresolved. The
+unhealable class self-clears when the mid leaves the window; the notification,
+not the marker, is the durable record.
+
 ## Alternatives rejected
 
 - **Webhook-side-only assurance** (status quo): cannot see Meta-never-delivered.
@@ -222,8 +274,14 @@ summaries, then enable via env + restart.
   Meta ever lists a reaction-mid there, it would false-positive as missing
   (expected, not a bug).
 - `missing=K` counts message ids, not distinct incidents (windowed re-count —
-  see above). Two *consecutive* failed daily runs can gap coverage (one
-  cannot — 48 h window); Sidekiq retries mitigate.
+  see above). Six *consecutive* failed hourly runs can gap coverage (five
+  cannot — 6 h window); Sidekiq retries mitigate.
+- **The unsupported-inbound class cannot be healed.** Meta answers
+  `is_unsupported: true` with an empty body for voice notes, story and reel
+  shares; the replay goes through the same upstream builder that drops them,
+  so heal returns `:not_persisted` and the mid is re-reported every run until
+  it leaves the window. This is the class the `heal_failed` alarm exists for:
+  the only remedy is a human opening the thread in Instagram.
 
 ## Test plan
 

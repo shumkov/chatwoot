@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
-# UMI patch: daily FB/IG message reconciliation against Meta's Conversations
+# UMI patch: hourly FB/IG message reconciliation against Meta's Conversations
 # API — detects (and, with UMI_FBIG_RECON_HEAL=true, replays) messages Meta
-# has but Chatwoot doesn't, the class no webhook-side code can see.
+# has but Chatwoot doesn't, the class no webhook-side code can see. The cadence
+# bounds how long a customer waits invisibly: the scan window in the service is
+# sized to it, so the two must change together.
 # Design + review record: docs/UMI-FBIG-RECON-SPEC.md. App code:
 #   umi/app/services/fbig/{conversation_recon_service,message_heal_service}.rb
 #   umi/app/jobs/fbig/conversation_recon_job.rb
@@ -28,7 +30,7 @@ Rails.application.config.after_initialize do
   else
     job = Sidekiq::Cron::Job.new(
       name: 'umi_fbig_recon',
-      cron: '30 20 * * *', # 20:30 UTC = 03:30 Bangkok, off-peak
+      cron: '0 * * * *', # hourly — a message Meta never delivered reaches the agent within the hour
       class: 'Umi::Fbig::ConversationReconJob',
       queue: 'low',
       source: 'umi'
