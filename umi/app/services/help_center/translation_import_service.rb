@@ -33,10 +33,15 @@ class Umi::HelpCenter::TranslationImportService
     end
   end
 
-  def initialize(portal:, locale:, apply: false)
+  # `status:` exists because the portal's locale route is public the moment
+  # articles exist under it — chat.umi.store/hc/<portal>/<locale> already answers
+  # 200 with an empty shell. Importing as `draft` lets a whole locale be staged
+  # and read through before a single reader can reach it.
+  def initialize(portal:, locale:, apply: false, status: 'published')
     @portal = portal
     @locale = locale.to_s
     @apply = apply
+    @status = status.to_s
     @result = Result.new(imported: [], unchanged: [], refused: [], skipped: [], notes: [])
   end
 
@@ -146,7 +151,7 @@ class Umi::HelpCenter::TranslationImportService
       description: article.description.presence && summary_text(translation),
       # The string, not the symbol: this hash is also compared field by field
       # against the stored record to decide whether anything actually changed.
-      status: 'published'
+      status: @status
     }
   end
 

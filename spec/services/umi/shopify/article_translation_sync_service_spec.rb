@@ -40,12 +40,16 @@ RSpec.describe Umi::Shopify::ArticleTranslationSyncService do
           { 'key' => 'handle', 'digest' => 'd-handle' },
           { 'key' => 'meta_title', 'digest' => 'd-metatitle' },
           { 'key' => 'meta_description', 'digest' => 'd-metadesc' }
-        ] } }
+        ], 'translations' => existing_translations } }
       },
       'RegisterArticleTranslations' => ->(_) { { 'translationsRegister' => { 'userErrors' => [] } } },
       'RemoveArticleTranslations' => ->(_) { { 'translationsRemove' => { 'userErrors' => [] } } }
     }
   end
+
+  # By default the locale is empty in Shopify, so every field is "absent" and the
+  # reconciler writes all of them. Individual examples override this.
+  let(:existing_translations) { [] }
 
   let(:attrs) do
     {
@@ -114,6 +118,73 @@ RSpec.describe Umi::Shopify::ArticleTranslationSyncService do
     end
   end
 
+  # The sync is a reconciler, not a writer: missing -> translate, outdated ->
+  # replace, current -> leave alone. What stops it being merely a writer with
+  # extra steps is that it declines to touch translations somebody else wrote.
+  describe '#write?' do
+    subject(:sync) { described_class.new(attrs) }
+
+    def current(value, outdated: false)
+      { value: value, outdated: outdated }
+    end
+
+    it 'writes a field the locale does not have yet' do
+      expect(sync.write?('title', 'ใหม่', nil)).to be(true)
+    end
+
+    it 'replaces a field Shopify has marked outdated' do
+      expect(sync.write?('title', 'ใหม่', current('เก่า', outdated: true))).to be(true)
+    end
+
+    it 'leaves an identical field alone' do
+      expect(sync.write?('title', 'เดิม', current('เดิม'))).to be(false)
+    end
+
+    # Without this clause Chatwoot would be the source of truth for everything
+    # except the edits people actually make there.
+    it 'writes a current field when the Chatwoot field behind it has changed' do
+      expect(sync.write?('title', 'แก้ไขแล้ว', current('เดิม'))).to be(true)
+    end
+
+    # Chatwoot has no SEO-title field — meta_title is derived from the article
+    # title. Several Thai meta_titles were phrased independently by a human in
+    # Translate & Adapt, and a derived value must never overwrite that.
+    it 'never overwrites a current meta_title, however different ours is' do
+      expect(sync.write?('meta_title', 'ของเรา', current('ของนักแปล'))).to be(false)
+    end
+
+    it 'still fills in a meta_title the locale is missing' do
+      expect(sync.write?('meta_title', 'ของเรา', nil)).to be(true)
+    end
+
+    it 'still replaces a meta_title Shopify says is outdated' do
+      expect(sync.write?('meta_title', 'ของเรา', current('ของนักแปล', outdated: true))).to be(true)
+    end
+
+    context 'when the article has no description of its own' do
+      let(:attrs) { super().merge('description' => nil) }
+
+      # Then the summary is a truncation of the body rather than a field somebody
+      # edits, so it gets the same protection as meta_title.
+      it 'never overwrites a current summary it only derived' do
+        expect(sync.write?('summary_html', '<p>ของเรา</p>', current('<p>ของนักแปล</p>'))).to be(false)
+      end
+    end
+
+    context 'when the article does have a description' do
+      it 'writes a changed summary, because the description backs it' do
+        expect(sync.write?('summary_html', '<p>ของเรา</p>', current('<p>ของนักแปล</p>'))).to be(true)
+      end
+    end
+
+    # Entity spelling and the trailing newline Shopify strips are not content, and
+    # treating them as content would make every run rewrite the same articles.
+    it 'does not treat an entity-spelling difference as a change' do
+      expect(sync.write?('body_html', %(<a href="/a?q=O&#x27;clock">x</a>), current(%(<a href="/a?q=O'clock">x</a>))))
+        .to be(false)
+    end
+  end
+
   describe '#perform' do
     it 'registers the translation against the source article, not a new article' do
       client = client_with
@@ -125,12 +196,58 @@ RSpec.describe Umi::Shopify::ArticleTranslationSyncService do
         .to contain_exactly('title', 'body_html', 'summary_html', 'meta_title', 'meta_description')
     end
 
-    # An article the portal no longer publishes must not keep serving translated
-    # copy from the storefront.
+    # The steady state once a locale is seeded. A run that writes nothing is the
+    # sync agreeing with the store, and it is what makes the pipe idempotent.
+    context 'when the locale is already complete and current' do
+      let(:existing_translations) do
+        described_class.new(attrs).translation_values.map do |key, value|
+          { 'key' => key, 'value' => value, 'outdated' => false }
+        end
+      end
+
+      it 'writes nothing at all' do
+        client = client_with
+        described_class.new(attrs).perform
+
+        expect(client.calls.map { |call| call[:name] }).not_to include('RegisterArticleTranslations')
+      end
+    end
+
+    context 'when only one field is outdated' do
+      let(:existing_translations) do
+        described_class.new(attrs).translation_values.map do |key, value|
+          { 'key' => key, 'value' => value, 'outdated' => key == 'meta_title' }
+        end
+      end
+
+      it 'replaces just that field' do
+        client = client_with
+        described_class.new(attrs).perform
+
+        register = client.calls.find { |call| call[:name] == 'RegisterArticleTranslations' }
+        expect(register[:variables][:translations].map { |t| t[:key] }).to eq(['meta_title'])
+      end
+    end
+
+    # `translationsRemove` erases every field for the locale in one call,
+    # including values a human wrote that this sync never touched. On a store
+    # whose locale was populated by hand — the state of a first rollout — one
+    # mis-saved draft would take the whole article's translation with it. So the
+    # default is to leave it and report the divergence.
     %w[unpublished deleted].each do |event|
-      it "removes the locale's translations on #{event}" do
+      it "leaves the locale's translations alone on #{event} by default" do
         client = client_with
         described_class.new(attrs.merge('event' => event)).perform
+
+        expect(client.calls.map { |call| call[:name] })
+          .not_to include('RemoveArticleTranslations', 'RegisterArticleTranslations')
+      end
+
+      it "removes them on #{event} when removal is turned on deliberately" do
+        client = client_with
+        with_modified_env UMI_HC_TRANSLATION_REMOVE: 'true' do
+          described_class.new(attrs.merge('event' => event)).perform
+        end
 
         remove = client.calls.find { |call| call[:name] == 'RemoveArticleTranslations' }
         expect(remove[:variables]).to include(resourceId: article_gid, locales: ['th'])

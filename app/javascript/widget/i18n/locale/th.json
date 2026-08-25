@@ -8,7 +8,9 @@
     "TYPE_MESSAGE": "พิมพ์ข้อความของคุณ…",
     "SEND": "ส่ง",
     "CONTINUE": "สนทนาต่อ",
-    "ALL_TOPICS": "หัวข้อทั้งหมด"
+    "ALL_TOPICS": "หัวข้อทั้งหมด",
+    "CHANNELS_HEADING": "แชทกับเราได้ที่",
+    "CALL": "โทร"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {
@@ -25,40 +27,40 @@
   },
   "THUMBNAIL": {
     "AUTHOR": {
-      "NOT_AVAILABLE": "Not available"
+      "NOT_AVAILABLE": "ไม่ระบุ"
     }
   },
   "TEAM_AVAILABILITY": {
     "ONLINE": "เรากำลังออนไลน์",
     "OFFLINE": "เราไม่อยู่",
-    "BACK_AS_SOON_AS_POSSIBLE": "We will be back as soon as possible"
+    "BACK_AS_SOON_AS_POSSIBLE": "เราจะกลับมาโดยเร็วที่สุด"
   },
   "REPLY_TIME": {
     "IN_A_FEW_MINUTES": "ปกติจะตอบกลับภายในไม่กี่นาที",
     "IN_A_FEW_HOURS": "ปกติจะตอบกลับในไม่กี่ชั่วโมง",
     "IN_A_DAY": "ปกติจะตอบกลับภายใน 1 วัน",
-    "BACK_IN_HOURS": "We will be back online in {n} hour | We will be back online in {n} hours",
-    "BACK_IN_MINUTES": "We will be back online in {time} minutes",
-    "BACK_AT_TIME": "We will be back online at {time}",
-    "BACK_ON_DAY": "We will be back online on {day}",
-    "BACK_TOMORROW": "We will be back online tomorrow",
-    "BACK_IN_SOME_TIME": "We will be back online in some time"
+    "BACK_IN_HOURS": "เราจะกลับมาออนไลน์ในอีก {n} ชั่วโมง | เราจะกลับมาออนไลน์ในอีก {n} ชั่วโมง",
+    "BACK_IN_MINUTES": "เราจะกลับมาออนไลน์ในอีก {time} นาที",
+    "BACK_AT_TIME": "เราจะกลับมาออนไลน์เวลา {time}",
+    "BACK_ON_DAY": "เราจะกลับมาออนไลน์ใน{day}",
+    "BACK_TOMORROW": "เราจะกลับมาออนไลน์ในวันพรุ่งนี้",
+    "BACK_IN_SOME_TIME": "เราจะกลับมาออนไลน์ในไม่ช้า"
   },
   "DAY_NAMES": {
-    "SUNDAY": "Sunday",
-    "MONDAY": "Monday",
-    "TUESDAY": "Tuesday",
-    "WEDNESDAY": "Wednesday",
-    "THURSDAY": "Thursday",
-    "FRIDAY": "Friday",
-    "SATURDAY": "Saturday"
+    "SUNDAY": "วันอาทิตย์",
+    "MONDAY": "วันจันทร์",
+    "TUESDAY": "วันอังคาร",
+    "WEDNESDAY": "วันพุธ",
+    "THURSDAY": "วันพฤหัสบดี",
+    "FRIDAY": "วันศุกร์",
+    "SATURDAY": "วันเสาร์"
   },
   "START_CONVERSATION": "เริ่มการสนทนา",
   "END_CONVERSATION": "จบการสนทนา",
   "CONTINUE_CONVERSATION": "สนทนาต่อ",
-  "YOU": "You",
+  "YOU": "คุณ",
   "START_NEW_CONVERSATION": "เริ่มการสนทนาใหม่",
-  "VIEW_UNREAD_MESSAGES": "You have unread messages",
+  "VIEW_UNREAD_MESSAGES": "คุณมีข้อความที่ยังไม่ได้อ่าน",
   "UNREAD_VIEW": {
     "VIEW_MESSAGES_BUTTON": "ดูข้อความใหม่",
     "CLOSE_MESSAGES_BUTTON": "ปิด",
@@ -68,7 +70,7 @@
   "BUBBLE": {
     "LABEL": "คุยกับเรา"
   },
-  "POWERED_BY": "Powered by Chatwoot",
+  "POWERED_BY": "ขับเคลื่อนโดย Chatwoot",
   "EMAIL_PLACEHOLDER": "กรุณากรอกอีเมล์ของคุณ",
   "CHAT_PLACEHOLDER": "พิมพ์ข้อความ",
   "TODAY": "วันนี้",
@@ -113,14 +115,14 @@
     }
   },
   "EMOJI": {
-    "PLACEHOLDER": "Search emojis",
-    "NOT_FOUND": "No emoji match your search",
-    "ARIA_LABEL": "Emoji picker"
+    "PLACEHOLDER": "ค้นหาอิโมจิ",
+    "NOT_FOUND": "ไม่พบอิโมจิที่ตรงกับการค้นหา",
+    "ARIA_LABEL": "ตัวเลือกอิโมจิ"
   },
   "EMOJI_ICON_PICKER": {
-    "SEARCH_EMOJI": "Search emoji…",
-    "FREQUENTLY_USED": "Frequently used",
-    "NO_EMOJI": "No emoji match your search"
+    "SEARCH_EMOJI": "ค้นหาอิโมจิ…",
+    "FREQUENTLY_USED": "ใช้บ่อย",
+    "NO_EMOJI": "ไม่พบอิโมจิที่ตรงกับการค้นหา"
   },
   "CSAT": {
     "TITLE": "ให้คะแนนการสนทนาครั้งนี้",
@@ -164,6 +166,6 @@
     }
   },
   "FOOTER_REPLY_TO": {
-    "REPLY_TO": "Replying to:"
+    "REPLY_TO": "กำลังตอบกลับ:"
   }
 }

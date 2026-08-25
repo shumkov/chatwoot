@@ -90,17 +90,34 @@ The second one is why equivalence is checked **semantically** rather than byte-w
 are re-serialised through Nokogiri, which normalises entity spelling and the trailing newline
 Shopify strips, and nothing else. A changed word, tag, or URL still fails.
 
-### 2.5 A pre-existing English bug the Thai inherited
+It is also the second instance of a pattern worth naming, alongside the summary truncation in
+§2.5: **a sync artifact that manufactures false staleness.** In both cases the English body or
+summary in Shopify differs from what today's code would produce, for reasons that have nothing to
+do with the content. The next edit to any affected article rewrites the field, moves the digest,
+and marks the Thai outdated — so a translator is asked to re-check copy that did not change. Two
+instances is a pattern; a third should prompt a rule rather than another note.
+
+### 2.5 A pre-existing English bug the Thai mostly escaped
 
 When a Chatwoot article has no `description`, `summary_html` falls back to
-`strip_tags(content)[0, 160]` — a hard cut of **raw markdown** at 160 characters.
-29 of the 48 summaries are truncated mid-word as a result:
+`strip_tags(content)[0, 160]` — a hard cut of **raw markdown** at 160 characters. By a
+trailing-Latin-fragment / `%XX`-escape heuristic, **21 English** summaries are truncated or leaky:
 
 - *"How do I find my size?"* ends `...compare them to a piece you already own and love. F`
-  (the start of "For"). The Thai faithfully reproduces the stray `F`.
+  (the start of "For").
 - *"Where can I try things on in person?"* leaks a raw URL fragment,
   `Tree%20O'clock%20Gallery%`, into its summary because markdown link syntax survives
   `strip_tags`.
+
+**Only 4 Thai summaries share the defect, and two of those are the heuristic false-firing on a
+legitimate trailing "THB".** The Thai summaries are not translations of the English summaries: each
+was derived from the Thai *body* and cut at a word boundary at roughly the English summary's
+proportion of the English body, so the English cut points were not inherited. "How do I find my
+size?" ending `…ดูสิ F` is real, and is the exception rather than the pattern.
+
+That matters for §6: an equality gate applied to `summary_html` would fail on most of the corpus
+and read as "the data is untrustworthy" when the truth is "these two fields were produced by
+different methods". The gate covers `body_html` only.
 
 **Deliberately out of scope here.** Fixing it rewrites 29 English summaries, changes their
 digests, and marks every Thai summary outdated — the exact churn this spec exists to prevent.
@@ -108,9 +125,19 @@ It wants its own patch, sequenced *after* this one so the repair flows through t
 
 ## 3. Chosen approach
 
-**Chatwoot becomes the source of truth for Thai as well as English. A Thai article in Chatwoot
-is projected onto the English article's Shopify record as a translation, never as a second
-article.**
+**Chatwoot's Help Center is the source of truth for the storefront FAQ, in every language.
+Shopify is downstream. A Thai article in Chatwoot is projected onto the English article's Shopify
+record as a translation, never as a second article.**
+
+That is a decision, not a workaround. Seeding Chatwoot from the Thai that currently lives in
+Shopify is not a migration hack to get past an awkward starting state — it is how the intended end
+state gets established, once. The pipe then keeps Shopify in step.
+
+**Consequence for the translator, stated plainly because it moves somebody's workflow:** Thai Help
+Center copy stops being something Mai edits in Shopify's Translate & Adapt and becomes something
+she edits in Chatwoot, next to the English it translates. Translate & Adapt remains the right place
+to *review* Thai across the store; it stops being the place Help Center Thai is authored. She should
+learn that from this document rather than from a surprise.
 
 ```
 Chatwoot portal umi-help
@@ -162,23 +189,66 @@ Every value is registered against the **current digest** of the corresponding En
 from `translatableResource(resourceId:)` immediately before the write. Keys absent from the
 source's `translatableContent` are skipped rather than guessed at.
 
-### 4.1 What this would change in Shopify today
+### 4.1 The sync is a reconciler, not a writer
 
-Measured, not predicted — `translation_status` computes the value the sync would send for every
-article and diffs it against what Shopify holds:
+Per field, per article:
 
-| Key | Identical | Would change |
+```
+absent in Shopify                                        -> write it
+present but marked outdated                              -> replace it
+present, current, backed by a Chatwoot field, and ours
+  differs from Shopify's                                 -> write it
+present and current otherwise                            -> leave it alone
+```
+
+The first two clauses are the governing rule: *missing, translate; outdated, replace; matching,
+don't touch.* Shopify hands both signals over directly — `translations(locale:"th"){ value outdated }` —
+so nothing has to be inferred at write time, and a second run writes nothing.
+
+The third clause is the one that makes Chatwoot the source of truth rather than merely the
+storage. Without it a translator's edit in Chatwoot would never reach the storefront, because
+Shopify would still be holding a present, not-outdated value — Chatwoot would own everything
+except the edits people actually make.
+
+**`backed` is what keeps clause three from becoming a licence to overwrite.** A key is backed when
+an author can edit it directly:
+
+| Key | Backed by | Notes |
+|---|---|---|
+| `title` | `Article#title` | |
+| `body_html` | `Article#content` | |
+| `summary_html` | `Article#description` | only when the article has one |
+| `meta_description` | `Article#description` | only when the article has one |
+| `meta_title` | — | **never backed** |
+
+`meta_title` has no field of its own; it is derived from the title. Several Thai `meta_title`s were
+phrased independently of their titles by a human working in Translate & Adapt, which presents the
+two as separate fields and invites exactly that. A derived value must not overwrite deliberate
+human phrasing, so `meta_title` is absent-or-outdated only, permanently. The same reasoning covers
+`summary_html` on the articles whose English source has no description: there, the summary is a
+truncation of the body rather than something anyone edits.
+
+### 4.2 What this writes to Shopify today: nothing
+
+Measured, not predicted. All 228 fields are present and none are outdated, so every field falls in
+the "leave it alone" bucket:
+
+| Key | Present and current | Would be written |
 |---|---|---|
 | `title` | 48 | 0 |
 | `body_html` | 48 | 0 |
+| `summary_html` | 48 | 0 |
+| `meta_title` | 48 | 0 |
 | `meta_description` | 36 | 0 |
-| `summary_html` | 38 | **10** |
-| `meta_title` | 22 | **26** |
 
-The bodies and titles are untouched — the pipe reproduces the existing Thai exactly. The two
-non-zero rows are the honest cost of putting a single source of truth behind fields that did not
-have one, and both are decisions rather than side effects: `summary_html` in §6.2, `meta_title`
-in D5.
+This is a stronger guarantee than the one an earlier draft of this spec offered. It is not "we
+compared the values carefully and believe they match" — it is "the pipe does not write over current
+translations at all." The semantic comparison in §2.4 is still worth having, but as *verification*
+that the derivation is faithful, not as the thing standing between us and data loss.
+
+For the record, had the sync been a plain writer it would have replaced **26 `meta_title`s** and
+**10 `summary_html`s** with derived values. Those are the fields clause three deliberately cannot
+reach.
 
 ## 5. Components
 
@@ -208,14 +278,32 @@ translations at all.
 
 | Chatwoot event on the `th` article | Shopify |
 |---|---|
-| created / updated, `status: published` | `translationsRegister` for every mapped key |
-| updated to `draft` or `archived` | `translationsRemove` for the locale |
-| destroyed | `translationsRemove` for the locale |
+| created / updated, `status: published` | reconcile every mapped key (§4.1) |
+| updated to `draft` or `archived` | nothing, and the divergence is reported |
+| destroyed | nothing, and the divergence is reported |
 
-Draft and archived remove the translation rather than leaving it. The alternative — a Chatwoot
-draft while the storefront still serves the old Thai — is the same class of silent divergence
-this spec exists to close. With `th` unpublished on the storefront the blast radius is nil
-today, and once published the fallback is clean English, not a stale sentence.
+**Removal is off by default (`UMI_HC_TRANSLATION_REMOVE`), and that is not timidity.** An earlier
+draft had draft/archived/deleted issue `translationsRemove`, reasoning that Chatwoot saying "not
+published" while the storefront serves Thai is a silent divergence. It is. But `translationsRemove`
+erases *every field for the locale in one call*, including values a human wrote in Translate &
+Adapt that this sync never touched — and on a store whose locale was populated by hand before
+Chatwoot owned it, which is exactly the state of a first rollout, one mis-saved draft takes the
+whole article's translation with it.
+
+That combination was live: the staging sequence in §8 creates the locale as **drafts**, so
+"deploy the fork, then import as drafts" would have fired 48 removes and wiped all 228 Thai fields
+off the store. Recoverable — Chatwoot would hold the Thai by then — but it would have destroyed the
+originals, and it would have happened because we were being careful.
+
+It also does not fit the governing rule. Reconciling is not deleting; a rule that says "if it
+matches, don't touch" should not have a branch that erases wholesale. So the divergence is
+reported instead: `translation_status` carries an `unpublished` state meaning "Chatwoot is not
+publishing this, Shopify still serves it", and clearing it is a person's decision.
+
+**The honest limit:** with removal off, unpublishing a Thai article in Chatwoot does not take it off
+the Thai storefront. The report is a mitigation, not a fix. Making unpublish mean unpublish safely
+needs per-field removal of only the fields Chatwoot wrote, which needs provenance this does not
+track. Not built.
 
 ### 5.2 Ordering
 
@@ -271,10 +359,8 @@ equivalent. Zero refusals.
 ### 6.3 Why this also fixes the widget
 
 The Assistance drawer fetches `/hc/<portal>/<locale>/articles.json`
-(`app/javascript/widget/api/endPoints.js:118`). The widget already ships Thai UI strings
-(`widget/i18n/locale/th.json`, patch #2). Today a Thai-locale widget would render an **empty**
-FAQ list, because Chatwoot has no `th` articles — not an English fallback, nothing. The import
-is a prerequisite for ever running the widget in Thai.
+(`app/javascript/widget/api/endPoints.js:118`), and the import is a prerequisite for ever running
+it in Thai. See §13 — this is not a prediction, it is measured against production.
 
 ## 7. The staleness signal
 
@@ -325,6 +411,11 @@ surface it should shout into is a decision, not an implementation detail.
 
 ## 8. Required manual steps
 
+**The Thai portal route is already public.** `chat.umi.store/hc/umi-help/th` answers 200 today with
+an empty shell, so articles created under it are readable the moment they exist. Stage with
+`import_translations[th,apply,draft]` and publish after review; the draft state writes nothing to
+Shopify (§5.1).
+
 1. **Reconnect the Shopify integration.** `translationsRegister` needs `write_translations`, and
    reading digests needs `read_translations` (verified against the 2026-01 schema). Neither is in
    the token today. The initializer adds them to `REQUIRED_SCOPES`, but an existing token does not
@@ -361,7 +452,9 @@ surface it should shout into is a decision, not an implementation detail.
 | D2 | Where should the drift report shout? | See §7. Needs a call. |
 | D3 | The 10 changed summaries (§6.2) | Recommend letting the fallback recompute. The alternative preserves a translated truncation bug. Reviewable in the import report either way. |
 | D4 | Should `th` articles be `published` in Chatwoot? | Yes — publish status gates whether the translation exists in Shopify (§5.1). A Thai draft means "no Thai on the storefront". |
-| D5 | `meta_title` — mirroring English overwrites 26 hand-written Thai SEO titles (§4.1) | **Needs a call.** Recommend mirroring. In English there is no SEO title distinct from the page title — the sync writes `global.title_tag` from `title` — so those 26 strings are translations of nothing and no source controls them: they are precisely the orphaned content this change exists to remove. Both phrasings are good Thai (e.g. `เสื้อผ้าของคุณเป็นไปตามขนาดมาตรฐานหรือไม่?` vs the article title's `เสื้อผ้าของคุณมีขนาดตรงตามจริงหรือไม่?`), so quality is equal and consistency improves. The alternatives: stop managing `meta_title` from Chatwoot (the 26 survive but drift forever — the leak, reinstated for that field), or give the Chatwoot article a real SEO-title field in `meta` for **both** languages (most correct, more work, English needs it too). Neither is built. |
+| D5 | `meta_title` — 26 Thai SEO titles differ from their article titles | **Resolved by the reconciler rule (§4.1).** They are present and not outdated, so nothing overwrites them, and no export is needed because nothing is lost. Two earlier positions on this were wrong and are recorded because the reasoning matters: mirroring English was argued on the premise that the 26 were machine output being deduplicated (they are pre-existing human translation), and an export-then-overwrite compromise was then proposed (superseded — there is nothing to export). The residual limit: a Thai `meta_title` can only be refreshed by the outdated flag, never by editing the Thai title in Chatwoot, because Chatwoot has no SEO-title field. Giving articles one, in `meta`, for **both** languages would fix that properly. Not built. |
+| D6 | Mai's three "quick question guide" strings match no surface that exists (§13.3) | **Product decision, not a translation one.** The drawer has no quick-reply prompts. Building them to hold three translated strings would be inventing a feature off a translation ticket. Recommend asking Mai where she saw them before deciding; her Thai is kept in §13.3 either way. |
+| D7 | 25 widget chrome strings were translated here rather than by the translator (§13.4) | They are Chatwoot's own UI (day names, emoji picker, "we will be back online…"), not brand copy, and the alternative was leaving a Thai reader with English. Listed in §13.4 for Mai to correct. |
 
 ## 11. Verification — what was actually run
 
@@ -389,8 +482,125 @@ that replays those captured responses and records every mutation:
 write and Ivan's call. Note it would be a no-op for `title`/`body_html`/`meta_description` and is
 invisible to customers regardless, since `th` is unpublished — but it is still a write.
 
+## 13. The Assistance drawer
+
+Content existing is not the bar. Thai has to reach the reader, and the drawer is where it fails
+quietly.
+
+### 13.1 Measured against production, not predicted
+
+The widget resolves its own locale from `chatwootSettings.locale` on the host page
+(`entrypoints/sdk.js:51` → `$chatwoot.locale` → the `config-set` message → `App.vue#setLocale`),
+and outside an iframe also from `?locale=` on the query string. So production can be asked for Thai
+directly. Loading
+`chat.umi.store/widget?website_token=…&locale=th` at the drawer's real width returns:
+
+```
+ช่วยเหลือ
+ทีมงานของเราจะพร้อมให้บริการในอีก 5 ชั่วโมง 12 นาที (9 โมงเช้า GMT+7) …
+Chat with us on
+WhatsApp  LINE  Messenger  Instagram  Call
+Powered by Chatwoot
+```
+
+Two things to read off that. The header and welcome are already Thai — patch #2 translated the
+`UMI.*` keys. And **the entire FAQ block is gone.** Not English, not a fallback: absent.
+
+`ArticleContainer.vue` computes its fetch locale as
+`getMatchingLocale(i18n.locale, portal.config.allowed_locales)`. Production's portal allows
+`["en"]`, so the intersection with `th` is `null`, `hasArticles` is false, and the block renders
+nothing. A Thai reader loses the FAQ entirely.
+
+This is the acceptance criterion that fails silently, and it fails **today**, before any of this
+work ships. It is also a hard sequencing constraint: the storefront must not start passing
+`locale: th` until the portal allows `th` and holds Thai articles, or the drawer gets worse rather
+than better.
+
+### 13.2 What was wrong in the widget itself
+
+- **`UmiInboxLinks.vue` hardcoded `'Chat with us on'`** as a JavaScript literal, and labelled the
+  phone link `'Call'` the same way. Nothing outside that file mentioned either string, so no
+  translator could reach them — exactly the class of bug that makes a string invisible. Both now go
+  through `UMI.CHANNELS_HEADING` / `UMI.CALL`; the four messenger names stay literals because they
+  are proper nouns. Its spec now asserts the keys rather than the English, so a regression fails
+  the build rather than shipping.
+- **`widget/i18n/locale/th.json` had 40 keys still in English.** 25 of them are reachable in UMI's
+  configuration and are now Thai: the day names and every "we will be back online…" variant, `YOU`,
+  `VIEW_UNREAD_MESSAGES`, `POWERED_BY`, the emoji picker, the reply-to chip, the agent-name
+  fallback.
+- **15 are deliberately left English**, because nothing in UMI's configuration renders them: the
+  pre-chat form (disabled on this inbox), the Dyte integration (not enabled), and `PORTAL.*`, which
+  is dead in this fork since patch #2 replaced the in-drawer article view with links to the
+  storefront.
+
+**These 25 strings are Chatwoot's own chrome, not brand copy, and they were written here rather
+than by the translator.** Day names and "Frequently used" carry no brand voice; the register was
+matched to the existing `UMI.*` Thai. They should still go past Mai — §13.4 lists them.
+
+There is **no search box** in this drawer, so there is no search placeholder to translate. Patch #2
+replaced the upstream home with welcome → articles → links → composer.
+
+### 13.3 What "the quick question guide" turned out to be
+
+Mai's three strings — *"what are your shipping details"*, *"what is your return policy?"*,
+*"what is your contact info?"* — **are not defined anywhere.** Checked, in order:
+
+- exact-phrase grep across the whole fork, including every locale file;
+- the widget's rendered output on production, read in a browser;
+- the widget channel config: `welcomeTitle` and `welcomeTagline` are empty, the pre-chat form is
+  disabled;
+- the Help Center article titles, both the featured set the drawer shows and the most-read fallback;
+- the storefront theme and the live storefront HTML.
+
+The closest match on the storefront is **Shopify's own MCP tool description** — `Shopify.MCP.tools`
+carries `search_shop_policies_and_faqs`, whose description lists *"What is your return policy?"*,
+*"What is your shipping policy?"*, *"What is your phone number?"*. That is machine-facing text
+Shopify injects for AI agents, not customer copy, not translatable, and not UMI's to change.
+
+So either Mai is **proposing** quick-question prompts the drawer does not have, or she saw them on
+a surface outside these two systems. Her Thai is good and worth keeping either way, but building a
+quick-reply feature to hold it would be inventing a feature off a translation ticket. That is a
+product decision, not a translation one — see D6.
+
+### 13.4 Thai written here, for review
+
+| Key | Thai |
+|---|---|
+| `UMI.CHANNELS_HEADING` | แชทกับเราได้ที่ |
+| `UMI.CALL` | โทร |
+| `POWERED_BY` | ขับเคลื่อนโดย Chatwoot |
+| `YOU` | คุณ |
+| `VIEW_UNREAD_MESSAGES` | คุณมีข้อความที่ยังไม่ได้อ่าน |
+| `THUMBNAIL.AUTHOR.NOT_AVAILABLE` | ไม่ระบุ |
+| `TEAM_AVAILABILITY.BACK_AS_SOON_AS_POSSIBLE` | เราจะกลับมาโดยเร็วที่สุด |
+| `REPLY_TIME.BACK_IN_HOURS` | เราจะกลับมาออนไลน์ในอีก {n} ชั่วโมง |
+| `REPLY_TIME.BACK_IN_MINUTES` | เราจะกลับมาออนไลน์ในอีก {time} นาที |
+| `REPLY_TIME.BACK_AT_TIME` | เราจะกลับมาออนไลน์เวลา {time} |
+| `REPLY_TIME.BACK_ON_DAY` | เราจะกลับมาออนไลน์ใน{day} |
+| `REPLY_TIME.BACK_TOMORROW` | เราจะกลับมาออนไลน์ในวันพรุ่งนี้ |
+| `REPLY_TIME.BACK_IN_SOME_TIME` | เราจะกลับมาออนไลน์ในไม่ช้า |
+| `DAY_NAMES.*` | วันอาทิตย์ … วันเสาร์ |
+| `EMOJI.PLACEHOLDER` / `EMOJI_ICON_PICKER.SEARCH_EMOJI` | ค้นหาอิโมจิ |
+| `EMOJI.NOT_FOUND` / `EMOJI_ICON_PICKER.NO_EMOJI` | ไม่พบอิโมจิที่ตรงกับการค้นหา |
+| `EMOJI.ARIA_LABEL` | ตัวเลือกอิโมจิ |
+| `EMOJI_ICON_PICKER.FREQUENTLY_USED` | ใช้บ่อย |
+| `FOOTER_REPLY_TO.REPLY_TO` | กำลังตอบกลับ: |
+
+`BACK_IN_HOURS` carries the singular and plural forms as the same string on purpose: Thai has no
+plural inflection, and the branch is upstream's, not ours.
+
+### 13.5 The storefront side
+
+`snippets/chatwoot-embed.liquid` passes no locale, so the widget falls back to the inbox's
+language. It now passes `locale: {{ request.locale.iso_code | json }}`, which is one line and is
+the whole of surface 2's storefront half — with the §13.1 sequencing constraint attached to it in
+a comment, because shipping it early makes the drawer worse.
+
 ## 12. Out of scope
 
-The `summary_html` truncation bug (§2.5); publishing the `th` shop locale; the language selector;
-translating the widget's own UI (done, patch #2); locales other than Thai — though nothing here
-is Thai-specific beyond a default, and `UMI_HC_TRANSLATION_LOCALES` takes a list.
+The `summary_html` truncation bug and the apostrophe drift (§2.4, §2.5) — both are English-side
+sync artifacts that manufacture false staleness, and both want their own patch, sequenced *after*
+this one so the repair flows through the pipe. Publishing the `th` shop locale and the storefront
+language selector (`THAI_LOCALIZATION_SPEC.md` iteration 3). The Shopify Help page itself, which
+serves Thai from the article translations automatically. Locales other than Thai — though nothing
+here is Thai-specific beyond a default, and `UMI_HC_TRANSLATION_LOCALES` takes a list.

@@ -26,6 +26,23 @@ class Umi::Shopify::ArticleTranslationSyncService
   # URLs away from the English ones for no gain.
   TRANSLATABLE_KEYS = %w[title body_html summary_html meta_title meta_description].freeze
 
+  # Which Chatwoot field each key is *backed by* — the field an author edits to
+  # change it. A backed key is one Chatwoot owns, so a Chatwoot edit is allowed to
+  # replace what Shopify holds.
+  #
+  # `meta_title` is deliberately absent. Chatwoot has no SEO-title field; it is
+  # derived from the article title. Several Thai `meta_title`s were phrased
+  # independently of their titles by a human working in Translate & Adapt, which
+  # presents the two as separate fields, and a derived value must not overwrite
+  # that. `summary_html` is backed only when the article has a description of its
+  # own — otherwise it too is derived, from a truncation of the body.
+  BACKING_FIELD = {
+    'title' => :title,
+    'body_html' => :content,
+    'summary_html' => :description,
+    'meta_description' => :description
+  }.freeze
+
   META_DESCRIPTION_LIMIT = 320
 
   def initialize(attrs)
@@ -60,14 +77,50 @@ class Umi::Shopify::ArticleTranslationSyncService
     }.compact
   end
 
-  # One TranslationInput per key the translation has *and* the source exposes.
-  # A key the source lacks has no digest to pin against, so it cannot be written.
-  def translation_inputs(digests)
+  # The sync is a reconciler, not a writer. Per field:
+  #
+  #   absent in Shopify            -> write it
+  #   present but marked outdated  -> replace it
+  #   present, current, backed by a Chatwoot field, and our value differs
+  #                                -> write it (Chatwoot is the source of truth)
+  #   present and current otherwise-> leave it alone
+  #
+  # The third clause is the only thing that lets a Chatwoot edit reach the
+  # storefront; without it Chatwoot would be the source of truth for everything
+  # except the edits people actually make. The `backed` qualifier is what keeps it
+  # from stepping on a translator's independently-phrased derived value.
+  #
+  # A key the source article does not expose has no digest to pin against and so
+  # cannot be written at all, whatever the state says.
+  def translation_inputs(digests, state = {})
     translation_values.filter_map do |key, value|
       digest = digests[key]
       next if digest.blank?
+      next unless write?(key, value, state[key])
 
       { locale: locale, key: key, value: value, translatableContentDigest: digest }
+    end
+  end
+
+  def write?(key, value, current)
+    return true if current.nil? || current[:value].nil?
+    return true if current[:outdated]
+
+    backed?(key) && !same?(key, value, current[:value])
+  end
+
+  def backed?(key)
+    field = BACKING_FIELD[key]
+    field.present? && @attrs[field].present?
+  end
+
+  # HTML values are compared the way the importer compares them — entity spelling
+  # and the trailing newline Shopify strips carry no meaning, a changed word does.
+  def same?(key, value, current)
+    if key.end_with?('_html')
+      Umi::HelpCenter::HtmlToMarkdown.equivalent?(value, current)
+    else
+      value == current
     end
   end
 
@@ -81,9 +134,25 @@ class Umi::Shopify::ArticleTranslationSyncService
     end
   end
 
-  # A draft, archived or deleted translation must not keep serving content the
-  # portal no longer publishes, so its translation is removed rather than frozen.
+  # Unpublishing or deleting a translation in Chatwoot leaves the storefront
+  # serving copy the portal no longer publishes — a real divergence. Deleting the
+  # Shopify translation closes it, and is off by default anyway, because the cost
+  # of the two mistakes is not symmetric.
+  #
+  # `translationsRemove` erases every field for the locale in one call, including
+  # values a human wrote in Translate & Adapt that this sync never touched. On a
+  # store whose locale was populated by hand before Chatwoot owned it — which is
+  # exactly the state a first rollout is in — a single mis-saved draft would take
+  # the whole article's translation with it. Reconciling is not deleting.
+  #
+  # So the divergence is reported by `umi:help_center:translation_status` instead,
+  # and removal happens only where an operator has turned it on deliberately.
   def remove_translations
+    unless removal_enabled?
+      return log_skip("#{locale} translation left in place (UMI_HC_TRANSLATION_REMOVE is not enabled); " \
+                      'the storefront still serves it — translation_status reports the divergence')
+    end
+
     gid = source_article_gid
     return log_skip('source article absent in shopify; nothing to remove') if gid.nil?
 
@@ -91,27 +160,34 @@ class Umi::Shopify::ArticleTranslationSyncService
     errors = data.dig('translationsRemove', 'userErrors') || []
     return log_error("translationsRemove rejected: #{format_errors(errors)}") if errors.any?
 
-    log_done('remove', TRANSLATABLE_KEYS.length)
+    log_done('remove', TRANSLATABLE_KEYS)
+  end
+
+  def removal_enabled?
+    ENV.fetch('UMI_HC_TRANSLATION_REMOVE', 'false') == 'true'
   end
 
   def register_translations
     gid = source_article_gid
     raise SourceArticleMissing, "no shopify article for chatwoot article #{root_id}" if gid.nil?
 
-    inputs = translation_inputs(source_digests(gid))
-    return log_skip('no translatable values to register') if inputs.empty?
+    inputs = translation_inputs(*source_state(gid))
+    # The common steady state, not an error: everything Shopify holds is current
+    # and nothing in Chatwoot has moved. A run that writes nothing is the sync
+    # agreeing with the store.
+    return log_skip('nothing to write — every field is present and current') if inputs.empty?
 
     errors = register(gid, inputs)
     # A digest goes stale when the English article is updated between the read
     # and the write. Re-read once — the second attempt races nothing in practice.
     if digest_error?(errors)
       Rails.logger.info("[umi-hc-translation] digest moved for article #{root_id}; re-reading and retrying")
-      inputs = translation_inputs(source_digests(gid, refresh: true))
+      inputs = translation_inputs(*source_state(gid, refresh: true))
       errors = register(gid, inputs)
     end
     return log_error("translationsRegister rejected: #{format_errors(errors)}") if errors.any?
 
-    log_done('register', inputs.length)
+    log_done('register', inputs.map { |input| input[:key] })
   end
 
   def register(gid, inputs)
@@ -135,11 +211,19 @@ class Umi::Shopify::ArticleTranslationSyncService
     @source_article_gid = shopify.article_gids.key(root_id.to_s)
   end
 
-  def source_digests(gid, refresh: false)
-    return @source_digests if defined?(@source_digests) && !refresh
+  # The digests to pin against and what the locale already holds, in one read.
+  # They have to come from the same response: deciding whether to write from a
+  # stale view of the translations, then pinning to a fresh digest, is how a
+  # reconciler talks itself into an overwrite.
+  def source_state(gid, refresh: false)
+    return @source_state if defined?(@source_state) && !refresh
 
-    content = shopify.call(TRANSLATABLE_CONTENT_QUERY, id: gid).dig('translatableResource', 'translatableContent') || []
-    @source_digests = content.to_h { |entry| [entry['key'], entry['digest']] }
+    resource = shopify.call(TRANSLATABLE_CONTENT_QUERY, id: gid, locale: locale)['translatableResource'] || {}
+    digests = (resource['translatableContent'] || []).to_h { |entry| [entry['key'], entry['digest']] }
+    state = (resource['translations'] || []).to_h do |entry|
+      [entry['key'], { value: entry['value'], outdated: entry['outdated'] }]
+    end
+    @source_state = [digests, state]
   end
 
   def shopify
@@ -176,15 +260,17 @@ class Umi::Shopify::ArticleTranslationSyncService
     ChatwootExceptionTracker.new(StandardError.new(reason), account: shopify&.hook&.account).capture_exception
   end
 
-  def log_done(action, count)
-    Rails.logger.info("[umi-hc-translation] #{action} #{count} #{locale} field(s) for article #{@attrs[:id]} " \
+  def log_done(action, keys)
+    detail = keys.is_a?(Array) ? "#{keys.length} field(s) (#{keys.join(', ')})" : "#{keys} field(s)"
+    Rails.logger.info("[umi-hc-translation] #{action} #{detail} in #{locale} for article #{@attrs[:id]} " \
                       "\"#{@attrs[:title]}\" (source #{root_id})")
   end
 
   TRANSLATABLE_CONTENT_QUERY = <<~GRAPHQL
-    query ArticleTranslatableContent($id: ID!) {
+    query ArticleTranslatableContent($id: ID!, $locale: String!) {
       translatableResource(resourceId: $id) {
         translatableContent { key digest }
+        translations(locale: $locale) { key value outdated }
       }
     }
   GRAPHQL

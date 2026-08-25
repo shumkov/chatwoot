@@ -17,14 +17,19 @@ namespace :umi do
     # before Chatwoot had a portal for it. Nothing is translated here — every value
     # comes from Shopify, and an article whose body cannot be proved to round-trip
     # is refused rather than guessed at.
-    desc 'Import a locale\'s Shopify translations back into Chatwoot (dry run unless [locale,apply])'
-    task :import_translations, %i[locale apply] => :environment do |_task, args|
+    # The third argument stages the locale out of public view: the portal's
+    # locale route answers 200 the moment articles exist under it.
+    desc 'Import a locale\'s Shopify translations back into Chatwoot (dry run unless [locale,apply]; [locale,apply,draft] to stage)'
+    task :import_translations, %i[locale apply status] => :environment do |_task, args|
       portal = umi_hc_portal
       locale = umi_hc_translation_locale(args[:locale])
       apply = args[:apply].to_s == 'apply'
-      result = Umi::HelpCenter::TranslationImportService.new(portal: portal, locale: locale, apply: apply).perform
+      status = args[:status].presence || 'published'
+      abort("Unknown status '#{status}' — use 'published' or 'draft'") unless %w[published draft].include?(status)
+      result = Umi::HelpCenter::TranslationImportService.new(portal: portal, locale: locale, apply: apply,
+                                                            status: status).perform
 
-      puts "#{apply ? 'IMPORT (writing)' : 'DRY RUN'} — portal '#{portal.slug}', locale '#{locale}'"
+      puts "#{apply ? 'IMPORT (writing)' : 'DRY RUN'} — portal '#{portal.slug}', locale '#{locale}', status '#{status}'"
       puts result.report_lines(applied: apply)
       abort('Refusals present — nothing about them was written. Resolve them before trusting this import.') if result.refused?
     end

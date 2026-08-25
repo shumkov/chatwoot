@@ -54,6 +54,11 @@ class Umi::HelpCenter::TranslationStatusService
     rows.select(&:missing?)
   end
 
+  # Not published in Chatwoot, but Shopify still serves the translation.
+  def unpublished
+    rows.select { |row| row.state == :unpublished }
+  end
+
   def shopify_outdated
     rows.reject { |row| row.shopify_outdated_keys.blank? }
   end
@@ -76,6 +81,7 @@ class Umi::HelpCenter::TranslationStatusService
   def summary_lines
     ["  missing translation: #{missing.length}",
      "  behind source:       #{drifted.length}",
+     "  not published in chatwoot but still served by shopify: #{unpublished.length}",
      "  shopify says outdated (advisory cross-check): #{shopify_outdated.length}"] +
       shopify_outdated.map { |row| "    ##{row.article_id} #{row.shopify_outdated_keys.join(', ')}" } +
       ["  the sync would change in shopify: #{pending.length}"] +
@@ -101,8 +107,14 @@ class Umi::HelpCenter::TranslationStatusService
     )
   end
 
+  # `unpublished` is the one state that is not about drift: the portal is not
+  # publishing this translation, but Shopify still serves it, because removal is
+  # off by default (see ArticleTranslationSyncService#remove_translations). It is
+  # reported rather than silently reconciled — the fix is a person's call, either
+  # publish the article again or turn removal on for the run that clears it.
   def state_for(article, translation)
     return :missing if translation.nil?
+    return :unpublished unless translation.published?
     return :behind if article.updated_at > translation.updated_at
 
     :current
@@ -114,35 +126,29 @@ class Umi::HelpCenter::TranslationStatusService
                             .index_by(&:associated_article_id)
   end
 
-  # What the sync would send for this article, against what Shopify holds. Keys
-  # the source article does not expose are excluded: they have no digest, so the
-  # sync could not write them even if it wanted to.
+  # Which keys the sync would actually write. The decision is delegated to the
+  # sync itself rather than reimplemented, so the report cannot say one thing
+  # while the pipe does another — the whole value of a dry run is that it is the
+  # same answer.
   def pending_keys_for(article, translation)
     return nil if translation.nil?
 
     state = shopify_state[article.id.to_s]
     return nil if state.nil?
 
-    proposed_values(translation).filter_map do |key, value|
+    sync = sync_for(translation)
+    sync.translation_values.filter_map do |key, value|
       next unless state[:source_keys].include?(key)
 
-      key if changed?(key, value, state[:values][key])
+      key if sync.write?(key, value, state[:translations][key])
     end
   end
 
-  def proposed_values(translation)
+  def sync_for(translation)
     Umi::Shopify::ArticleTranslationSyncService.new(
       'locale' => locale, 'title' => translation.title,
       'content' => translation.content, 'description' => translation.description
-    ).translation_values
-  end
-
-  def changed?(key, proposed, current)
-    if key.end_with?('_html')
-      !Umi::HelpCenter::HtmlToMarkdown.equivalent?(proposed, current)
-    else
-      proposed != current
-    end
+    )
   end
 
   # ---- Shopify (cross-check + diff source) ----
@@ -171,7 +177,7 @@ class Umi::HelpCenter::TranslationStatusService
     entries = node['translations'] || []
     {
       source_keys: (node['translatableContent'] || []).pluck('key'),
-      values: entries.to_h { |entry| [entry['key'], entry['value']] },
+      translations: entries.to_h { |entry| [entry['key'], { value: entry['value'], outdated: entry['outdated'] }] },
       outdated: entries.select { |entry| entry['outdated'] }.pluck('key').presence
     }
   end

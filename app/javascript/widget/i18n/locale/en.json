@@ -8,7 +8,9 @@
     "TYPE_MESSAGE": "Type your message…",
     "SEND": "Send",
     "CONTINUE": "Continue conversation",
-    "ALL_TOPICS": "All topics"
+    "ALL_TOPICS": "All topics",
+    "CHANNELS_HEADING": "Chat with us on",
+    "CALL": "Call"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {
