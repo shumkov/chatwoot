@@ -579,6 +579,27 @@ work ships. It is also a hard sequencing constraint: the storefront must not sta
 `locale: th` until the portal allows `th` and holds Thai articles, or the drawer gets worse rather
 than better.
 
+### 12.1a "No FAQ block" has three causes and one appearance
+
+Read this before debugging a blank drawer. The symptom is identical in all three cases — chrome
+renders, the FAQ section is simply not there — and the causes are unrelated:
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| The locale is not in the portal's `allowed_locales` | `window.chatwootWebChannel.portal.config.allowed_locales` lacks it | add it to the portal |
+| The portal is not linked to the inbox | `window.chatwootWebChannel.portal` is **`null`** | set **`inbox.portal_id`** |
+| The locale has no published articles | portal and locale both fine, `/hc/<slug>/<locale>/articles.json` returns `payload: []` | import/publish the articles |
+
+**The second one is the trap.** `Portal#channel_web_widget_id` exists, is named as though it were
+the link, and setting it changes nothing — the widget view reads `@web_widget.inbox.portal`
+(`app/views/widgets/show.html.erb:17`), and `Inbox belongs_to :portal`. Setting only the portal
+side produces a drawer that looks exactly like a locale misconfiguration. One console read of
+`window.chatwootWebChannel.portal` separates them: `null` means the link, a populated object means
+look at the locale.
+
+Production already has the inbox side set — the live widget config renders the full portal object —
+so this is a trap for a new environment or a fresh inbox, not a step in the rollout below.
+
 ### 12.2 What was wrong in the widget itself
 
 - **`UmiInboxLinks.vue` hardcoded `'Chat with us on'`** as a JavaScript literal, and labelled the
