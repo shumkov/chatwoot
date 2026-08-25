@@ -9,6 +9,7 @@ RSpec.describe Umi::Shopify::ClientFactory do
     allow(ShopifyAPI::Context).to receive(:setup)
     allow(ShopifyAPI::Auth::Session).to receive(:new).and_return(instance_double(ShopifyAPI::Auth::Session))
     allow(ShopifyAPI::Clients::Rest::Admin).to receive(:new).and_return(instance_double(ShopifyAPI::Clients::Rest::Admin))
+    allow(ShopifyAPI::Clients::Graphql::Admin).to receive(:new).and_return(instance_double(ShopifyAPI::Clients::Graphql::Admin))
   end
 
   describe '.client_for' do
@@ -20,6 +21,23 @@ RSpec.describe Umi::Shopify::ClientFactory do
 
     it 'builds the client from the hook shop and token' do
       described_class.client_for(hook)
+
+      expect(ShopifyAPI::Auth::Session).to have_received(:new).with(shop: 'shop.myshopify.com', access_token: 'token')
+    end
+  end
+
+  # Translations are GraphQL-only, so the help-center translation sync needs this
+  # client — and it has to be built here, or it would bypass the Context.setup
+  # mutex below and reintroduce the loader race for every UMI Shopify service.
+  describe '.graphql_client_for' do
+    it 'configures the Shopify context before building the GraphQL client' do
+      expect(ShopifyAPI::Context).to receive(:setup)
+
+      described_class.graphql_client_for(hook)
+    end
+
+    it 'builds the client from the hook shop and token' do
+      described_class.graphql_client_for(hook)
 
       expect(ShopifyAPI::Auth::Session).to have_received(:new).with(shop: 'shop.myshopify.com', access_token: 'token')
     end

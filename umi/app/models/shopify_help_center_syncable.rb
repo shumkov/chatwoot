@@ -12,13 +12,31 @@ module Umi::ShopifyHelpCenterSyncable
 
   private
 
-  # Only the configured portal + locale mirror to Shopify. Filtering locale keeps
-  # non-en translations — which would slugify to a colliding handle — out of the
-  # sync (source of truth is the en FAQ).
+  # Only the configured portal syncs, and within it only two kinds of article:
+  # the source locale, which becomes a Shopify article, and the translation
+  # locales, which become translations *of* that article. A translation carries
+  # no handle of its own, so the handle collision that once kept non-en locales
+  # out of the sync does not arise — see docs/UMI-HELP-CENTER-THAI-SPEC.md §3.
   def umi_help_center_syncable?
     portal&.slug.present? &&
       portal.slug == ENV.fetch('UMI_HC_PORTAL_SLUG', 'umi-help') &&
-      locale.to_s == ENV.fetch('UMI_HC_LOCALE', 'en')
+      (umi_help_center_source_locale? || umi_help_center_translation_locale?)
+  end
+
+  def umi_help_center_source_locale?
+    Umi::Shopify::HelpCenterLocales.source?(locale)
+  end
+
+  # An unlinked translation has no article to translate, so there is nothing to
+  # push. Linking it later is an update, which re-fires this callback.
+  def umi_help_center_translation_locale?
+    Umi::Shopify::HelpCenterLocales.translation?(locale) && associated_article_id.present?
+  end
+
+  # A translation is only meaningful against the article it translates, and the
+  # Shopify article is found by the *root* article's chatwoot_id.
+  def umi_help_center_root_id
+    umi_help_center_source_locale? ? id : associated_article_id
   end
 
   # Snapshot the fields the sync needs, so the job is self-contained and works
@@ -30,17 +48,24 @@ module Umi::ShopifyHelpCenterSyncable
       'account_id' => account_id,
       'portal_slug' => portal&.slug,
       'locale' => locale,
+      'root_id' => umi_help_center_root_id,
       'title' => title,
       'content' => content,
       'description' => description,
       'slug' => slug,
       'status' => status.to_s,
-      'position' => position,
-      'category_name' => category&.name,
-      'category_slug' => category&.slug,
-      'featured' => meta.is_a?(Hash) && meta['featured'].to_s == 'true',
-      'featured_position' => (meta['featured_position'] if meta.is_a?(Hash))
-    }
+      'position' => position
+    }.merge(umi_help_center_category_attrs).merge(umi_help_center_featured_attrs)
+  end
+
+  def umi_help_center_category_attrs
+    { 'category_name' => category&.name, 'category_slug' => category&.slug }
+  end
+
+  def umi_help_center_featured_attrs
+    return { 'featured' => false, 'featured_position' => nil } unless meta.is_a?(Hash)
+
+    { 'featured' => meta['featured'].to_s == 'true', 'featured_position' => meta['featured_position'] }
   end
 
   def umi_enqueue_help_center_sync

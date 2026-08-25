@@ -12,8 +12,16 @@
 # is rendered with Chatwoot's own ChatwootMarkdownRenderer#render_article so the
 # storefront HTML matches the portal exactly.
 #
+# Articles written in a translation locale ride the same hooks but land as Shopify
+# *translations* of the English article rather than as articles of their own —
+# see docs/UMI-HELP-CENTER-THAI-SPEC.md and
+#   umi/app/services/shopify/help_center_locales.rb
+#   umi/app/services/shopify/article_translation_sync_service.rb
+#
 # Config (all optional, sensible defaults):
 #   UMI_HC_PORTAL_SLUG      (default "umi-help")  only this portal syncs
+#   UMI_HC_LOCALE           (default "en")        the source locale
+#   UMI_HC_TRANSLATION_LOCALES (default "th")     locales synced as translations
 #   UMI_HC_BLOG_HANDLE      (default "help")      target Shopify blog handle
 #   UMI_HC_BLOG_TITLE       (default "Help Center")
 #   UMI_HC_ARTICLE_AUTHOR   (default "UMI")
@@ -26,6 +34,8 @@
 #   read_content / write_content                 -> blog + article read/write
 #   read_online_store_navigation /               -> URL redirects (the 301s on
 #   write_online_store_navigation                   rename and delete)
+#   read_translations / write_translations       -> article translations
+#                                                   (translationsRegister)
 # Shopify's docs disagree on whether redirects fall under "content" or
 # "online_store_navigation"; both are requested so the 301s work regardless.
 Rails.application.config.to_prepare do
@@ -39,7 +49,8 @@ Rails.application.config.to_prepare do
   if defined?(Shopify::IntegrationHelper)
     current = Shopify::IntegrationHelper::REQUIRED_SCOPES
     if current.is_a?(Array)
-      desired = %w[read_content write_content read_online_store_navigation write_online_store_navigation]
+      desired = %w[read_content write_content read_online_store_navigation write_online_store_navigation
+                   read_translations write_translations]
       unless desired.all? { |scope| current.include?(scope) }
         merged = (current + desired).uniq.freeze
         Shopify::IntegrationHelper.send(:remove_const, :REQUIRED_SCOPES)

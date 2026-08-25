@@ -32,9 +32,19 @@ module Umi::Shopify::ClientFactory
 
     def client_for(hook)
       ensure_shopify_context!
-      ShopifyAPI::Clients::Rest::Admin.new(
-        session: ShopifyAPI::Auth::Session.new(shop: hook.reference_id, access_token: hook.access_token)
-      )
+      ShopifyAPI::Clients::Rest::Admin.new(session: session_for(hook))
+    end
+
+    # Translations have no REST surface — `translationsRegister` and
+    # `translationsRemove` are GraphQL-only — so the help-center translation sync
+    # needs this alongside the REST client the article sync uses.
+    def graphql_client_for(hook)
+      ensure_shopify_context!
+      ShopifyAPI::Clients::Graphql::Admin.new(session: session_for(hook))
+    end
+
+    def session_for(hook)
+      ShopifyAPI::Auth::Session.new(shop: hook.reference_id, access_token: hook.access_token)
     end
 
     def ensure_shopify_context!

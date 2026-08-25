@@ -119,16 +119,11 @@ class Umi::Shopify::HelpCenterSyncService
   # ---- mapping ----
 
   def rendered_body
-    ChatwootMarkdownRenderer.new(@attrs[:content].to_s).render_article.to_s
+    Umi::Shopify::HelpCenterContent.body_html(@attrs[:content])
   end
 
   def summary_html
-    desc = @attrs[:description].to_s.strip
-    return "<p>#{ERB::Util.html_escape(desc)}</p>" if desc.present?
-
-    plain = ActionController::Base.helpers.strip_tags(@attrs[:content].to_s)
-    plain = plain.gsub(/[#*_>`\[\]()]/, ' ').gsub(/\s+/, ' ').strip
-    plain.present? ? "<p>#{ERB::Util.html_escape(plain[0, 160])}</p>" : ''
+    Umi::Shopify::HelpCenterContent.summary_html(@attrs[:description], @attrs[:content])
   end
 
   def metafields
@@ -143,17 +138,10 @@ class Umi::Shopify::HelpCenterSyncService
     ].compact
   end
 
-  # Shopify rejects a `single_line_text_field` containing a line break with a 422 that
-  # fails the *whole* article, so every value is squished to one line before it is sent.
-  # `squish` (not `strip`) is required: it collapses U+2028 and non-breaking spaces,
-  # which text pasted from a word processor carries and an ASCII-only `\s` would leave.
-  # `limit` is applied after squishing, so a whitespace run straddling the cut cannot
-  # move where it lands.
   def text_mf(namespace, key, value, limit: nil)
-    normalized = value.to_s.squish
-    return nil if normalized.blank?
+    normalized = Umi::Shopify::HelpCenterContent.single_line(value, limit: limit)
+    return nil if normalized.nil?
 
-    normalized = normalized[0, limit] if limit
     { namespace: namespace, key: key, type: 'single_line_text_field', value: normalized }
   end
 
