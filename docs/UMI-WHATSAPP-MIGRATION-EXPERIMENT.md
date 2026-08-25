@@ -1400,6 +1400,39 @@ code was sent; Twilio's logs say nothing arrived.
 
 **Voice:** diverted 17:50:53Z, restored 18:46:41Z.
 
+### 11.2d Escalated to a Klaviyo WhatsApp specialist (2026-08-25)
+
+**Case reference 4139654.** Keith escalated to Klaviyo's WhatsApp specialist team; Maura
+confirmed the escalation and said they would follow up.
+
+**Account confirmed: UMI, public API key / site ID `RSqZEV`.** Support was looking at the right
+account — the mix-up theory is dead.
+
+**A finding that came out of their question, and it matters:** support could not see the failed
+setup because **an abandoned embedded-signup session persists nothing on Klaviyo's side.** Run 3
+was deliberately left untouched at their request, and Settings → WhatsApp had already reverted to
+the "Try WhatsApp for free" splash on its own — no WABA, no number, no error state retained.
+
+So there is nothing to "leave in place". If failed attempts leave no server-side trace, that
+would explain why no error codes exist for any of the three attempts — and it is consistent with
+Twilio showing no verification call or SMS triggered for runs 2 and 3. The requests appear not to
+reach Klaviyo's backend at all.
+
+The only durable identifiers are Meta's session references, printed at the foot of the Facebook
+Login for Business dialog:
+
+| Session ID | When |
+|---|---|
+| `01a02f52-9dd6-7b57-86ad-0eb41377691b` | 23 Aug ~22:53 UTC |
+| `01a02f5f-17d8-7818-a228-15c791b2ab41` | 23 Aug ~23:06 UTC |
+| `01a0350c-f15f-74d1-8919-dd4850387486` | 24 Aug ~18:36 UTC |
+
+Eight screenshots were sent to support, named for what they show (Klaviyo error, action-required
+row, Meta's "will be moved" warning, both "already verified" errors, the reused-WABA screen, 2SV
+disabled, and the delete dialog's tier/quality warning).
+
+**Status: blocked on vendor.** WhatsApp on `+66975311301` has been down since 2026-08-23.
+
 ### 11.3 Options while waiting
 
 1. **Do nothing.** Voice is fine; only WhatsApp is dark. Lowest risk.
