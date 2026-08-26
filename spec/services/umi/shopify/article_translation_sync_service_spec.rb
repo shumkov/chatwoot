@@ -227,6 +227,62 @@ RSpec.describe Umi::Shopify::ArticleTranslationSyncService do
       end
     end
 
+    # When English moves, the reconciler replaces the Thai written against the old
+    # English with a derived one. That is a machine string superseding a person's,
+    # and it is the only case a translator needs to see — a field that was absent
+    # had nothing to review, and one written because the Chatwoot article changed
+    # is the translator's own edit arriving.
+    describe 'flagging superseded translations for review' do
+      let(:article) do
+        portal = create(:portal, account: account, slug: 'umi-help',
+                                 config: { 'allowed_locales' => %w[en th], 'default_locale' => 'en' })
+        english = create(:article, account: account, portal: portal, locale: 'en', title: 'Source')
+        category = create(:category, portal: portal, account: account, locale: 'th', slug: 'c-th')
+        create(:article, account: account, portal: portal, category: category, locale: 'th',
+                         title: 'ไทย', associated_article_id: english.id)
+      end
+
+      let(:attrs) { super().merge('id' => article.id) }
+
+      def pending_on(record)
+        Array(record.reload.meta[Umi::HelpCenter::TranslationReviewList::META_KEY])
+      end
+
+      context 'when a field was outdated' do
+        let(:existing_translations) do
+          described_class.new(attrs).translation_values.map do |key, value|
+            { 'key' => key, 'value' => "เก่า #{value}", 'outdated' => key == 'title' }
+          end
+        end
+
+        it 'records what it replaced, with both values' do
+          client_with
+          described_class.new(attrs).perform
+
+          expect(pending_on(article).map { |item| item['key'] }).to eq(['title'])
+          expect(pending_on(article).first).to include('was' => "เก่า #{attrs['title']}", 'now' => attrs['title'])
+        end
+
+        it 'does not move updated_at, which the drift report reads' do
+          client_with
+          before = article.updated_at
+
+          described_class.new(attrs).perform
+
+          expect(article.reload.updated_at).to be_within(1.second).of(before)
+        end
+      end
+
+      context 'when the locale was simply empty' do
+        it 'flags nothing — a field that was absent has no prior translation to review' do
+          client_with
+          described_class.new(attrs).perform
+
+          expect(pending_on(article)).to be_empty
+        end
+      end
+    end
+
     context 'when only one field is outdated' do
       let(:existing_translations) do
         described_class.new(attrs).translation_values.map do |key, value|

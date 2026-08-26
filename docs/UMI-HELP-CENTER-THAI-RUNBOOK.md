@@ -71,11 +71,42 @@ while it is being reviewed. It does **not** gate the API, and
 ## 3. Reconnect the Shopify integration
 
 `translationsRegister` needs `write_translations`; reading digests needs `read_translations`.
-Neither is on the token. **An existing token does not gain scopes** — disconnect and reconnect the
-Shopify integration in Chatwoot, exactly as when `write_content` was added.
+Neither is on the token, and **an existing token does not gain scopes**.
 
-Verify: the sync logs `skip … missing write_translations scope` until this is done, and stops
-saying it afterwards.
+**There is no CLI or rake path.** It is an OAuth round trip through a browser:
+`POST …/integrations/shopify/auth` mints a state token and returns a Shopify authorize URL built
+from `Shopify::IntegrationHelper::REQUIRED_SCOPES`, the merchant approves in Shopify, and
+`GET /shopify/callback` creates the hook with the granted scope string.
+
+**It must happen after §1.** The scope list is read from the constant this branch widens at boot,
+so a reconnect against the old code requests the old scopes and silently fixes nothing.
+
+Click path, in Chatwoot: **Settings → Integrations → Shopify → Disconnect**, confirm, then
+**Connect**, enter `pizeev-ys.myshopify.com` in *Store URL*, and approve on Shopify's consent
+screen — which should now list translation permissions it did not before.
+
+Verify:
+
+```ruby
+Integrations::Hook.find_by(app_id: 'shopify').settings['scope']   # must contain write_translations
+```
+
+The sync logs `skip … missing write_translations scope` until this is done and stops afterwards.
+
+### Two consequences of reconnecting, neither obvious
+
+**The hook is destroyed and recreated**, so anything living in its `settings` is lost. That
+includes `umi_contact_sync_watermark` (patch #7). A missing watermark is treated as "backfill
+needed" and the contact poll **refuses to run** rather than syncing from epoch — safe, but it stays
+stopped until somebody notices. Re-run it afterwards:
+
+```bash
+bundle exec rake 'umi:shopify_contacts:backfill[<account_id>]'
+```
+
+**Everything on that token is down while it is disconnected** — the orders sidebar (#21), contact
+sync (#7), order attribution (#25) and the English Help Center sync (#3). Keep the gap to a minute,
+and do not disconnect during a busy period.
 
 ## 4. Import the Thai, as drafts
 
@@ -152,6 +183,12 @@ present and current. §5 is where you find out whether that holds, on one articl
 
 - `translation_status` is the standing check. It exits non-zero when anything is missing or behind,
   so it can gate a deploy or drive a scheduled run. Where it should shout is still open (spec D2).
+- **`translation_review` is the translator's list.** When English moves, the reconciler replaces the
+  Thai written against the old English with a derived one — correct, and the one case where a
+  machine string supersedes a person's. Each replacement is stamped on the translation article and
+  rendered by `rake 'umi:help_center:translation_review[th]'` with the English title, both Thai
+  values readable, and a link to the editor. Forward it to Mai; sign off per article with
+  `translation_reviewed`, which clears the entries.
 - Mai's review of the 25 widget chrome strings: spec §12.4.
 - Two English-side follow-ups, both deliberately out of scope and both sequenced *after* this:
   the `summary_html` truncation and the apostrophe drift (spec §2.4, §2.5).

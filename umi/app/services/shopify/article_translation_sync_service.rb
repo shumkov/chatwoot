@@ -126,7 +126,8 @@ class Umi::Shopify::ArticleTranslationSyncService
     gid = source_article_gid
     raise SourceArticleMissing, "no shopify article for chatwoot article #{root_id}" if gid.nil?
 
-    inputs = translation_inputs(*source_state(gid))
+    digests, held = source_state(gid)
+    inputs = translation_inputs(digests, held)
     # The common steady state, not an error: everything Shopify holds is current
     # and nothing in Chatwoot has moved. A run that writes nothing is the sync
     # agreeing with the store.
@@ -137,12 +138,43 @@ class Umi::Shopify::ArticleTranslationSyncService
     # and the write. Re-read once — the second attempt races nothing in practice.
     if digest_error?(errors)
       Rails.logger.info("[umi-hc-translation] digest moved for article #{root_id}; re-reading and retrying")
-      inputs = translation_inputs(*source_state(gid, refresh: true))
+      digests, held = source_state(gid, refresh: true)
+      inputs = translation_inputs(digests, held)
       errors = register(gid, inputs)
     end
     return log_error("translationsRegister rejected: #{format_errors(errors)}") if errors.any?
 
+    flag_for_review(inputs, held)
     log_done('register', inputs.pluck(:key))
+  end
+
+  # An outdated field held a translation somebody wrote against English that has
+  # since changed, so replacing it supersedes a person's work with a derived
+  # string. That is the only case worth a translator's time: a field that was
+  # absent had nothing to review, and a field written because the Chatwoot
+  # article changed *is* the translator's own edit.
+  def flag_for_review(inputs, held)
+    superseded = inputs.filter_map do |input|
+      current = held[input[:key]] || {}
+      next unless current[:outdated] && current[:value].present?
+
+      { 'key' => input[:key], 'was' => current[:value], 'now' => input[:value], 'at' => Time.current.iso8601 }
+    end
+    return if superseded.empty?
+
+    stamp_for_review(superseded)
+  end
+
+  def stamp_for_review(entries)
+    article = Article.find_by(id: @attrs[:id])
+    return if article.nil?
+
+    key = Umi::HelpCenter::TranslationReviewList::META_KEY
+    meta = article.meta.is_a?(Hash) ? article.meta.dup : {}
+    meta[key] = Array(meta[key]) + entries
+    # Not `update!`: stamping this must not re-fire the sync, and must not move
+    # updated_at, which is what the drift report reads.
+    article.update_columns(meta: meta) # rubocop:disable Rails/SkipsModelValidations
   end
 
   def register(gid, inputs)

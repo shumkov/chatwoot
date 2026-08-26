@@ -72,8 +72,30 @@ namespace :umi do
 
       # Moving updated_at without changing content is the whole point, so touch
       # is the right tool rather than a lint exception to work around.
+      cleared = Umi::HelpCenter::TranslationReviewList.clear!(translation)
       translation.touch # rubocop:disable Rails/SkipsModelValidations
       puts "Marked '#{locale}' translation of article #{args[:article_id]} reviewed at #{translation.updated_at.iso8601}."
+      puts "Cleared #{cleared} item(s) from the translator review list." if cleared.positive?
+    end
+  end
+end
+
+namespace :umi do
+  namespace :help_center do
+    # For the translator, not the operator. Lists the Thai the pipe wrote over
+    # somebody else's Thai — which happens when English moved and the reconciler
+    # re-derived the field — with both values readable and a link to the editor.
+    # Cleared per article by `translation_reviewed`.
+    desc 'List translations the sync replaced, for a translator to review'
+    task :translation_review, [:locale] => :environment do |_task, args|
+      portal = umi_hc_portal
+      locale = umi_hc_translation_locale(args[:locale])
+      list = Umi::HelpCenter::TranslationReviewList.new(portal: portal, locale: locale)
+
+      puts "UMI Help Center — '#{locale}' translations waiting for review (#{list.entries.length})"
+      puts
+      puts list.report_lines
+      puts "Sign off with: rake 'umi:help_center:translation_reviewed[#{locale},<article id>]'" if list.entries.any?
     end
   end
 end
