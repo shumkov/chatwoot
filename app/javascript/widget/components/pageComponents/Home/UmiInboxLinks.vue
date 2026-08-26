@@ -5,8 +5,17 @@
 // Links are hardcoded for UMI (see UMI-PATCHES.md). Icons are inlined so the
 // component does not depend on any particular icon set being bundled into the
 // widget build.
-const heading = 'Chat with us on';
-const links = [
+//
+// The channel names are proper nouns and stay as they are in every language;
+// the heading and the phone link are prose and go through i18n. They were
+// literals here until the Thai pass, which is why they were invisible to the
+// translator — nothing outside this file mentioned them.
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
+
+const channels = [
   {
     label: 'WhatsApp',
     url: 'https://wa.me/66800053593',
@@ -28,20 +37,31 @@ const links = [
     icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5.5"/><circle cx="12" cy="12" r="4"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>',
   },
   {
-    label: 'Call',
+    translated: true,
     url: 'tel:+66975311301',
     icon: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.18 2.18z"/></svg>',
   },
 ];
+
+// Resolved here rather than in the template so the i18n key stays a literal that
+// a lint rule and a translation extractor can both see.
+const links = computed(() =>
+  channels.map(channel => ({
+    ...channel,
+    label: channel.translated ? t('UMI.CALL') : channel.label,
+  }))
+);
 </script>
 
 <template>
   <div class="flex flex-col w-full gap-2">
-    <p class="px-1 text-sm font-medium text-n-slate-11">{{ heading }}</p>
+    <p class="px-1 text-sm font-medium text-n-slate-11">
+      {{ $t('UMI.CHANNELS_HEADING') }}
+    </p>
     <div class="grid grid-cols-2 gap-2">
       <a
         v-for="link in links"
-        :key="link.label"
+        :key="link.url"
         :href="link.url"
         target="_blank"
         rel="noopener noreferrer"
