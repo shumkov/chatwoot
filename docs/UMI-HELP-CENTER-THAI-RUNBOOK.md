@@ -68,22 +68,37 @@ Optionally add `th` to `draft_locales` too — that hides the locale from the po
 while it is being reviewed. It does **not** gate the API, and
 `chat.umi.store/hc/umi-help/th` answers 200 either way, which is why §4 stages as drafts.
 
-## 3. Reconnect the Shopify integration
+## 3. Grant the translation scopes
 
-`translationsRegister` needs `write_translations`; reading digests needs `read_translations`.
-Neither is on the token, and **an existing token does not gain scopes**.
+`translationsRegister` needs `write_translations`, and **an existing token does not gain
+scopes** — the grant has to be reissued.
 
-**There is no CLI or rake path.** It is an OAuth round trip through a browser:
-`POST …/integrations/shopify/auth` mints a state token and returns a Shopify authorize URL built
-from `Shopify::IntegrationHelper::REQUIRED_SCOPES`, the merchant approves in Shopify, and
-`GET /shopify/callback` creates the hook with the granted scope string.
+**Reconnecting alone does not do it.** The app runs on Shopify **managed installation**, where
+the granted scopes come from the app's own configuration, not from the `scope` parameter
+Chatwoot puts in its authorize URL. `Shopify::IntegrationHelper::REQUIRED_SCOPES` — which this
+branch widens at boot — is therefore *requested and ignored*. A disconnect/reconnect hands back
+exactly what the app config already declared, which is how 2026-08-26 was spent discovering
+this: the reconnect succeeded, the consent screen said nothing about translations, and the new
+hook came back without `write_translations`.
 
-**It must happen after §1.** The scope list is read from the constant this branch widens at boot,
-so a reconnect against the old code requests the old scopes and silently fixes nothing.
+The scopes live in **`umi-vps-infra`**, in `shopify/umi-chatwoot/shopify.app.toml`. Two steps,
+in this order:
 
-Click path, in Chatwoot: **Settings → Integrations → Shopify → Disconnect**, confirm, then
-**Connect**, enter `pizeev-ys.myshopify.com` in *Store URL*, and approve on Shopify's consent
-screen — which should now list translation permissions it did not before.
+**a. Release an app version that declares them.** From `shopify/umi-chatwoot` in that repo, add
+the scopes to `[access_scopes]` and:
+
+```bash
+shopify app deploy --allow-updates --message "add translation scopes"
+```
+
+The CLI logs in through a device code — it prints a verification code and opens
+`accounts.shopify.com`; the login itself is interactive and cannot be scripted. Success looks
+like `New version released to users.` with the app version name.
+
+**b. Reconnect in Chatwoot, so the store approves the new access.** **Settings → Integrations →
+Shopify → Delete**, confirm, then **Connect**, enter `pizeev-ys.myshopify.com` in *Store URL*,
+and approve. The consent screen now names what was added — `Edit other data: Translations` — and
+if it does not, step (a) did not take effect and there is no point approving.
 
 Verify:
 
@@ -91,9 +106,19 @@ Verify:
 Integrations::Hook.find_by(app_id: 'shopify').settings['scope']   # must contain write_translations
 ```
 
+`read_translations` will **not** appear even if the toml declares it: Shopify folds read into
+write for this resource. The sync's guard asks for `write_translations` only, so that is fine.
+
 The sync logs `skip … missing write_translations scope` until this is done and stops afterwards.
 
+**Mind what else the app config declares.** The grant is the whole toml, not a delta, so a
+reconnect can also *remove* a scope that the old hook happened to carry from the legacy install
+flow. `read_fulfillments` disappeared exactly this way before it was added to the toml on
+2026-08-26.
+
 ### Two consequences of reconnecting, neither obvious
+
+(Both apply to step (b), and to every later reconnect.)
 
 **The hook is destroyed and recreated**, so anything living in its `settings` is lost. That
 includes `umi_contact_sync_watermark` (patch #7). A missing watermark is treated as "backfill
@@ -102,6 +127,15 @@ stopped until somebody notices. Re-run it afterwards:
 
 ```bash
 bundle exec rake 'umi:shopify_contacts:backfill[<account_id>]'
+```
+
+A full backfill is only needed if the old value is gone. Read the watermark *before*
+disconnecting and write it back afterwards — the poll then resumes from where it stopped and
+picks up anything that changed during the gap, in seconds rather than a full re-sync:
+
+```ruby
+hook = Integrations::Hook.find_by(app_id: 'shopify')
+hook.update!(settings: hook.settings.merge('umi_contact_sync_watermark' => '<saved value>'))
 ```
 
 **Everything on that token is down while it is disconnected** — the orders sidebar (#21), contact
