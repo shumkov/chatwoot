@@ -45,8 +45,55 @@ git push origin umi
 git tag umi-v4.16.0 && git push origin umi-v4.16.0   # match the base tag in UMI-PATCHES.md
 ```
 
-Then in `umi-vps-infra`: **`pg_dump` first**, bump `chatwoot_version`, and
-`ansible-playbook site.yml --tags chatwoot`.
+**Check `origin/umi` before doing any of that** — someone may have merged already, and a stale
+local ref makes it look otherwise. `git log --oneline -1 origin/umi` after a fetch.
+
+### 1b. Wait for the *tag* build, then pin its digest
+
+Two builds fire and they are not interchangeable. The push to `umi` builds `umi-latest`; the
+**tag** build publishes the versioned image the infra pins. Only the second one matters here, and
+it finishes later. `gh run list --repo shumkov/chatwoot` shows both — look for
+`Build UMI Chatwoot image` against `umi-v4.16.0-<n>`, not against `umi`.
+
+**Your work in this repo ends here.** `AGENTS.md` — "Deployment — never from this repo" — makes the
+deploy `umi-vps-infra`'s, because `chatwoot_version` and the rendered compose file on the VPS are
+contended state and two worktrees deploying would race on both. Hand over the tag and its digest;
+do not bump or run ansible from here. The procedure lives in that repo's
+`.claude/skills/deploy/SKILL.md`.
+
+The digest is what you hand over, because the role there asserts
+`chatwoot_version is match('^[^@]+@sha256:[0-9a-f]{64}$')` — a bare tag is rejected. Resolve it
+from the registry once the build has published:
+
+```bash
+REPO=shumkov/chatwoot
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:$REPO:pull&service=ghcr.io" \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -sI -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+  "https://ghcr.io/v2/$REPO/manifests/umi-v4.16.0-<n>" | grep -i docker-content-digest
+```
+
+A 404 means the build has not published yet — that is a build gate, not a permissions problem, and
+there is nothing to deploy until it clears. Sanity-check the method against the currently pinned
+tag first: it should return the digest already in `main.yml`.
+
+Then hand `umi-v4.16.0-<n>@sha256:<digest>` to whoever owns the deploy and wait for them to
+confirm the VPS is running it. **Steps 2 onward are impossible until then** — `import_translations`,
+`backfill_translations`, `translation_status` and `translation_review` all live in the image and do
+not exist on the box until it deploys.
+
+Two traps `AGENTS.md` names, worth repeating because they produce a *healthy-looking* wrong result:
+`docker compose pull && up -d` is a **silent no-op** against a digest-pinned image, and
+**migrations do not run on container boot** — the app comes up fine on the old schema. If the new
+rake tasks are missing after a supposed deploy, that is the first thing to suspect.
+
+### On the CI checks
+
+`Lint PR` **always fails** on a `UMI:` branch — upstream's semantic-PR-title action rejects `UMI`
+as a release type, and it does so on every patch branch in this fork. It is not a signal.
+`Run Chatwoot CE spec` is the one worth reading, because it covers the whole suite rather than the
+`umi/` tree.
 
 **Smoke test before going further:** `/widget` returns 200, the drawer opens on the storefront,
 Facebook and Instagram send, and a test message arrives. The English Help Center sync is untouched

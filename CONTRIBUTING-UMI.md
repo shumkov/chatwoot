@@ -41,6 +41,28 @@ Open a PR into `umi`. CI builds a **preview image** tagged with the branch name
 VPS with a temporary `chatwoot_version`) and smoke-test the affected channel
 (FB send, IG send, widget) before merging.
 
+## Reading CI: the suite is red before you start
+
+**Do not read `Run Chatwoot CE spec` as pass/fail.** It has been red on every UMI
+branch for a long time — 8 of the last 8 checked on 2026-08-26 — so green is not
+achievable and red is not information. Read it as a **diff against the known
+baseline** instead: anything failing that is *not* on this list is yours.
+
+| Failure | Owner | Since |
+|---|---|---|
+| `spec/umi/whatsapp/foreign_owned_channel_spec.rb:184` — "enabling WhatsApp calling turns calling on at Meta for an ordinary manual channel" | patch #26 | shipped failing |
+| Rubocop `spec/services/whatsapp/shared_number_spike_spec.rb:3` — `RSpec/SpecFilePathFormat` | patch #26 | shipped failing |
+| Rubocop `umi/app/jobs/line/klaviyo_bind_job.rb:18` — `Metrics/ParameterLists` | patch #24 | shipped failing |
+
+`Lint PR` is also **always** red: upstream's semantic-PR-title action rejects `UMI`
+as a release type, and every patch branch here uses that prefix. Ignore it.
+
+This is a note, not a repair. It is recorded because two people looked at a red
+suite during the patch-27 rollout and neither flinched — which is the actual cost
+of the debt. A suite that cannot tell anyone anything stops being consulted, and
+then a real regression rides in behind the noise. **If you fix one of these, delete
+its row** so the list stays the truth rather than folklore.
+
 ## Release an image
 
 ```bash
