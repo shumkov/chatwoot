@@ -583,7 +583,8 @@ than better.
 ### 12.1a "No FAQ block" has three causes and one appearance
 
 Read this before debugging a blank drawer. The symptom is identical in all three cases — chrome
-renders, the FAQ section is simply not there — and the causes are unrelated:
+renders, the FAQ section is simply not there — and the causes are unrelated. **All three fail
+silently**, which is what makes the list worth keeping:
 
 | Cause | How to tell | Fix |
 |---|---|---|
@@ -600,6 +601,39 @@ look at the locale.
 
 Production already has the inbox side set — the live widget config renders the full portal object —
 so this is a trap for a new environment or a fresh inbox, not a step in the rollout below.
+
+### 12.1b And a fourth cause, with a different appearance
+
+The three above all leave the chrome Thai and the FAQ missing. There is one more failure in this
+area and it looks the opposite way round: **the whole widget stays English even though the
+storefront passed the locale correctly.**
+
+`App.vue#setLocale` applies a locale only if it appears in the inbox's `enabledLanguages`, and
+**returns silently otherwise** — no warning, no fallback notice, nothing in the console. A locale
+the inbox does not enable is indistinguishable from a storefront that never passed one.
+
+Verified against production: `th` **is** in `enabledLanguages` (Thai among the ~40 the inbox
+carries), so this path is clear for Thai. It is recorded because it is the only one of the four
+that cannot be diagnosed by reading `window.chatwootWebChannel.portal`, and because it will bite
+whoever adds a second locale.
+
+| Symptom | Look at |
+|---|---|
+| Chrome Thai, no FAQ block | the three causes in §12.1a |
+| Chrome English despite passing `locale` | `window.chatwootWebChannel.enabledLanguages` |
+
+### 12.1c How the locale actually reaches the widget
+
+Worth writing down because it removes a worry rather than adding one. The SDK forwards
+`window.$chatwoot.locale` into the iframe by `postMessage` (`sdk/IFrameHelper.js:161`), and
+`App.vue` applies it over the inbox default on receipt.
+
+**Shopify's language switch is a full page navigation** to `/th/…`, so the widget re-boots with the
+new locale rather than having to change one at runtime. The theme therefore needs no `setLocale`
+call and no reactivity story — passing `locale` in `chatwootSettings` at boot is the whole
+integration. That also settles a question this work left open: whether the channel labels, which are
+resolved through a computed rather than a template `$t`, would update on a live locale switch. There
+is no live locale switch to survive.
 
 ### 12.2 What was wrong in the widget itself
 
