@@ -471,6 +471,7 @@ Shopify (§5.1).
 | D2 | Where should the drift report shout? | See §7. Needs a call. |
 | D3 | The 10 changed summaries (§6.2) | Recommend letting the fallback recompute. The alternative preserves a translated truncation bug. Reviewable in the import report either way. |
 | D4 | Should `th` articles be `published` in Chatwoot? | Yes — publish status gates whether the translation exists in Shopify (§5.1). A Thai draft means "no Thai on the storefront". |
+| D5a | When English moves, the reconciler replaces a translator's Thai with a derived one | **Settled by Ivan: do it, and produce a review list.** Clause two stands — outdated means the Thai was written against English that no longer exists, so re-deriving it is right. What was missing was the loop on the other side. Every such replacement is now stamped on the translation article and rendered by `translation_review` for a translator: English title, both Thai values with markup stripped, and a link to the editor. Deliberately narrow — a field that was *absent* had no prior translation to review, and one written because the Chatwoot article changed is the translator's own edit arriving, so neither is listed. |
 | D5 | `meta_title` — 26 Thai SEO titles differ from their article titles | **Closed by the reconciler rule (§4.1).** They are present and not outdated, so nothing overwrites them, and no export is needed because nothing is lost. Two earlier positions were wrong and are recorded because the reasoning matters: mirroring English was argued on the premise that the 26 were machine output being deduplicated (they are pre-existing human translation), and an export-then-overwrite compromise followed (superseded — there is nothing to export). The residual limit is now confined to those 26 rather than all 48: a `meta_title` that matches its title stays in step with a Thai title edit; one that differs can only be refreshed by the outdated flag. Giving Chatwoot articles a real SEO-title field, in `meta`, for **both** languages would remove even that. Not built. |
 | D6 | Mai's three "quick question guide" strings match no surface that exists (§12.3) | **Product decision, not a translation one.** The drawer has no quick-reply prompts. Building them to hold three translated strings would be inventing a feature off a translation ticket. Recommend asking Mai where she saw them before deciding; her Thai is kept in §12.3 either way. |
 | D7 | 25 widget chrome strings were translated here rather than by the translator (§12.4) | They are Chatwoot's own UI (day names, emoji picker, "we will be back online…"), not brand copy, and the alternative was leaving a Thai reader with English. Listed in §12.4 for Mai to correct. |
@@ -582,7 +583,8 @@ than better.
 ### 12.1a "No FAQ block" has three causes and one appearance
 
 Read this before debugging a blank drawer. The symptom is identical in all three cases — chrome
-renders, the FAQ section is simply not there — and the causes are unrelated:
+renders, the FAQ section is simply not there — and the causes are unrelated. **All three fail
+silently**, which is what makes the list worth keeping:
 
 | Cause | How to tell | Fix |
 |---|---|---|
@@ -599,6 +601,39 @@ look at the locale.
 
 Production already has the inbox side set — the live widget config renders the full portal object —
 so this is a trap for a new environment or a fresh inbox, not a step in the rollout below.
+
+### 12.1b And a fourth cause, with a different appearance
+
+The three above all leave the chrome Thai and the FAQ missing. There is one more failure in this
+area and it looks the opposite way round: **the whole widget stays English even though the
+storefront passed the locale correctly.**
+
+`App.vue#setLocale` applies a locale only if it appears in the inbox's `enabledLanguages`, and
+**returns silently otherwise** — no warning, no fallback notice, nothing in the console. A locale
+the inbox does not enable is indistinguishable from a storefront that never passed one.
+
+Verified against production: `th` **is** in `enabledLanguages` (Thai among the ~40 the inbox
+carries), so this path is clear for Thai. It is recorded because it is the only one of the four
+that cannot be diagnosed by reading `window.chatwootWebChannel.portal`, and because it will bite
+whoever adds a second locale.
+
+| Symptom | Look at |
+|---|---|
+| Chrome Thai, no FAQ block | the three causes in §12.1a |
+| Chrome English despite passing `locale` | `window.chatwootWebChannel.enabledLanguages` |
+
+### 12.1c How the locale actually reaches the widget
+
+Worth writing down because it removes a worry rather than adding one. The SDK forwards
+`window.$chatwoot.locale` into the iframe by `postMessage` (`sdk/IFrameHelper.js:161`), and
+`App.vue` applies it over the inbox default on receipt.
+
+**Shopify's language switch is a full page navigation** to `/th/…`, so the widget re-boots with the
+new locale rather than having to change one at runtime. The theme therefore needs no `setLocale`
+call and no reactivity story — passing `locale` in `chatwootSettings` at boot is the whole
+integration. That also settles a question this work left open: whether the channel labels, which are
+resolved through a computed rather than a template `$t`, would update on a live locale switch. There
+is no live locale switch to survive.
 
 ### 12.2 What was wrong in the widget itself
 
