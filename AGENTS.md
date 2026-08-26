@@ -60,6 +60,27 @@
 - Prefer `with_modified_env` (from spec helpers) over stubbing `ENV` directly in specs
 - Specs in parallel/reloading environments: prefer comparing `error.class.name` over constant class equality when asserting raised errors
 
+## Deployment — never from this repo
+
+**Do not deploy from here. Not from the main checkout, and not from a worktree.**
+
+This repo is worked on in several parallel worktrees. A deploy contends on two pieces of
+state that live elsewhere — `chatwoot_version` in `umi-vps-infra`'s
+`ansible/group_vars/all/main.yml`, and the rendered `/opt/umi/chatwoot/docker-compose.yml`
+on the VPS. If two worktrees could deploy, they would race on both and one change would
+vanish silently. Note that a deploy never writes to this repo at all.
+
+**Your job ends at the tag.** Merge to `umi`, then push an immutable `umi-v*` tag — that
+triggers the image build. Then hand the tag to the deploy owner:
+**`umi-vps-infra`**, whose `.claude/skills/deploy/SKILL.md` carries the full procedure.
+
+Two traps that make improvising here expensive, and which the deploy skill exists to prevent:
+`docker compose pull && up -d` is a **silent no-op** against a digest-pinned image, and
+**migrations do not run on container boot** — the app comes up healthy on the old schema.
+
+If you believe a deploy is needed, say so and hand over the tag. Do not run `docker compose`
+against the VPS.
+
 ## Codex Worktree Workflow
 
 - Use a separate git worktree + branch per task to keep changes isolated.
