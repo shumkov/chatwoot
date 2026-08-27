@@ -45,8 +45,42 @@ git push origin umi
 git tag umi-v4.16.0 && git push origin umi-v4.16.0   # match the base tag in UMI-PATCHES.md
 ```
 
-Then in `umi-vps-infra`: **`pg_dump` first**, bump `chatwoot_version`, and
+**Check `origin/umi` before doing any of that** — someone may have merged already, and a stale
+local ref makes it look otherwise. `git log --oneline -1 origin/umi` after a fetch.
+
+### 1b. Wait for the *tag* build, then pin its digest
+
+Two builds fire and they are not interchangeable. The push to `umi` builds `umi-latest`; the
+**tag** build publishes the versioned image the infra pins. Only the second one matters here, and
+it finishes later. `gh run list --repo shumkov/chatwoot` shows both — look for
+`Build UMI Chatwoot image` against `umi-v4.16.0-<n>`, not against `umi`.
+
+The role asserts `chatwoot_version is match('^[^@]+@sha256:[0-9a-f]{64}$')`, so a bare tag is
+rejected: `umi-vps-infra/ansible/group_vars/all/main.yml` needs `umi-v4.16.0-<n>@sha256:<digest>`.
+Resolve the digest from the registry once the build has published:
+
+```bash
+REPO=shumkov/chatwoot
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:$REPO:pull&service=ghcr.io" \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -sI -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+  "https://ghcr.io/v2/$REPO/manifests/umi-v4.16.0-<n>" | grep -i docker-content-digest
+```
+
+A 404 means the build has not published yet — that is a build gate, not a permissions problem, and
+there is nothing to deploy until it clears. Sanity-check the method against the currently pinned
+tag first: it should return the digest already in `main.yml`.
+
+Then in `umi-vps-infra`: **`pg_dump` first**, bump `chatwoot_version` to the pinned digest, and
 `ansible-playbook site.yml --tags chatwoot`.
+
+### On the CI checks
+
+`Lint PR` **always fails** on a `UMI:` branch — upstream's semantic-PR-title action rejects `UMI`
+as a release type, and it does so on every patch branch in this fork. It is not a signal.
+`Run Chatwoot CE spec` is the one worth reading, because it covers the whole suite rather than the
+`umi/` tree.
 
 **Smoke test before going further:** `/widget` returns 200, the drawer opens on the storefront,
 Facebook and Instagram send, and a test message arrives. The English Help Center sync is untouched
