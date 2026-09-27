@@ -15,7 +15,7 @@ class Umi::Line::KlaviyoBindJob < ApplicationJob
     Rails.logger.error("[UMI-LINE] stage=klaviyo_bind_failed outcome=missing_configuration key=#{error.message}")
   end
 
-  def perform(email:, line_user_id:, line_display_name:, consent_at:, fingerprint:, verified_email: false)
+  def perform(email:, line_user_id:, line_display_name:, consent_at:, fingerprint:, verified_email: false) # rubocop:disable Metrics/ParameterLists
     Umi::Line::KlaviyoClient.new.profile_import(
       email: email,
       properties: {
