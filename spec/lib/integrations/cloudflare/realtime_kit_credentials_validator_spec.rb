@@ -40,10 +40,9 @@ RSpec.describe Integrations::Cloudflare::RealtimeKitCredentialsValidator do
   end
 
   it 'accepts a RealtimeKit App ID from a later apps page' do
-    stub_const("#{described_class}::APPS_PAGE_SIZE", 1)
     stub_token_verify(status: 'active')
-    stub_apps_list([{ id: 'another_app_id' }], page_no: 1, total_count: 2)
-    stub_apps_list([{ id: app_id }], page_no: 2, total_count: 2)
+    stub_apps_list(Array.new(apps_page_size) { |index| { id: "other_#{index}" } }, page_no: 1, total_count: apps_page_size + 1)
+    stub_apps_list([{ id: app_id }], page_no: 2, total_count: apps_page_size + 1)
 
     expect(described_class.validate(account_id, app_id, api_token).success?).to be true
   end
