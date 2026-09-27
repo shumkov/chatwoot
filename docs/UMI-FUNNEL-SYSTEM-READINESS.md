@@ -35,10 +35,12 @@ preparation holds. These checks establish local behavior, not provider acceptanc
 The Shumabit bridge and runtime adapter have 20 passing Node tests and independent
 reviews. It reuses the existing workspace, memory, skills and proxy route, with
 separate conversation sessions and private replies. Runtime files are installed
-on the VPS and the new worker's internal health check passes. Activation stopped
-at the HTTPS route check: Caddy could not reach the worker through the host
-firewall. The Chatwoot webhook was not registered. The narrowly scoped route fix
-and final private-note canary remain in progress; existing bots stayed unchanged.
+on the VPS and the new worker is active. Host and Caddy-container health checks,
+the secret HTTPS webhook route, wrong-path rejection and persisted Chatwoot
+webhook registration all passed. The exact Caddy-container-to-host firewall rule
+resolved the first activation's 502 without restarting any service. Existing
+bots stayed unchanged. The final private-note/model canary awaits a selected
+test conversation; no test messages or model calls have been sent.
 
 Infrastructure source now supplies disabled-by-default funnel settings and the
 five Shopify financial webhook topics. No Chatwoot image, migration, capture
@@ -63,3 +65,15 @@ A provider test receipt, Events Manager readback and live Shumabit follow-up are
 separate acceptance evidence. They should be run with explicit test data and
 recorded results. API acceptance alone does not establish Meta attribution or
 which optimization goals Linh can select.
+
+
+## Review artifacts
+
+- Chatwoot application: [PR 56](https://github.com/shumkov/chatwoot/pull/56).
+- Shumabit worker: [draft PR 16](https://github.com/shumkov/shumabit-claude/pull/16).
+- Infrastructure: [draft PR 88](https://github.com/shumkov/umi-vps-infra/pull/88),
+  with 27 passing contract tests and Ansible syntax verification.
+
+The GitHub Linux build and full repository CI are separate from the local
+focused checks above. Release readiness requires their results to be recorded;
+opening a PR does not establish that the production funnel is active.

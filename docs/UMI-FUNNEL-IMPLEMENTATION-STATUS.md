@@ -97,8 +97,8 @@ explicit direction: reuse the existing Shumabit workspace, memory, skills,
 CLIProxy/model route and Orchestra sessions. A small Chatwoot worker maps each
 conversation to its own resumable session and returns private notes. The earlier
 stateless, tool-free service design is superseded. The resumable private-note bridge and its runtime configuration are now
-implemented and reviewed in the separate Shumabit and infra worktrees. The dedicated worker is installed and internally healthy. Activation stopped
-at an HTTPS routing check before webhook registration; see the current
+implemented and reviewed in the separate Shumabit and infra worktrees. The dedicated worker is installed and active. Its host/container health, HTTPS
+route and persisted webhook registration pass; see the current
 [readiness record](UMI-FUNNEL-SYSTEM-READINESS.md). The worker does not automatically classify or send public
 customer replies; it analyzes and drafts when staff invokes it.
 
@@ -164,8 +164,9 @@ are complete locally, as recorded below.
 
 The Shumabit runtime implementation passed 20 Node and 8 infra tests, Ansible
 syntax and a read-only Caddy adaptation check. Two independent code reviews
-returned CLEAN. The dedicated worker was subsequently installed and started; HTTPS routing
-failed before webhook registration. No inference or test note has been sent.
+returned CLEAN. The dedicated worker was subsequently installed and started. A narrow firewall
+fix resolved the initial HTTPS failure, and webhook registration now passes.
+No inference or test note has been sent.
 
 
 ## Final application integration checkpoint
@@ -188,5 +189,25 @@ failed before webhook registration. No inference or test note has been sent.
 Application source is ready for release review. The production Chatwoot image,
 schema, financial webhook subscriptions and provider exports are unchanged.
 Live provider receipt/attribution evidence and a controlled checkout remain open.
-Shumabit is a separate deployment with an internally healthy worker and a route
-fix in progress; its private-note canary awaits an agreed test conversation.
+Shumabit is a separate active deployment with verified host/container health,
+HTTPS routing and webhook registration. Its private-note/model canary awaits
+an agreed test conversation; the existing six service owners were unchanged.
+
+
+## Release-check follow-up
+
+The first full GitHub run exposed two unchanged base-branch lint offenses and
+two inherited test failures. The lint corrections preserve runtime behavior:
+the WhatsApp regression file now matches its described class, and the LINE
+job keeps its persisted keyword signature with a narrow lint exemption.
+
+The WhatsApp calling example is Enterprise-only, matching the implementation's
+provider overlay. Its corrected scope was checked explicitly: Community went
+from 24 examples / one missing-method failure to 23 passing examples, with one
+intentional edition exclusion; Enterprise ran all 24 successfully. This does
+not replace the focused funnel verification recorded above.
+
+Shumabit application and infrastructure changes are published separately in
+[worker PR 16](https://github.com/shumkov/shumabit-claude/pull/16) and
+[infra PR 88](https://github.com/shumkov/umi-vps-infra/pull/88). The infrastructure
+head passed 27 contract tests, syntax verification and live transport readback.

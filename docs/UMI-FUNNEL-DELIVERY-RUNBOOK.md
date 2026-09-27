@@ -113,9 +113,9 @@ event by itself. Do not clear this reason as part of ordinary readback.
 
 ## Verification recorded locally
 
-The integrated core, adapters, existing Shopify attribution/contact matching and
-recovered-message regression selection passed 213 examples with zero failures
-or skips. All 32 changed Ruby/rake files passed RuboCop. An erasure-during-readback
+The final integration and existing compliance regression selection passed 312
+Ruby examples with zero failures or skips. All 57 changed Ruby/rake files passed
+RuboCop; the native sidebar passed 68 frontend tests and its scoped ESLint check. An erasure-during-readback
 regression failed before its fix and passed afterward. A real financial-service
 test exported the original ฿4,000 paid outcome after a ฿1,000 refund while current
 cash became ฿3,000. No provider events were sent by these tests.
