@@ -181,7 +181,7 @@ RSpec.describe 'UMI foreign-owned WhatsApp channel' do
       allow_any_instance_of(Account).to receive(:feature_enabled?).with('channel_voice').and_return(true) # rubocop:disable RSpec/AnyInstance
     end
 
-    it 'turns calling on at Meta for an ordinary manual channel' do
+    it 'turns calling on at Meta for an ordinary manual channel', if: ChatwootApp.enterprise? do
       manual_channel.save!(validate: false)
 
       manual_channel.enable_voice_calling!
