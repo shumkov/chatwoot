@@ -4,6 +4,24 @@
 `6fa24dd2887639ef746d1c6af996ca9bbd7ff80c`. The older `crm` checkout and its
 uncommitted planning files were preserved. No provider session was resumed.
 
+## Current production status
+
+The checkpoints below retain the implementation history. As of
+`2026-09-27T17:01:19Z`, release `umi-v4.16.0-11` and both migrations are live;
+account 1 collection and the five-minute reconciliation job are enabled.
+Shopify's five financial subscriptions are released and verified from its active
+configuration. Meta and Klaviyo destinations and existing credentials are
+configured and verified, with exports off pending provider acceptance.
+Full Linux CI passed with 6,710 backend examples, zero failures, 66 pending and
+3,786 frontend tests; two upstream-only jobs were intentionally skipped.
+
+Shumabit transport is active, but both authorized private canaries failed because
+the installed CLI reports Channels unavailable. The reviewed normal CLI
+print/resume amendment awaits user alignment before code. No public customer
+messages or conversion events were sent. See the
+[current readiness record](UMI-FUNNEL-SYSTEM-READINESS.md) for release evidence
+and remaining external checks.
+
 ## Priority: first messaging campaign
 
 The user reconfirmed campaign readiness as the main first goal. Prioritize U1

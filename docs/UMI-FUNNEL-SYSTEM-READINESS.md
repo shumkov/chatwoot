@@ -32,19 +32,38 @@ frontend files pass ESLint. Independent spec and code reviews cleared each
 implementation unit, including financial identity conflicts and concurrent
 preparation holds. These checks establish local behavior, not provider acceptance.
 
-The Shumabit bridge and runtime adapter have 20 passing Node tests and independent
+The Shumabit bridge and runtime adapter have 22 passing Node tests and independent
 reviews. It reuses the existing workspace, memory, skills and proxy route, with
 separate conversation sessions and private replies. Runtime files are installed
 on the VPS and the new worker is active. Host and Caddy-container health checks,
 the secret HTTPS webhook route, wrong-path rejection and persisted Chatwoot
 webhook registration all passed. The exact Caddy-container-to-host firewall rule
 resolved the first activation's 502 without restarting any service. Existing
-bots stayed unchanged. The final private-note/model canary awaits a selected
-test conversation; no test messages or model calls have been sent.
+bots stayed unchanged. Two authorized first-step canaries produced only private
+failure notices. A startup-only diagnostic established that the installed CLI
+does not have its Channels feature available. A small amendment using normal
+CLI print/resume calls has two clean reviews and awaits user alignment before
+implementation. Transport health does not establish a working assistant.
 
-Infrastructure source now supplies disabled-by-default funnel settings and the
-five Shopify financial webhook topics. No Chatwoot image, migration, capture
-boundary, provider export or Shopify app configuration has been deployed yet.
+Release `umi-v4.16.0-11` is deployed from application commit
+`0b06c1be04398a34662f2fdfb8172454c21e1be7`. Both migrations and all three funnel
+tables are present. Collection for account 1 and the five-minute reconciliation
+job were verified at `2026-09-27T16:48:21Z`; both provider exports remain disabled.
+The fixed source boundary is `2026-09-27T16:33:12Z`, while the first enabled
+containers started at `16:46:27Z`. That earlier interval is not proven capture coverage.
+Operational and cohort reports execute successfully; their initial empty output
+is not evidence of zero sales.
+
+The natural cron tick provisioned the seven-value Sales status field. At
+`17:01:19Z`, a final readback verified the disabled Meta/Klaviyo configuration,
+correct destinations and equality with the existing authorized credentials in
+both application containers. Their preview-configuration restart was at
+`16:58:56Z`. Read-only provider checks passed; no event was prepared or posted.
+
+Shopify version `umi-chatwoot-funnel-20260927` is active. A fresh remote
+configuration pull verified API `2026-04`, all five financial topics, all three
+privacy callbacks, the existing callback destination and unchanged access scopes.
+No historical orders were replayed and no conversion event was sent.
 
 ## Activation and external evidence
 
@@ -69,11 +88,13 @@ which optimization goals Linh can select.
 
 ## Review artifacts
 
-- Chatwoot application: [PR 56](https://github.com/shumkov/chatwoot/pull/56).
+- Chatwoot application: [merged PR 56](https://github.com/shumkov/chatwoot/pull/56).
 - Shumabit worker: [draft PR 16](https://github.com/shumkov/shumabit-claude/pull/16).
-- Infrastructure: [draft PR 88](https://github.com/shumkov/umi-vps-infra/pull/88),
-  with 27 passing contract tests and Ansible syntax verification.
+- Infrastructure: [merged PR 88](https://github.com/shumkov/umi-vps-infra/pull/88),
+  with contract tests, Ansible syntax checks and live receipts in its runbooks.
 
-The GitHub Linux build and full repository CI are separate from the local
-focused checks above. Release readiness requires their results to be recorded;
-opening a PR does not establish that the production funnel is active.
+Full Linux CI passed: 6,710 backend examples with zero failures and 66 pending,
+plus 3,786 frontend tests. The upstream-only Heroku and MFA jobs were deliberately
+skipped. Release build `36332249161` succeeded; isolated image checks matched
+44 runtime/schema file hashes and all 238 frontend artifacts. The owning infra
+runbook records the database backup and live deployment receipts.
