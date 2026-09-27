@@ -33,5 +33,7 @@ class Umi::Funnel::Configuration
     else
       definition.update!(attribute_display_name: 'Sales status', attribute_display_type: 'list', attribute_values: STATUSES)
     end
+    description = 'Confirm qualification here after reviewing the conversation. Order placed and purchased are updated automatically by Shopify.'
+    definition.update!(attribute_description: description) unless definition.attribute_description == description
   end
 end

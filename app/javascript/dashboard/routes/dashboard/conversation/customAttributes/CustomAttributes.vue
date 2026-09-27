@@ -204,6 +204,7 @@ const onUpdate = async (key, value) => {
       await store.dispatch('updateCustomAttributes', {
         conversationId: conversationId.value,
         customAttributes: updatedAttributes,
+        changedAttributeKey: key,
       });
     } else {
       store.dispatch('contacts/update', {
@@ -214,7 +215,9 @@ const onUpdate = async (key, value) => {
     useAlert(t('CUSTOM_ATTRIBUTES.FORM.UPDATE.SUCCESS'));
   } catch (error) {
     const errorMessage =
-      error?.response?.message || t('CUSTOM_ATTRIBUTES.FORM.UPDATE.ERROR');
+      error?.response?.data?.error ||
+      error?.response?.data?.message ||
+      t('CUSTOM_ATTRIBUTES.FORM.UPDATE.ERROR');
     useAlert(errorMessage);
   }
 };
@@ -226,6 +229,7 @@ const onDelete = async key => {
       await store.dispatch('updateCustomAttributes', {
         conversationId: conversationId.value,
         customAttributes: updatedAttributes,
+        changedAttributeKey: key,
       });
     } else {
       store.dispatch('contacts/deleteCustomAttributes', {
@@ -236,7 +240,9 @@ const onDelete = async key => {
     useAlert(t('CUSTOM_ATTRIBUTES.FORM.DELETE.SUCCESS'));
   } catch (error) {
     const errorMessage =
-      error?.response?.message || t('CUSTOM_ATTRIBUTES.FORM.DELETE.ERROR');
+      error?.response?.data?.error ||
+      error?.response?.data?.message ||
+      t('CUSTOM_ATTRIBUTES.FORM.DELETE.ERROR');
     useAlert(errorMessage);
   }
 };

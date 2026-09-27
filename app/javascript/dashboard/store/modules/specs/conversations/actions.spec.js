@@ -542,6 +542,47 @@ describe('#deleteMessage', () => {
   });
 
   describe('#updateCustomAttributes', () => {
+    it('rejects a refused update so the sidebar cannot report success', async () => {
+      const error = {
+        response: {
+          data: { error: 'Qualification requires live incoming evidence' },
+        },
+      };
+      axios.post.mockRejectedValue(error);
+      await expect(
+        actions.updateCustomAttributes(
+          { commit },
+          {
+            conversationId: 1,
+            customAttributes: { umi_sales_status: 'qualified' },
+            changedAttributeKey: 'umi_sales_status',
+          }
+        )
+      ).rejects.toBe(error);
+      expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('forwards explicit attribute edit intent to the API', async () => {
+      axios.post.mockResolvedValue({
+        data: { custom_attributes: { umi_sales_status: 'qualified' } },
+      });
+      await actions.updateCustomAttributes(
+        { commit },
+        {
+          conversationId: 1,
+          customAttributes: { umi_sales_status: 'qualified' },
+          changedAttributeKey: 'umi_sales_status',
+        }
+      );
+      expect(axios.post).toHaveBeenCalledWith(
+        expect.stringContaining('/1/custom_attributes'),
+        {
+          custom_attributes: { umi_sales_status: 'qualified' },
+          changed_attribute_key: 'umi_sales_status',
+        }
+      );
+    });
+
     it('update conversation custom attributes', async () => {
       axios.post.mockResolvedValue({
         data: { custom_attributes: { order_d: '1001' } },

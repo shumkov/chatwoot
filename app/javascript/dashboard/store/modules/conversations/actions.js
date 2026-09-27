@@ -482,21 +482,18 @@ const actions = {
 
   updateCustomAttributes: async (
     { commit },
-    { conversationId, customAttributes }
+    { conversationId, customAttributes, changedAttributeKey }
   ) => {
-    try {
-      const response = await ConversationApi.updateCustomAttributes({
-        conversationId,
-        customAttributes,
-      });
-      const { custom_attributes } = response.data;
-      commit(types.UPDATE_CONVERSATION_CUSTOM_ATTRIBUTES, {
-        conversationId,
-        customAttributes: custom_attributes,
-      });
-    } catch (error) {
-      // Handle error
-    }
+    const response = await ConversationApi.updateCustomAttributes({
+      conversationId,
+      customAttributes,
+      changedAttributeKey,
+    });
+    const { custom_attributes } = response.data;
+    commit(types.UPDATE_CONVERSATION_CUSTOM_ATTRIBUTES, {
+      conversationId,
+      customAttributes: custom_attributes,
+    });
   },
 
   setConversationFilters({ commit }, data) {
