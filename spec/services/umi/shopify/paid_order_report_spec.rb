@@ -30,6 +30,13 @@ RSpec.describe Umi::Shopify::PaidOrderReport do
                                                  fields: Umi::Shopify::PaidOrderReport::TRANSACTION_FIELDS }).and_return(transaction_response)
   end
 
+  it 'keeps only a positive Shopify customer ID from the private customer object' do
+    order['customer'] = { 'id' => 321, 'email' => 'private@example.test', 'first_name' => 'Private' }
+    row = report[:rows].sole
+    expect(row[:shopify_customer_id]).to eq('321')
+    expect(row.to_json).not_to include('private@example.test', 'Private', 'first_name')
+  end
+
   it 'retains only numeric basket identifiers and observed amounts for paid orders' do
     order.merge!('line_items' => [{ 'id' => 5, 'variant_id' => 7, 'current_quantity' => 2, 'title' => 'Private product text' }],
                  'current_subtotal_price' => '4000.00', 'current_total_discounts' => '100.00', 'current_total_tax' => '491.00',

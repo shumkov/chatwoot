@@ -79,6 +79,8 @@ module Umi::Webhooks::ShopifyCompliance
     account = compliance_account
     return if account.nil?
 
+    Umi::Funnel::Privacy.redact_customer_orders!(account_id: account.id, shop_domain: params[:shop_domain].to_s.downcase,
+                                                 customer_id: params.dig(:customer, :id), order_ids: params[:orders_to_redact] || [])
     payload = params[:customer] || {}
     contact, matched_by = find_redact_contact(account, payload)
     if contact.nil?

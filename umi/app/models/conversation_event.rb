@@ -42,7 +42,10 @@ class Umi::ConversationEvent < ApplicationRecord
     return if redacted_at_changed? && redacted_at.present?
 
     mutable = %w[updated_at]
-    mutable += %w[conversation_id contact_id] if event_type == 'order_paid' && contact_id_in_database.nil? && redacted_at.nil?
+    if event_type == 'order_paid' && redacted_at.nil?
+      mutable << 'contact_id' if contact_id_in_database.nil?
+      mutable << 'conversation_id' if conversation_id_in_database.nil?
+    end
     errors.add(:base, 'Recorded occurrence is immutable') if (changes.keys - mutable).any?
   end
 end

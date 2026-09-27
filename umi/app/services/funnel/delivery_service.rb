@@ -9,7 +9,7 @@ class Umi::Funnel::DeliveryService
     @delivery = delivery
   end
 
-  def prepare
+  def prepare(automatic: false)
     return @delivery unless @delivery.reload.state == 'pending'
 
     event = @delivery.conversation_event
@@ -18,13 +18,14 @@ class Umi::Funnel::DeliveryService
     @profile = Umi::Funnel::KlaviyoClient.new.profile(profile_id) if @delivery.destination == 'klaviyo' && profile_id.present? && !event.redacted_at
     with_source_lock do |source, owner|
       next unless @delivery.state == 'pending'
+      next if automatic && Umi::Funnel::DeliveryAutomation::PENDING_REASONS.exclude?(@delivery.reason)
       next if ineligible!(source, owner)
 
       payload, destination = provider_payload(source, owner)
       next unless payload
       raise ArgumentError, 'Prepared destination cannot change' if @delivery.destination_key.present? && @delivery.destination_key != destination
 
-      attrs = { reason: nil }
+      attrs = { reason: nil, last_error: nil }
       if @delivery.payload.empty?
         attrs[:payload] = payload
         attrs[:destination_key] = destination
@@ -34,7 +35,7 @@ class Umi::Funnel::DeliveryService
     @delivery
   end
 
-  def dispatch
+  def dispatch(automatic: false)
     return @delivery unless @delivery.reload.state == 'pending'
 
     unless ActiveModel::Type::Boolean.new.cast(ENV.fetch("UMI_FUNNEL_#{@delivery.destination.upcase}_ENABLED", false))
@@ -42,13 +43,14 @@ class Umi::Funnel::DeliveryService
       return @delivery
     end
 
-    prepare
+    prepare(automatic: automatic)
     return @delivery unless @delivery.state == 'pending' && @delivery.reason.nil? && @delivery.payload.present?
 
     client = @delivery.destination == 'meta' ? Umi::Funnel::MetaClient.new : Umi::Funnel::KlaviyoClient.new
     claimed = false
     with_source_lock do |source, owner|
       next unless @delivery.state == 'pending'
+      next if automatic && Umi::Funnel::DeliveryAutomation::PENDING_REASONS.exclude?(@delivery.reason)
       next if ineligible!(source, owner)
       next unless provider_payload(source, owner).first
 
@@ -72,6 +74,49 @@ class Umi::Funnel::DeliveryService
       @delivery.update!(attrs)
     end
     @delivery
+  end
+
+  def ready_for_schedule?
+    ready = false
+    with_source_lock do |source, owner|
+      next unless @delivery.state == 'pending' && Umi::Funnel::DeliveryAutomation::PENDING_REASONS.include?(@delivery.reason)
+      next unless Umi::Funnel::DeliveryAutomation.enabled?(@delivery.destination)
+      next if ineligible!(source, owner)
+
+      if @delivery.destination == 'klaviyo' && owner.additional_attributes['umi_klaviyo_profile_id'].blank?
+        mark!('pending', 'profile_unbound')
+        next
+      end
+
+      ready = true
+    end
+    ready
+  end
+
+  def hold_preparation(error)
+    with_source_lock do |source, owner|
+      next if source.redacted_at || owner&.additional_attributes&.[]('umi_profile_redacted')
+
+      @delivery.update!(reason: 'preparation_failed', last_error: error.class.name.first(255)) if @delivery.state == 'pending'
+    end
+  end
+
+  def confirm_scheduled
+    reserved = false
+    with_source_lock do |source, owner|
+      next unless @delivery.destination == 'klaviyo' && @delivery.state == 'accepted' && @delivery.accepted_at
+      next if source.redacted_at || !owner || owner.additional_attributes['umi_profile_redacted']
+      next unless Umi::Funnel::Configuration.enabled?(source.account_id) && Umi::Funnel::DeliveryAutomation.enabled?('klaviyo')
+
+      delay = Umi::Funnel::DeliveryAutomation::READBACK_DELAYS[@delivery.readback_attempt_count]
+      next unless delay && @delivery.accepted_at + delay <= Time.current
+
+      @delivery.update!(readback_attempt_count: @delivery.readback_attempt_count + 1)
+      reserved = true
+    end
+    confirm if reserved
+  rescue StandardError => e
+    record_readback_wait('readback_failed', e.class.name.first(255))
   end
 
   def hold_interrupted
@@ -134,6 +179,12 @@ class Umi::Funnel::DeliveryService
     return mark!('excluded', 'historical_event') if %w[recovered historical].include?(event.provenance)
     return mark!('pending', 'identity_unlinked') if event.contact_id.nil?
     return mark!('excluded', 'identity_missing') unless contact && event.contact_id == contact.id
+
+    if event.event_type == 'order_paid' && Umi::ShopifyOrderFinancialState.where(account_id: event.account_id, paid_event_id: event.id)
+                                                                          .where("snapshot ->> 'identity_hold' IS NOT NULL").exists?
+      return mark!('pending', 'financial_identity_conflict')
+    end
+
     if event.conversation_id && !Conversation.exists?(id: event.conversation_id, contact_id: contact.id, account_id: event.account_id)
       return mark!('excluded', 'conversation_missing')
     end
@@ -212,11 +263,11 @@ class Umi::Funnel::DeliveryService
     [{ 'data' => { 'type' => 'event', 'attributes' => attributes } }, profile_id]
   end
 
-  def record_readback_wait(reason)
+  def record_readback_wait(reason, error = nil)
     with_source_lock do |source, owner|
       next if source.redacted_at || !owner || owner.additional_attributes['umi_profile_redacted']
 
-      @delivery.update!(reason: reason) if @delivery.state == 'accepted'
+      @delivery.update!(reason: reason, last_error: error) if @delivery.state == 'accepted'
     end
   end
 

@@ -26,6 +26,11 @@ class Umi::Funnel::Report
       paid_with_verified_attribution: paid.where.not(conversation_id: nil).where(redacted_at: nil).count,
       paid_history_unknown: states.where("snapshot ->> 'paid_history_unknown' = 'true'").count,
       pending_financial_reconciliation: states.pending.count,
+      paid_identity_holds: states.where("snapshot ->> 'identity_hold' IS NOT NULL").group("snapshot ->> 'identity_hold'").count,
+      preparation_holds: Umi::ConversionDelivery.where(conversation_event_id: events.select(:id), state: 'pending',
+                                                       reason: %w[preparation_failed profile_identity_conflict financial_identity_conflict]).count,
+      exhausted_readbacks: Umi::ConversionDelivery.where(conversation_event_id: events.select(:id), destination: 'klaviyo',
+                                                         state: 'accepted').where('readback_attempt_count >= 3').count,
       financial_errors: states.where.not(last_error: nil).count,
       delivery_states: Umi::ConversionDelivery.where(conversation_event_id: events.select(:id)).group(:destination, :state).count
                                               .map { |(destination, state), count| { destination: destination, state: state, count: count } },

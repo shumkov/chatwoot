@@ -4,7 +4,7 @@ class Umi::Shopify::PaidOrderReport
   class IncompleteTransactions < StandardError; end
 
   ORDER_FIELDS = 'id,created_at,updated_at,financial_status,test,cancelled_at,currency,total_price,current_total_price,' \
-                 'line_items,current_subtotal_price,current_total_discounts,current_total_tax,total_shipping_price_set'
+                 'customer,line_items,current_subtotal_price,current_total_discounts,current_total_tax,total_shipping_price_set'
   TRANSACTION_FIELDS = 'id,kind,status,currency,amount,amount_rounding,processed_at'
   MONEY_FIELDS = %i[captured refunded net_cash paid_value].freeze
 
@@ -40,7 +40,9 @@ class Umi::Shopify::PaidOrderReport
     raise IncompleteTransactions, 'Transaction list is incomplete' if response.next_page_info.present?
     raise ArgumentError, 'Order response ID mismatch' unless order.fetch('id').to_s == id
 
+    customer_id = order.dig('customer', 'id').to_s
     row = build_row(order, response.body.fetch('transactions'))
+    row[:shopify_customer_id] = customer_id if customer_id.match?(/\A[1-9]\d*\z/)
     row[:paid_basket] = paid_basket(order) if row[:classification] == 'paid'
     row.merge(
       order_id: id,

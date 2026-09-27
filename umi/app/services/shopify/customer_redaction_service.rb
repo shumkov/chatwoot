@@ -10,6 +10,7 @@ class Umi::Shopify::CustomerRedactionService
 
   def perform
     @contact.with_lock do
+      shopify_customer_id = @contact.additional_attributes['shopify_customer_id']
       @contact.update!(
         name: 'Redacted customer', last_name: '', middle_name: '',
         email: nil, phone_number: nil, identifier: nil,
@@ -20,7 +21,7 @@ class Umi::Shopify::CustomerRedactionService
       )
       Umi::ProfileLedgerEntry.where(contact_id: @contact.id).delete_all
       Umi::FbigAdAttribution.purge_for(@contact)
-      Umi::Funnel::Privacy.redact_contact!(@contact)
+      Umi::Funnel::Privacy.redact_contact!(@contact, shopify_customer_id: shopify_customer_id)
       Umi::ShopifyOrderAttribution.detach_for(@contact)
     end
 

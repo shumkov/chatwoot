@@ -29,6 +29,12 @@ The provider switches allow dispatch but do not bypass identity or time checks.
 
 ## Operator commands
 
+Staff can confirm qualification in Chatwoot's existing **Sales status** dropdown.
+The sidebar records the human action with the latest live incoming conversation
+message; Shopify alone sets order_placed/purchased. Rejected changes show an error.
+The explicit rake form below remains available for a more specific reason and
+chosen evidence IDs.
+
 Use actual internal record IDs. A Chatwoot conversation URL uses a display ID;
 resolve the account-scoped internal ID before using `CONVERSATION_ID`.
 
@@ -62,6 +68,26 @@ Qualification requires live incoming evidence. `engaged`, `inactive`,
 `not_sales` and `unevaluated` are also supported human classifications. Commerce
 owns `order_placed` and `purchased`; labels and generic sidebar edits cannot
 manufacture a paid event.
+
+## Background operation
+
+The existing five-minute reconciliation job schedules up to 100 eligible sends
+and 100 due Klaviyo readbacks per run, only for enabled destinations/accounts.
+Klaviyo readback reserves three slots at 5 minutes, 30 minutes and 2 hours after
+acceptance. Exhausted or ambiguous outcomes remain visible and are not resent.
+`umi:funnel:report` includes preparation holds and exhausted readback counts.
+
+Preparation errors and identity conflicts stop automatic processing. After fixing
+the cause, run explicit preview on the never-attempted delivery to clear its hold.
+A concurrent automatic worker cannot clear a persisted preparation hold. Pending
+missing-contact/profile rows resume when verified linkage becomes available.
+
+Website-only paid orders can attach to one existing contact by the synced Shopify
+customer ID while keeping conversation attribution absent. A separate existing
+Klaviyo profile binding is still required; this release does not discover/create
+profiles automatically. A contradictory current financial identity holds export
+even when an earlier paid event has an attached contact. Customer erasure creates
+order tombstones before the first financial read as well as clearing linked data.
 
 ## Interpret the result
 
