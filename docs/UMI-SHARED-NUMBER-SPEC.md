@@ -523,7 +523,7 @@ batch whose first status is Klaviyo-only can also drop later Chatwoot statuses. 
 a separate pre-cutover patch/measurement decision, not a harmless no-op at campaign
 scale.
 
-The local regression spec is `spec/services/whatsapp/shared_number_spike_spec.rb`:
+The local regression spec is `spec/services/whatsapp/incoming_message_whatsapp_cloud_service_shared_number_spec.rb`:
 
 ```ruby
 it 'ignores a status for a message not created in Chatwoot' do
@@ -718,7 +718,7 @@ Rollback is a controlled stop, not deletion:
   `channel/whatsapp.rb`, `whatsapp_events_job.rb`, and the incoming-message/status
   service. Proves the local call graph and status no-op; it does not prove Meta's
   phone-override semantics.
-* Local regression spike: `spec/services/whatsapp/shared_number_spike_spec.rb` pins the
+* Local regression spike: `spec/services/whatsapp/incoming_message_whatsapp_cloud_service_shared_number_spec.rb` pins the
   unknown-status no-op. It does not prove Meta delivery behavior.
 * Live Meta experiment run 2026-08-19 against disposable assets per the §1.1 runbook;
   results in §1.2. Phone-level override scoping is confirmed per-app. A real
