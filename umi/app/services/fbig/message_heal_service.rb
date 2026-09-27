@@ -5,10 +5,9 @@
 # the message from the Graph API, synthesize the webhook-shaped payload, and
 # hand it to the same builders the live path uses — contact creation,
 # conversation selection, dedup and attachment degradation all behave exactly
-# as for a real webhook. The recovered row is stamped
-# content_attributes.umi_recovered=true; its created_at is the heal time (the
-# builders don't take historical timestamps), the original send time stays in
-# the reconcile log line and in Meta's thread.
+# as for a real webhook. Recovery provenance is stored before creation callbacks;
+# created_at remains the heal time, and external_created_at preserves the
+# provider's original send time separately.
 class Umi::Fbig::MessageHealService
   HEAL_LOCK_PREFIX = 'UMI_FBIG_MESSAGE_HEAL_LOCK::'
   HEAL_LOCK_TTL = 15.minutes.to_i
@@ -37,12 +36,7 @@ class Umi::Fbig::MessageHealService
     return :already_present if Message.exists?(source_id: mid)
 
     replay(detail)
-    message = Message.find_by(source_id: mid)
-    return :not_persisted unless message
-
-    message.update(content_attributes: message.content_attributes.merge(umi_recovered: true))
-    log_healed(mid, message)
-    :healed
+    recovery_result(mid)
   rescue StandardError => e
     Rails.logger.warn("[UMI-FBIG] stage=heal_error mid=#{mid} error=#{e.class}")
     :error
@@ -59,12 +53,29 @@ class Umi::Fbig::MessageHealService
   end
 
   def replay(detail)
-    if @platform == 'instagram'
-      Instagram::Messenger::MessageText.new(instagram_messaging(detail), @channel).perform
-    else
-      parsed = Integrations::Facebook::MessageParser.new({ messaging: facebook_messaging(detail) }.to_json)
-      Messages::Facebook::MessageBuilder.new(parsed, @channel.inbox).perform
+    Umi::Fbig::RecoveryContext.set(inbox_id: @channel.inbox.id, source_id: detail['id'], source_created_at: source_created_at(detail)) do
+      if @platform == 'instagram'
+        Instagram::Messenger::MessageText.new(instagram_messaging(detail), @channel).perform
+      else
+        parsed = Integrations::Facebook::MessageParser.new({ messaging: facebook_messaging(detail) }.to_json)
+        Messages::Facebook::MessageBuilder.new(parsed, @channel.inbox).perform
+      end
     end
+  end
+
+  def recovery_result(mid)
+    message = Message.find_by(source_id: mid)
+    return :not_persisted unless message
+    return :already_present unless message.content_attributes['umi_recovered'] == true
+
+    log_healed(mid, message)
+    :healed
+  end
+
+  def source_created_at(detail)
+    Time.iso8601(detail['created_time']).utc.iso8601
+  rescue ArgumentError, TypeError
+    nil
   end
 
   def instagram_messaging(detail)

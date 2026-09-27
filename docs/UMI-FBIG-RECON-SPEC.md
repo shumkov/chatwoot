@@ -150,13 +150,15 @@ median of 4 calls per run (peak 26) — about 116 a day, ~2 % of the budget.
    API attachment shapes map to webhook shapes best-effort
    (`image_data`→image, `video_data`→video, `file_url`→file); unmappable
    attachments are skipped with the text still healed.
-3. Mark the recovered row (`content_attributes.umi_recovered: true`) and log
+3. Persist `content_attributes.umi_recovered: true` and the original provider
+   time in `external_created_at` before message creation callbacks; log
    `stage=healed mid=… message_id=…`; summary gains `healed=H heal_failed=…`.
 
 Known heal limitations (accepted): the recovered message's `created_at` is
 the heal time, not the original send time — it appears late in the thread
 (the builders don't take historical timestamps without a core edit; the
-original timestamp is preserved in the log line and Meta's thread). Residual
+original timestamp is stored separately in `content_attributes.external_created_at`,
+when valid, and remains available in Meta's thread). Residual
 race with a simultaneously-arriving webhook is bounded by the ≥15 min grace
 and a just-before-write existence re-check (FB builder has no source-id dedup
 of its own). Concurrent healers for the same channel/platform/mid are
