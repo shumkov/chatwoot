@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_08_17_000000) do
+ActiveRecord::Schema[7.1].define(version: 2026_09_27_000000) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1406,6 +1406,46 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_17_000000) do
     t.index ["name", "account_id"], name: "index_teams_on_name_and_account_id", unique: true
   end
 
+  create_table "umi_conversation_events", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.bigint "conversation_id"
+    t.bigint "contact_id"
+    t.string "event_type", null: false
+    t.string "occurrence_key", null: false
+    t.string "provenance", null: false
+    t.datetime "occurred_at"
+    t.datetime "redacted_at"
+    t.datetime "observed_at", null: false
+    t.jsonb "evidence_message_ids", default: [], null: false
+    t.jsonb "payload", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "event_type", "occurred_at"], name: "idx_umi_event_type_time"
+    t.index ["account_id", "occurrence_key"], name: "idx_umi_event_occurrence", unique: true
+    t.index ["account_id"], name: "index_umi_conversation_events_on_account_id"
+    t.index ["contact_id"], name: "index_umi_conversation_events_on_contact_id"
+    t.index ["conversation_id"], name: "index_umi_conversation_events_on_conversation_id"
+  end
+
+  create_table "umi_conversion_deliveries", force: :cascade do |t|
+    t.bigint "conversation_event_id", null: false
+    t.string "destination", null: false
+    t.string "state", default: "pending", null: false
+    t.jsonb "payload", default: {}, null: false
+    t.string "destination_key"
+    t.string "reason"
+    t.string "provider_reference"
+    t.string "last_error"
+    t.integer "attempt_count", default: 0, null: false
+    t.datetime "attempted_at"
+    t.datetime "accepted_at"
+    t.datetime "confirmed_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["conversation_event_id", "destination"], name: "idx_umi_event_destination", unique: true
+    t.index ["destination", "state"], name: "idx_umi_delivery_state"
+  end
+
   create_table "umi_profile_ledger_entries", force: :cascade do |t|
     t.string "run_id", null: false
     t.bigint "contact_id", null: false
@@ -1446,6 +1486,23 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_17_000000) do
     t.index ["contact_id"], name: "idx_umi_order_attributions_contact"
     t.index ["conversation_id"], name: "idx_umi_order_attributions_conversation"
     t.index ["webhook_id"], name: "idx_umi_order_attributions_webhook"
+  end
+
+  create_table "umi_shopify_order_financial_states", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.string "shop_domain", null: false
+    t.string "shopify_order_id", null: false
+    t.datetime "reconciliation_requested_at", null: false
+    t.datetime "reconciled_at"
+    t.datetime "redacted_at"
+    t.string "last_error"
+    t.jsonb "snapshot", default: {}, null: false
+    t.bigint "paid_event_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "shop_domain", "shopify_order_id"], name: "idx_umi_financial_order", unique: true
+    t.index ["account_id"], name: "index_umi_shopify_order_financial_states_on_account_id"
+    t.index ["paid_event_id"], name: "index_umi_shopify_order_financial_states_on_paid_event_id", unique: true
   end
 
   create_table "user_sessions", force: :cascade do |t|
@@ -1540,7 +1597,11 @@ ActiveRecord::Schema[7.1].define(version: 2026_08_17_000000) do
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"
   add_foreign_key "active_storage_variant_records", "active_storage_blobs", column: "blob_id"
   add_foreign_key "inboxes", "portals"
-  add_foreign_key "umi_shopify_order_attributions", "accounts", column: "account_id", on_delete: :cascade
+  add_foreign_key "umi_conversation_events", "accounts", on_delete: :cascade
+  add_foreign_key "umi_conversion_deliveries", "umi_conversation_events", column: "conversation_event_id", on_delete: :cascade
+  add_foreign_key "umi_shopify_order_attributions", "accounts", on_delete: :cascade
+  add_foreign_key "umi_shopify_order_financial_states", "accounts", on_delete: :cascade
+  add_foreign_key "umi_shopify_order_financial_states", "umi_conversation_events", column: "paid_event_id", on_delete: :nullify
   add_foreign_key "user_sessions", "users"
   create_trigger("accounts_after_insert_row_tr", :generated => true, :compatibility => 1).
       on("accounts").

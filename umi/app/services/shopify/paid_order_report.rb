@@ -3,7 +3,8 @@
 class Umi::Shopify::PaidOrderReport
   class IncompleteTransactions < StandardError; end
 
-  ORDER_FIELDS = 'id,created_at,updated_at,financial_status,test,cancelled_at,currency,total_price,current_total_price'
+  ORDER_FIELDS = 'id,created_at,updated_at,financial_status,test,cancelled_at,currency,total_price,current_total_price,' \
+                 'line_items,current_subtotal_price,current_total_discounts,current_total_tax,total_shipping_price_set'
   TRANSACTION_FIELDS = 'id,kind,status,currency,amount,amount_rounding,processed_at'
   MONEY_FIELDS = %i[captured refunded net_cash paid_value].freeze
 
@@ -39,12 +40,29 @@ class Umi::Shopify::PaidOrderReport
     raise IncompleteTransactions, 'Transaction list is incomplete' if response.next_page_info.present?
     raise ArgumentError, 'Order response ID mismatch' unless order.fetch('id').to_s == id
 
-    build_row(order, response.body.fetch('transactions')).merge(
+    row = build_row(order, response.body.fetch('transactions'))
+    row[:paid_basket] = paid_basket(order) if row[:classification] == 'paid'
+    row.merge(
       order_id: id,
       conversation_id: Umi::ShopifyOrderAttribution.verified.find_by(account_id: @account_id, shop_domain: shop,
                                                                      shopify_order_id: id)&.conversation_id
     )
   end
+
+  # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+  def paid_basket(order)
+    basket = {}
+    basket['items'] = order['line_items'].map { |item| item.slice('id', 'variant_id', 'current_quantity') } if order['line_items'].is_a?(Array)
+    %w[current_subtotal_price current_total_discounts current_total_tax].each do |key|
+      value = BigDecimal(order[key].to_s, exception: false)
+      basket[key] = value.to_s('F') if value&.finite? && !value.negative?
+    end
+    shipping = order.dig('total_shipping_price_set', 'shop_money')
+    value = BigDecimal(shipping.to_h['amount'].to_s, exception: false)
+    basket['shipping'] = value.to_s('F') if value&.finite? && !value.negative? && shipping['currency_code'] == order['currency']
+    basket
+  end
+  # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   def build_row(order, transactions)
     reasons = []

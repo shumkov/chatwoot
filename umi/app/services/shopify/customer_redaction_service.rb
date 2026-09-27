@@ -9,17 +9,18 @@ class Umi::Shopify::CustomerRedactionService
   end
 
   def perform
-    ActiveRecord::Base.transaction do
+    @contact.with_lock do
       @contact.update!(
         name: 'Redacted customer', last_name: '', middle_name: '',
         email: nil, phone_number: nil, identifier: nil,
         location: nil, country_code: nil, custom_attributes: {},
         additional_attributes: @contact.additional_attributes.except('city', 'country')
-                                                .reject { |key, _| key.start_with?('shopify_', 'social_', 'umi_profile_') }
+                                                .reject { |key, _| key.start_with?('shopify_', 'social_', 'umi_profile_', 'umi_klaviyo_') }
                                                 .merge('umi_profile_redacted' => true)
       )
       Umi::ProfileLedgerEntry.where(contact_id: @contact.id).delete_all
       Umi::FbigAdAttribution.purge_for(@contact)
+      Umi::Funnel::Privacy.redact_contact!(@contact)
       Umi::ShopifyOrderAttribution.detach_for(@contact)
     end
 

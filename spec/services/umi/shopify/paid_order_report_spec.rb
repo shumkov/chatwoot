@@ -30,6 +30,15 @@ RSpec.describe Umi::Shopify::PaidOrderReport do
                                                  fields: Umi::Shopify::PaidOrderReport::TRANSACTION_FIELDS }).and_return(transaction_response)
   end
 
+  it 'retains only numeric basket identifiers and observed amounts for paid orders' do
+    order.merge!('line_items' => [{ 'id' => 5, 'variant_id' => 7, 'current_quantity' => 2, 'title' => 'Private product text' }],
+                 'current_subtotal_price' => '4000.00', 'current_total_discounts' => '100.00', 'current_total_tax' => '491.00',
+                 'total_shipping_price_set' => { 'shop_money' => { 'amount' => '0.00', 'currency_code' => 'THB' } })
+    expect(report[:rows].sole[:paid_basket]).to eq('items' => [{ 'id' => 5, 'variant_id' => 7, 'current_quantity' => 2 }],
+                                                   'current_subtotal_price' => '4000.0', 'current_total_discounts' => '100.0',
+                                                   'current_total_tax' => '491.0', 'shipping' => '0.0')
+  end
+
   it 'reports pickup payment eighteen days after reservation using the successful transaction time' do
     transactions.unshift(sale.merge('id' => 2000, 'status' => 'pending', 'processed_at' => order['created_at']))
 
