@@ -94,7 +94,7 @@ handle match and no external-ID-only profile creation. Preserve unrelated fields
 Recheck the same provider profile and contact match at preparation and dispatch;
 pin the profile ID in destination_key. Redacted contacts cannot bind or export.
 
-The event payload uses profile `{data: {type: 'profile', id: profile_id}}`, metric
+The event payload uses profile `{data: {type: 'profile', id: profile_id, attributes: {}}}`, metric
 name UMI Conversation Qualified or UMI Order Paid, original time, stable unique_id
 `umi-funnel-{account_id}-{event_id}`, and allowlisted properties including
 `umi_event_id`, qualification reason or shop/order/currency/value. Paid metrics
