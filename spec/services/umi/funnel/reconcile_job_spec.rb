@@ -26,6 +26,14 @@ RSpec.describe Umi::Funnel::ReconcileJob do
     expect(failed.reload.last_error).to be_nil
   end
 
+  it 'schedules payments and deliveries before surfacing a classifier configuration failure' do
+    state = Umi::Shopify::OrderFinancialStateService.request(account_id: account.id, shop_domain: hook.reference_id, order_id: '100')
+    allow(Umi::Funnel::ConversationClassifier).to receive(:enqueue).and_raise(KeyError)
+    expect(Umi::Funnel::DeliveryAutomation).to receive(:enqueue)
+    expect(Umi::Shopify::OrderFinancialReconcileJob).to receive(:perform_later).with(state.id)
+    expect { described_class.perform_now }.to raise_error(KeyError)
+  end
+
   it 'repairs a failed message callback from committed source messages' do
     allow(Umi::Funnel::EventRecorder).to receive(:capture_message).and_raise(StandardError)
     message = create(:message, account: account)

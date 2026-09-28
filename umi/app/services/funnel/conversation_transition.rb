@@ -3,10 +3,11 @@
 # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
 class Umi::Funnel::ConversationTransition
-  def initialize(conversation:, status:, actor:, reason:, evidence_message_ids:)
+  def initialize(conversation:, status:, actor:, reason:, evidence_message_ids:, classifier: nil) # rubocop:disable Metrics/ParameterLists
     @conversation = conversation
     @status = status
     @actor = actor
+    @classifier = classifier
     @reason = reason.to_s.strip
     @ids = evidence_message_ids.map { |id| Integer(id) }.uniq
   end
@@ -26,12 +27,20 @@ class Umi::Funnel::ConversationTransition
     raise ArgumentError, 'Funnel account is disabled' unless Umi::Funnel::Configuration.enabled?(@conversation.account_id)
     raise ArgumentError, 'Invalid human status' unless %w[unevaluated engaged qualified inactive not_sales].include?(@status)
     raise ArgumentError, 'Reason must contain 1-1000 characters' unless @reason.length.between?(1, 1000)
-    raise ArgumentError, 'Actor must belong to account' unless @conversation.account.users.exists?(id: @actor.id)
+
+    if @classifier
+      raise ArgumentError, 'Invalid classifier transition' unless @actor.nil? && Umi::Funnel::ConversationClassifier.mode == 'auto' &&
+                                                                  %w[engaged qualified not_sales].include?(@status)
+    else
+      raise ArgumentError, 'Actor must belong to account' unless @actor && @conversation.account.users.exists?(id: @actor.id)
+    end
     raise ArgumentError, 'Evidence must belong to conversation' unless @conversation.messages.where(id: @ids).count == @ids.size
   end
 
   def transition!
     previous = @conversation.custom_attributes['umi_sales_status'] || 'unevaluated'
+    return if @classifier && %w[qualified order_placed purchased].include?(previous)
+
     latest = Umi::ConversationEvent.where(conversation_id: @conversation.id, event_type: 'classification_changed').order(id: :desc).first
     return latest if latest && latest.payload['status'] == @status && latest.payload['reason'] == @reason && latest.evidence_message_ids == @ids
 
@@ -46,10 +55,10 @@ class Umi::Funnel::ConversationTransition
     event = Umi::ConversationEvent.record!(account_id: @conversation.account_id, conversation_id: @conversation.id,
                                            contact_id: @conversation.contact_id, event_type: 'classification_changed',
                                            occurrence_key: "classification:#{SecureRandom.uuid}", occurred_at: Time.current,
-                                           observed_at: Time.current, provenance: 'operator', evidence_message_ids: @ids,
-                                           payload: { status: @status, reason: @reason, actor_id: @actor.id, previous_status: previous })
+                                           observed_at: Time.current, provenance: @classifier ? 'classifier' : 'operator', evidence_message_ids: @ids,
+                                           payload: { status: @status, reason: @reason, previous_status: previous }.merge(author_metadata))
     qualify!(eligible) if @status == 'qualified'
-    if %w[not_sales unevaluated].include?(@status)
+    if !@classifier && %w[not_sales unevaluated].include?(@status)
       Umi::ConversionDelivery.joins(:conversation_event).where(umi_conversation_events: { conversation_id: @conversation.id,
                                                                                           event_type: 'conversation_qualified' }, state: 'pending')
                              .find_each do |delivery|
@@ -59,6 +68,14 @@ class Umi::Funnel::ConversationTransition
     Umi::Funnel::Configuration.provision!(@conversation.account)
     @conversation.project_umi_sales_status!(@status) unless %w[order_placed purchased].include?(previous)
     event
+  end
+
+  def author_metadata
+    return @classifier if @classifier
+
+    watermark = @conversation.messages.incoming.where(private: false).where('created_at >= ?', Umi::Funnel::Configuration.started_at)
+                             .reorder(id: :desc).detect { |message| !message.content_attributes['umi_recovered'] }&.id
+    { 'actor_id' => @actor.id, 'input_message_id' => watermark }
   end
 
   def qualify!(eligible)
@@ -71,8 +88,8 @@ class Umi::Funnel::ConversationTransition
     Umi::ConversationEvent.record!(account_id: @conversation.account_id, conversation_id: @conversation.id,
                                    contact_id: @conversation.contact_id, event_type: 'conversation_qualified',
                                    occurrence_key: "conversation:#{@conversation.id}:qualified", occurred_at: eligible.map(&:occurred_at).max,
-                                   observed_at: Time.current, provenance: 'operator', evidence_message_ids: @ids,
-                                   payload: payload.merge('qualification_reason' => @reason, 'actor_id' => @actor.id))
+                                   observed_at: Time.current, provenance: @classifier ? 'classifier' : 'operator', evidence_message_ids: @ids,
+                                   payload: payload.merge('qualification_reason' => @reason).merge(author_metadata))
   end
 end
 
