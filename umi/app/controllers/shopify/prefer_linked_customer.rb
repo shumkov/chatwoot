@@ -31,6 +31,12 @@
 module Umi::Shopify::PreferLinkedCustomer
   private
 
+  def validate_contact
+    return if contact&.additional_attributes&.[]('shopify_customer_id').present?
+
+    super
+  end
+
   def fetch_customers
     linked_id = contact.additional_attributes['shopify_customer_id']
     return super if linked_id.blank?

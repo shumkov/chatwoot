@@ -70,6 +70,10 @@ class Umi::Shopify::OrderFinancialStateService
         next
       end
       conversation = Conversation.find_by(id: attribution&.conversation_id, account_id: @state.account_id, contact_id: contact&.id) if attribution
+      if attribution && !conversation
+        Umi::Funnel::Privacy.redact_attributions!(Umi::ShopifyOrderAttribution.where(id: attribution.id))
+        next
+      end
       prior = @state.snapshot['first_paid_snapshot']
       row['first_paid_snapshot'] = prior if prior
       if row['classification'] == 'paid'
@@ -79,12 +83,9 @@ class Umi::Shopify::OrderFinancialStateService
       elsif !@state.paid_event_id && (@state.snapshot['paid_history_unknown'] || %w[refunded partially_refunded].include?(row['classification']))
         row['paid_history_unknown'] = true
       end
-      if @state.paid_event
-        Umi::Funnel::PaidCustomerLink.attach(@state.paid_event, contact, attribution)
-      elsif conversation && %w[unpaid partial_payment].include?(row['classification'])
-        conversation.with_lock { conversation.project_umi_sales_status!('order_placed') }
-      end
+      Umi::Funnel::PaidCustomerLink.attach(@state.paid_event, contact, attribution) if @state.paid_event
       @state.update!(snapshot: row, reconciled_at: cutoff, last_error: nil)
+      Umi::Funnel::CommerceProjection.refresh(conversation) if conversation
     end
   end
 

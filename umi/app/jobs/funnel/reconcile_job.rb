@@ -8,6 +8,10 @@ class Umi::Funnel::ReconcileJob < ApplicationJob
     return if ids.empty?
 
     Umi::Funnel::Privacy.redact_orphans!
+    Umi::ShopifyDraftLink.where(account_id: ids, redacted_at: nil, status: 'pending')
+                         .order(Arel.sql('last_checked_at ASC NULLS FIRST'), :id).limit(50).each do |link|
+      Umi::Shopify::DraftLinkReconcileJob.perform_later(link.id)
+    end
     Account.where(id: ids).find_each { |account| Umi::Funnel::Configuration.provision!(account) }
     Message.where(account_id: ids, message_type: :incoming, private: false)
            .where('created_at >= ?', Umi::Funnel::Configuration.started_at).find_each do |message|

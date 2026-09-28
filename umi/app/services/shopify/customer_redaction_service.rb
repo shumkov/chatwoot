@@ -23,6 +23,7 @@ class Umi::Shopify::CustomerRedactionService
       Umi::FbigAdAttribution.purge_for(@contact)
       Umi::Funnel::Privacy.redact_contact!(@contact, shopify_customer_id: shopify_customer_id)
       Umi::ShopifyOrderAttribution.detach_for(@contact)
+      Umi::ShopifyDraftLink.detach(Umi::ShopifyDraftLink.where(contact_id: @contact.id))
     end
 
     # Active Storage deletion is not transactional. It is intentionally after

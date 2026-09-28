@@ -283,7 +283,10 @@ onMounted(() => {
                 value => toggleSidebarUIState('is_shopify_orders_open', value)
               "
             >
-              <ShopifyOrdersList :contact-id="contactId" />
+              <ShopifyOrdersList
+                :contact-id="contactId"
+                :conversation-id="conversationId"
+              />
             </AccordionItem>
           </div>
           <div v-else-if="element.name === 'contact_notes'">

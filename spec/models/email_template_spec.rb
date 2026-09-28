@@ -86,18 +86,21 @@ RSpec.describe EmailTemplate do
   end
 
   describe '.branded_layout_for' do
+    # Resolve the current model after Rails reloads so lookup and factory records share a class.
+    # rubocop:disable RSpec/DescribedClass
     it 'uses inbox, account, then installation fallback order' do
       account = create(:account)
       inbox = create(:inbox, :with_email, account: account)
       create(:email_template, :layout, body: 'Global {{ content_for_layout }}')
       account_template = create(:email_template, :layout, account: account, body: 'Account {{ content_for_layout }}')
 
-      expect(described_class.branded_layout_for(inbox: inbox, account: account, locale: :en)).to eq(account_template)
+      expect(EmailTemplate.branded_layout_for(inbox: inbox, account: account, locale: :en)).to eq(account_template)
 
       inbox_template = create(:email_template, :layout, account: account, inbox: inbox, body: 'Inbox {{ content_for_layout }}')
 
-      expect(described_class.branded_layout_for(inbox: inbox, account: account, locale: :en)).to eq(inbox_template)
+      expect(EmailTemplate.branded_layout_for(inbox: inbox, account: account, locale: :en)).to eq(inbox_template)
     end
+    # rubocop:enable RSpec/DescribedClass
   end
 
   describe '.update_account_branded_layout!' do

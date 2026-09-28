@@ -27,6 +27,43 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
   end
 
   describe 'customers/redact' do
+    it 'erases all contacts sharing a Shopify customer, including separate conversations' do
+      contacts = Array.new(2) do
+        contact = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+        conversation = create(:conversation, account: account, contact: contact)
+        Umi::ShopifyDraftLink.create!(account: account, shop_domain: shop_domain, shopify_draft_id: contact.id.to_s,
+                                      contact_id: contact.id, conversation_id: conversation.id, shopify_customer_id: '42')
+        contact
+      end
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42 })
+
+      expect(response).to have_http_status(:ok)
+      expect(contacts.map { |contact| contact.reload.additional_attributes['umi_profile_redacted'] }).to eq([true, true])
+      links = Umi::ShopifyDraftLink.where(account_id: account.id)
+      expect(links.where(redacted_at: nil)).to be_empty
+      expect(Umi::Shopify::CommerceReader).not_to receive(:new)
+      links.each { |link| Umi::Shopify::DraftLinkReconcileJob.perform_now(link.id) }
+    end
+
+    it 'continues erasing duplicate contacts when one contact needs a retry' do
+      contacts = Array.new(2) do
+        contact = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+        create(:conversation, account: account, contact: contact)
+        contact
+      end
+      failing_service = instance_double(Umi::Shopify::CustomerRedactionService)
+      allow(Umi::Shopify::CustomerRedactionService).to receive(:new).and_call_original
+      allow(Umi::Shopify::CustomerRedactionService).to receive(:new).with(contacts.first).and_return(failing_service)
+      allow(failing_service).to receive(:perform).and_raise(StandardError, 'avatar storage unavailable')
+
+      expect do
+        post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42 })
+      end.to have_enqueued_job(Umi::Shopify::CustomerRedactionRetryJob).with(contacts.first.id)
+
+      expect(response).to have_http_status(:ok)
+      expect(contacts.last.reload.additional_attributes['umi_profile_redacted']).to be(true)
+    end
+
     it 'destroys a contact without conversations, matched by shopify_customer_id' do
       contact = create(:contact, account: account, email: 'other@example.com',
                                  additional_attributes: { 'shopify_customer_id' => 9001 })
