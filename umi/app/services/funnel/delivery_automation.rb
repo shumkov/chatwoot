@@ -9,18 +9,15 @@ class Umi::Funnel::DeliveryAutomation
     ActiveModel::Type::Boolean.new.cast(ENV.fetch("UMI_FUNNEL_#{destination.upcase}_ENABLED", false))
   end
 
-  def self.enqueue
+  def self.enqueue # rubocop:disable Metrics/AbcSize
     destinations = %w[meta klaviyo].select { |destination| enabled?(destination) }
     scope = Umi::ConversionDelivery.joins(:conversation_event)
                                    .where(umi_conversation_events: { account_id: Umi::Funnel::Configuration.account_ids, redacted_at: nil },
                                           destination: destinations)
-    scheduled = 0
-    scope.where(state: 'pending', reason: PENDING_REASONS).find_each do |delivery|
-      next unless Umi::Funnel::DeliveryService.new(delivery).ready_for_schedule?
-
-      Umi::Funnel::DeliveryJob.perform_later(delivery.id)
-      scheduled += 1
-      break if scheduled == LIMIT
+    scope.where(state: 'pending', reason: PENDING_REASONS).order(:updated_at, :id).limit(LIMIT).each do |delivery|
+      Umi::Funnel::DeliveryJob.perform_later(delivery.id) if Umi::Funnel::DeliveryService.new(delivery).ready_for_schedule?
+    ensure
+      delivery.touch # rubocop:disable Rails/SkipsModelValidations
     end
     due = READBACK_DELAYS.each_with_index.map do |delay, index|
       scope.where(destination: 'klaviyo', state: 'accepted', readback_attempt_count: index).where(accepted_at: ..(Time.current - delay))

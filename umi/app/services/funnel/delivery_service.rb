@@ -14,6 +14,15 @@ class Umi::Funnel::DeliveryService
 
     event = @delivery.conversation_event
     contact = Contact.find_by(id: event.contact_id, account_id: event.account_id)
+    if automatic && @delivery.destination == 'klaviyo' && ready_for_schedule?
+      Umi::Funnel::ProfileBinding.new(contact: contact).resolve do |resolved_id|
+        ready = ready_for_schedule?
+        raise ArgumentError, 'Prepared destination cannot change' if @delivery.destination_key.present? && @delivery.destination_key != resolved_id
+
+        ready
+      end
+      contact.reload
+    end
     profile_id = contact&.additional_attributes&.[]('umi_klaviyo_profile_id')
     @profile = Umi::Funnel::KlaviyoClient.new.profile(profile_id) if @delivery.destination == 'klaviyo' && profile_id.present? && !event.redacted_at
     with_source_lock do |source, owner|
@@ -85,7 +94,7 @@ class Umi::Funnel::DeliveryService
 
       if @delivery.destination == 'klaviyo' && owner.additional_attributes['umi_klaviyo_profile_id'].blank?
         mark!('pending', 'profile_unbound')
-        next
+        next if Umi::Funnel::ProfileBinding.identifiers(owner).empty?
       end
 
       ready = true

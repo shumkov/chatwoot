@@ -80,6 +80,39 @@ RSpec.describe 'Funnel provider clients' do # rubocop:disable RSpec/DescribeClas
     expect(a_request(:post, /klaviyo/)).not_to have_been_made
   end
 
+  it 'resolves both identifiers without the unsupported OR filter rejected by Klaviyo' do
+    profile = { 'id' => 'PROFILE1', 'attributes' => { 'email' => 'person@example.com', 'phone_number' => '+66812345678' } }
+    stub_request(:get, 'https://a.klaviyo.com/api/profiles')
+      .with(query: hash_including('filter' => 'or(equals(email,"person@example.com"),equals(phone_number,"+66812345678"))'))
+      .to_return(status: 400, body: { errors: [{ code: 'invalid',
+                                                 detail: 'The requested endpoint does not permit explicit or() and not() filters.' }] }.to_json)
+    email = stub_request(:get, 'https://a.klaviyo.com/api/profiles')
+            .with(query: { 'filter' => 'equals(email,"person@example.com")', 'fields[profile]' => 'email,phone_number', 'page[size]' => '2' },
+                  headers: { 'revision' => '2025-10-15' })
+            .to_return(status: 200, body: { data: [profile], links: { next: nil } }.to_json)
+    phone = stub_request(:get, 'https://a.klaviyo.com/api/profiles')
+            .with(query: { 'filter' => 'equals(phone_number,"+66812345678")', 'fields[profile]' => 'email,phone_number', 'page[size]' => '2' })
+            .to_return(status: 200, body: { data: [profile], links: { next: nil } }.to_json)
+
+    expect(klaviyo.profiles('email' => 'person@example.com', 'phone_number' => '+66812345678')).to include('data' => [profile])
+    expect(email).to have_been_requested.once
+    expect(phone).to have_been_requested.once
+    expect(a_request(:post, /klaviyo/)).not_to have_been_made
+  end
+
+  it 'preserves a conflicting phone profile and next page when email has one exact match' do
+    stub_request(:get, 'https://a.klaviyo.com/api/profiles')
+      .with(query: hash_including('filter' => 'equals(email,"person@example.com")'))
+      .to_return(status: 200, body: { data: [{ id: 'EMAIL' }], links: { next: nil } }.to_json)
+    stub_request(:get, 'https://a.klaviyo.com/api/profiles')
+      .with(query: hash_including('filter' => 'equals(phone_number,"+66812345678")'))
+      .to_return(status: 200, body: { data: [{ id: 'PHONE' }], links: { next: 'another-page' } }.to_json)
+
+    result = klaviyo.profiles('email' => 'person@example.com', 'phone_number' => '+66812345678')
+    expect(result.fetch('data').pluck('id')).to eq(%w[EMAIL PHONE])
+    expect(result.dig('links', 'next')).to be_present
+  end
+
   it 'fails visibly on an inaccessible profile without exposing the error response' do
     stub_request(:get, %r{api/profiles}).to_return(status: 404, body: 'secret')
 

@@ -32,6 +32,16 @@ class Umi::Funnel::KlaviyoClient
     get("profiles/#{id}", 'fields[profile]' => 'email,phone_number').fetch('data')
   end
 
+  def profiles(identifiers)
+    raise ArgumentError, 'Profile identifier is required' if identifiers.empty?
+
+    pages = identifiers.map do |key, value|
+      get('profiles', 'filter' => "equals(#{key},#{JSON.generate(value)})", 'fields[profile]' => 'email,phone_number', 'page[size]' => 2)
+    end
+    { 'data' => pages.flat_map { |page| page.fetch('data') }.uniq { |profile| profile.fetch('id') },
+      'links' => { 'next' => pages.filter_map { |page| page.dig('links', 'next').presence }.first } }
+  end
+
   def events(profile_id:, since:, until_time:, cursor: nil)
     query = { 'filter' => "and(equals(profile_id,#{JSON.generate(profile_id)}),greater-or-equal(datetime,#{since})," \
                           "less-or-equal(datetime,#{until_time}))", 'include' => 'metric', 'page[size]' => 100 }
