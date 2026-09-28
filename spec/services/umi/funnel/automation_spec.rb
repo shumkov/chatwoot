@@ -33,6 +33,94 @@ RSpec.describe 'Funnel automation' do # rubocop:disable RSpec/DescribeClass
     expect(delivery.reload.state).to eq('accepted')
   end
 
+  it 'exports a qualified conversation to a unique existing profile without manual binding' do
+    contact.update!(email: 'person@example.test', phone_number: nil)
+    row = event.conversion_deliveries.find_by!(destination: 'klaviyo')
+    profile = { 'id' => 'PROFILE1', 'attributes' => { 'email' => contact.email } }
+    lookup = stub_request(:get, 'https://a.klaviyo.com/api/profiles')
+             .with(query: { 'filter' => 'equals(email,"person@example.test")', 'fields[profile]' => 'email,phone_number', 'page[size]' => '2' })
+             .to_return(status: 200, body: { data: [profile], links: { next: nil } }.to_json)
+    stub_request(:get, 'https://a.klaviyo.com/api/profiles/PROFILE1')
+      .with(query: { 'fields[profile]' => 'email,phone_number' }).to_return(status: 200, body: { data: profile }.to_json)
+    send_event = stub_request(:post, 'https://a.klaviyo.com/api/events').to_return(status: 202)
+
+    expect { Umi::Funnel::DeliveryAutomation.enqueue }.to have_enqueued_job(Umi::Funnel::DeliveryJob).with(row.id)
+    2.times { Umi::Funnel::DeliveryJob.perform_now(row.id) }
+
+    expect(row.reload).to have_attributes(state: 'accepted', destination_key: 'PROFILE1', attempt_count: 1)
+    expect(contact.reload.additional_attributes['umi_klaviyo_binding']).to include('source' => 'exact_identifier_match')
+    expect(contact.additional_attributes['umi_klaviyo_binding']).not_to have_key('actor_id')
+    expect(lookup).to have_been_requested.once
+    expect(send_event).to have_been_requested.once
+    expect(a_request(:post, %r{/profiles})).not_to have_been_made
+  end
+
+  it 'rotates already-unbound identities so the 101st deliverable outcome can run' do
+    contact.update!(email: nil, phone_number: nil)
+    rows = Array.new(100) do |index|
+      source = Umi::ConversationEvent.record!(account_id: account.id, contact_id: contact.id, event_type: 'order_paid',
+                                              occurrence_key: "unresolved:#{index}", occurred_at: 1.hour.ago, observed_at: Time.current,
+                                              provenance: 'shopify', payload: { currency: 'THB', value: '1.0' })
+      source.conversion_deliveries.find_by!(destination: 'meta').update!(state: 'excluded')
+      source.conversion_deliveries.find_by!(destination: 'klaviyo')
+    end
+    identified = create(:contact, account: account, email: 'identified@example.test', phone_number: nil)
+    source = Umi::ConversationEvent.record!(account_id: account.id, contact_id: identified.id, event_type: 'order_paid',
+                                            occurrence_key: 'ready:101', occurred_at: 1.hour.ago, observed_at: Time.current,
+                                            provenance: 'shopify', payload: { currency: 'THB', value: '1.0' })
+    source.conversion_deliveries.find_by!(destination: 'meta').update!(state: 'excluded')
+    ready = source.conversion_deliveries.find_by!(destination: 'klaviyo')
+    rows.each { |row| row.update!(reason: 'profile_unbound', updated_at: 1.hour.ago) }
+    ready.update!(updated_at: 30.minutes.ago)
+
+    expect { Umi::Funnel::DeliveryAutomation.enqueue }.not_to have_enqueued_job(Umi::Funnel::DeliveryJob).with(ready.id)
+    expect { Umi::Funnel::DeliveryAutomation.enqueue }.to have_enqueued_job(Umi::Funnel::DeliveryJob).with(ready.id)
+    expect(a_request(:any, /klaviyo/)).not_to have_been_made
+  end
+
+  it 'leaves a frozen recipient unchanged when a fresh lookup finds another profile' do
+    contact.update!(email: 'person@example.test', phone_number: nil)
+    row = event.conversion_deliveries.find_by!(destination: 'klaviyo')
+    row.update!(destination_key: 'ORIGINAL', payload: { 'frozen' => true })
+    client = instance_double(Umi::Funnel::KlaviyoClient,
+                             profiles: { 'data' => [{ 'id' => 'OTHER', 'attributes' => { 'email' => contact.email } }] })
+    allow(Umi::Funnel::KlaviyoClient).to receive(:new).and_return(client)
+
+    Umi::Funnel::DeliveryJob.perform_now(row.id)
+
+    expect(row.reload).to have_attributes(reason: 'preparation_failed', destination_key: 'ORIGINAL', payload: { 'frozen' => true }, attempt_count: 0)
+    expect(contact.reload.additional_attributes).not_to have_key('umi_klaviyo_profile_id')
+    expect(a_request(:post, /klaviyo/)).not_to have_been_made
+  end
+
+  it 'does not restore identity or export when erasure overlaps automatic profile lookup' do
+    contact.update!(email: 'person@example.test', phone_number: nil)
+    row = event.conversion_deliveries.find_by!(destination: 'klaviyo')
+    profile = { 'id' => 'PROFILE1', 'attributes' => { 'email' => contact.email } }
+    client = instance_double(Umi::Funnel::KlaviyoClient)
+    allow(Umi::Funnel::KlaviyoClient).to receive(:new).and_return(client)
+    allow(client).to receive(:profiles) do
+      Umi::Shopify::CustomerRedactionService.new(Contact.find(contact.id)).perform
+      { 'data' => [profile] }
+    end
+
+    Umi::Funnel::DeliveryJob.perform_now(row.id)
+
+    expect(row.reload).to have_attributes(state: 'excluded', attempt_count: 0, payload: {})
+    expect(contact.reload.additional_attributes).not_to have_key('umi_klaviyo_profile_id')
+    expect(a_request(:post, /klaviyo/)).not_to have_been_made
+  end
+
+  it 'does not look up an unbound profile when the destination is disabled after enqueue' do
+    contact.update!(email: 'person@example.test')
+    row = event.conversion_deliveries.find_by!(destination: 'klaviyo')
+    with_modified_env UMI_FUNNEL_KLAVIYO_ENABLED: 'false' do
+      Umi::Funnel::DeliveryJob.perform_now(row.id)
+    end
+    expect(contact.reload.additional_attributes).not_to have_key('umi_klaviyo_profile_id')
+    expect(a_request(:any, /klaviyo/)).not_to have_been_made
+  end
+
   it 'checks disabled destination after enqueue' do
     delivery
     with_modified_env UMI_FUNNEL_META_ENABLED: 'false' do
@@ -48,7 +136,7 @@ RSpec.describe 'Funnel automation' do # rubocop:disable RSpec/DescribeClass
       Umi::Funnel::DeliveryJob.perform_now(delivery.id)
     end
     expect(delivery.reload).to have_attributes(state: 'pending', reason: 'preparation_failed', last_error: 'KeyError')
-    expect { Umi::Funnel::DeliveryAutomation.enqueue }.not_to have_enqueued_job(Umi::Funnel::DeliveryJob)
+    expect { Umi::Funnel::DeliveryAutomation.enqueue }.not_to have_enqueued_job(Umi::Funnel::DeliveryJob).with(delivery.id)
     Umi::Funnel::DeliveryService.new(delivery).prepare
     expect { Umi::Funnel::DeliveryAutomation.enqueue }.to have_enqueued_job(Umi::Funnel::DeliveryJob).with(delivery.id)
   end
