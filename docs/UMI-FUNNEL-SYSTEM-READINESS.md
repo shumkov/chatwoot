@@ -1,79 +1,53 @@
-# System readiness for Linh's messaging campaigns
+# System readiness for Linh’s messaging campaigns
 
-The user clarified on 27 September 2026 that **Linh owns Meta campaign creation
-and operation**. This engineering task prepares the supporting system. Offer,
-budget, audience and campaign dates are not inputs required to finish integration
-code. Do not create or change an ad campaign as part of this work.
+Linh owns Meta campaign creation, offer, budget and operation. Engineering prepares Chatwoot, Shopify and outcome collection; no ad campaign is created or changed by this delivery.
 
-## What the system must supply
+## Current delivery status — 28 September 2026
 
-- Chatwoot records conversation evidence and an operator-confirmed qualification,
-  with single-value sales status and flat reporting/topic labels.
-- Shopify remains payment authority. Reservations and deposits do not count as
-  paid sales; final kept-item value and later refunds stay distinguishable.
-- Klaviyo receives distinct verified qualification/paid outcomes for existing
-  identified profiles, preserving its native reservation suppression and consent.
-- Meta receives eligible business-messaging outcomes, with visible holds when
-  identity, channel permission or delivery receipt is uncertain.
-- Shumabit can analyze the conversation and suggest replies through private notes,
-  using the existing workspace, business memory, skills and subscription route.
-- The operator can inspect counts, money, attribution gaps and delivery failures.
+[Application PR 57](https://github.com/shumkov/chatwoot/pull/57) merged at 12:22:16 UTC as `e79fe30da49506a753c211eac332d12a6630576f`. Signed release tag `umi-v4.16.0-12` points to that commit. [Release image build](https://github.com/shumkov/chatwoot/actions/runs/36421441368) completed successfully at 12:47:28 UTC. The immutable image digest is `sha256:90cf5faf01ea0a61f58c7f65d513ab3c1fb44f394a5d07db6eb5c60349e42d96`. Production Rails and Sidekiq switched to that image at 12:51:13 UTC after the additive migration completed. The collection account and observation boundary stayed enabled/unchanged, and Meta/Klaviyo export flags stayed false. Public HTTPS, schema, cron, installed scopes and environment readback passed. The unpaid lifecycle canary passed as recorded below.
 
-## Implemented and reviewed
+The managed Shopify version `umi-chatwoot-manual-links-20260928` is active. Store-side approval completed, and an independent query through Chatwoot’s existing installed token confirmed `read_draft_orders` at 12:20:29 UTC. The existing hook/token was retained. Infrastructure scope and receipt commits are `3f8969a` and `fe02141`.
 
-The Chatwoot branch includes recovered-message provenance, durable conversation
-and paid-order events, the native Sales status confirmation, Meta/Klaviyo
-adapters, existing-profile binding, scheduled delivery and finite receipt checks,
-exact Shopify customer linking, privacy erasure, and cohort reporting.
+The operational first iteration supports an operator handling incoming conversations, confirming Sales status, choosing an existing Shopify customer, and explicitly associating a draft or order with the conversation. Customer purchase history alone does not credit the conversation. Drafts follow their resulting order, including orders completed manually. Shopify owns payment truth: the operator must record PromptPay payments there, and try-before-you-buy reservations remain unpaid until payment is confirmed.
 
-Final local integration checks passed **312 Ruby examples and 68 frontend tests**
-with zero failures or skips. All 57 changed Ruby/rake files pass RuboCop; changed
-frontend files pass ESLint. Independent spec and code reviews cleared each
-implementation unit, including financial identity conflicts and concurrent
-preparation holds. These checks establish local behavior, not provider acceptance.
+Unpaid associations can be removed. Correcting an already recorded paid attribution requires maintenance in this version. Flat labels remain categorization/reporting data; a label alone is not a Meta optimization signal.
 
-The Shumabit bridge and runtime adapter have 20 passing Node tests and independent
-reviews. It reuses the existing workspace, memory, skills and proxy route, with
-separate conversation sessions and private replies. Runtime files are installed
-on the VPS and the new worker is active. Host and Caddy-container health checks,
-the secret HTTPS webhook route, wrong-path rejection and persisted Chatwoot
-webhook registration all passed. The exact Caddy-container-to-host firewall rule
-resolved the first activation's 502 without restarting any service. Existing
-bots stayed unchanged. The final private-note/model canary awaits a selected
-test conversation; no test messages or model calls have been sent.
+## What launch readiness does and does not establish
 
-Infrastructure source now supplies disabled-by-default funnel settings and the
-five Shopify financial webhook topics. No Chatwoot image, migration, capture
-boundary, provider export or Shopify app configuration has been deployed yet.
+A normal campaign optimized for conversations can use Chatwoot for operator handling and Shopify for checkout/payment. Purchase or qualified-lead optimization is a separate acceptance step; deploying these features does not establish availability of those goals in Ads Manager.
 
-## Activation and external evidence
+Production outcome collection activated on 27 September 2026 at 16:46:27 UTC, with a fixed observation boundary of 16:33:12 UTC. Capture during the intervening preparation window is not established. Meta and Klaviyo exports remain disabled. Read-only checks on 28 September confirmed the Messenger page/dataset connection and page_events permission, and working Klaviyo read access. The deployed Meta token is the same system-user token used by Shumabit. Its permission list does not include instagram_manage_events; the Instagram dataset endpoint rejects that access.
 
-Production rollout must use the owning infrastructure repository and existing
-release process. Deployment configuration includes the account and observation
-start, disabled-by-default provider delivery, and the bridge's real internal
-network/credential/proxy route. No new customer marketing flow is switched on by
-installing these components.
+The current Meta adapter sends eligible Messenger QualifiedLead events only. Purchase events are excluded with purchase_origin_unresolved; Shopify website purchases stay with their existing website integration. Instagram export is excluded. [Current Meta documentation](https://developers.facebook.com/documentation/ads-commerce/conversions-api/business-messaging.md) offers Instagram conversation optimization, not Instagram purchase optimization; granting the missing event permission alone would not enable the latter. The two currently collected Instagram incoming-message events, both from the same conversation, contain no confirmed sales qualification or payment and cannot be relabeled merely to make an acceptance test pass. There is no verified Klaviyo profile binding for those events.
 
-Messenger's page/dataset and page_events grant were verified in the integration
-inventory. Instagram event permission is missing, so Instagram export remains
-excluded until that account setting is supplied. Shopify website purchases remain
-owned by their existing integration; a Chatwoot order link is not sufficient to
-send another messaging Purchase. This restriction does not block using Chatwoot
-or launching a normal messaging campaign.
+Before enabling either export, verify a genuine eligible outcome, exact recipient identity, provider receipt and deduplication. For Meta, also inspect Events Manager and the actual available campaign optimization goal. [Meta’s test_event_code](https://developers.facebook.com/documentation/ads-commerce/conversions-api/using-the-api.md) is not an assurance that fabricated events are discarded; use truthful events. The operator completed Facebook and Business Manager two-factor sign-in. Events Manager opens for the correct dataset, shows the linked Page/Instagram IDs, and provides Messaging → Messenger test instructions. No asset permissions were changed. Existing website event activity is not evidence of Chatwoot delivery.
 
-A provider test receipt, Events Manager readback and live Shumabit follow-up are
-separate acceptance evidence. They should be run with explicit test data and
-recorded results. API acceptance alone does not establish Meta attribution or
-which optimization goals Linh can select.
+A single truthful technical `TestEvent` was then sent directly with the deployed Meta token and the identifiers/test code generated by Events Manager, without monetary data. At 12:35:01 UTC, Meta returned HTTP 200 and `events_received: 1`; Events Manager independently showed `TestEvent — Processed`, `Server`, `action_source: business_messaging`. Event ID: `umi-technical-connectivity-20260928-1790598900`; trace: `AkYCDP1d5nbq_4aJAsH0ymf`. This proves technical messaging connectivity. It does not prove the application’s QualifiedLead path, deduplication, identity match, purchase attribution or selectable optimization goals. No retry or permission change was performed; exports remain disabled.
 
+## Shumabit assistance
 
-## Review artifacts
+The worker and webhook are installed and healthy, but private-note suggestions are not accepted as working. Two staff-only canaries failed because the pinned Claude CLI reports Channels unavailable; both failure replies remained private and no public reply was sent. The reviewed print/resume adapter amendment is not implemented. Shumabit assistance is separate from launching a campaign handled by the operator.
 
-- Chatwoot application: [PR 56](https://github.com/shumkov/chatwoot/pull/56).
-- Shumabit worker: [draft PR 16](https://github.com/shumkov/shumabit-claude/pull/16).
-- Infrastructure: [draft PR 88](https://github.com/shumkov/umi-vps-infra/pull/88),
-  with 27 passing contract tests and Ansible syntax verification.
+## Operator workflow
 
-The GitHub Linux build and full repository CI are separate from the local
-focused checks above. Release readiness requires their results to be recorded;
-opening a PR does not establish that the production funnel is active.
+1. Respond to the incoming message and confirm the conversation’s Sales status when the evidence supports it.
+2. In the Shopify sidebar, choose the customer. Select a draft/order from history or paste its Shopify Admin URL, inspect the preview, then confirm the link.
+3. Create orders manually in Shopify or through the existing Telegram Shumabit workflow. Invoice checkout links can still be sent to customers; the sidebar link field expects the Admin URL.
+4. Record actual payments in Shopify. Refresh reconciliation and reload to inspect the result. Do not mark a reservation or uncollected pickup as purchased.
+5. Inspect draft errors, attribution gaps and delivery holds in the funnel report before evaluating campaign sales.
+
+## Evidence and remaining checks
+
+The controlled production canary used API inbox 9, contact 17216 and conversation 1105, clearly labelled technical and without email/phone or customer messages. A custom 1 THB draft (#D298, ID 1118959271983) with no customer or inventory item was previewed and confirmed through Chatwoot’s public authenticated API. Completing it with explicit `paymentPending: true` produced order #1630 (ID 6974703140911), `PENDING`, with no successful SALE/CAPTURE transaction.
+
+Reconciliation resolved the draft to one verified operator attribution and projected Sales status `order_placed`; paid events and provider deliveries stayed zero. Removing the order association returned HTTP 204 and marked both draft and order links unlinked, restoring `unevaluated`. Running draft and financial reconciliation again did not revive either association. Live customer search also returned a valid response; no real customer identity or purchase was linked to the technical contact.
+
+The first draft-create attempt was rejected with `draftOrder: null` because this token cannot set payment terms. The corrected request omitted only payment terms and retained explicit pending-payment completion. No object was created by the rejected request; no additional permissions were requested.
+
+Final persisted readback at 13:00:53 UTC confirmed no errors, zero paid events/provider deliveries/customer messages, and both links still unlinked. The exact technical order was cancelled at 12:59:00 UTC with customer notification and restocking disabled. Its final financial status is `VOIDED`, with zero successful SALE/CAPTURE transactions; conversation 1105 is resolved. A bounded read-only check of an existing customer’s order history and order preview also passed without creating any association to that customer.
+
+Local feature validation passed 683 backend examples and 7 component tests without skipped examples; changed-file lint passed. The full CI shard that exposed an unrelated stale-class email-template assertion was reproduced RED (519 examples, one failure), corrected narrowly, then passed all 519 examples. A forced-reload probe also went from one failure to zero. The feature’s independent review and fix readback closed all actionable findings.
+
+[Final Linux CI](https://github.com/shumkov/chatwoot/actions/runs/36420612223) passed all 16 backend shards (6,743 examples, zero failures, 66 marked pending), all 3,793 frontend tests across 386 files, and both linters. The MFA and upstream deployment jobs were intentionally skipped by their workflow conditions. No unresolved PR review threads or pending reviews remained at merge.
+
+See [manual-link rollout and operator checks](UMI-SHOPIFY-MANUAL-LINK-ROLLOUT.md) for the complete acceptance list, concurrency tradeoff and rollback. The production browser UI was not visually tested; production acceptance used the authenticated public API, and component interaction was tested locally with synthetic responses. Local tests are not provider attribution evidence. The infrastructure [deployment receipt and runbook](https://github.com/shumkov/umi-vps-infra/blob/main/docs/CHATWOOT_FUNNEL_RUNBOOK.md) record source pin `2f8439b` and receipt commit `78ec894`. Live paid/refund reconciliation, restricted-agent access and a paid-vs-unlink concurrency canary remain separate from the unpaid technical check.
