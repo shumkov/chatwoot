@@ -22,6 +22,7 @@ class Umi::Funnel::Report
       qualified_occurrences: events.where(event_type: 'conversation_qualified').count, paid_occurrences: paid.count,
       paid_outcomes_by_currency: paid.group("payload ->> 'currency'").sum("(payload ->> 'value')::numeric").transform_values(&:to_s),
       current_classification: account.conversations.group("custom_attributes ->> 'umi_sales_status'").count,
+      classifier_outcomes: events.where(event_type: 'classification_evaluated', redacted_at: nil).group("payload ->> 'outcome'").count,
       current_cash_by_currency: currencies.transform_values { |amounts| amounts.transform_values { |amount| amount.to_s('F') } },
       paid_with_verified_attribution: paid.where.not(conversation_id: nil).where(redacted_at: nil).count,
       paid_history_unknown: states.where("snapshot ->> 'paid_history_unknown' = 'true'").count,
