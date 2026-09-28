@@ -30,6 +30,15 @@ RSpec.describe Umi::Shopify::PaidOrderReport do
                                                  fields: Umi::Shopify::PaidOrderReport::TRANSACTION_FIELDS }).and_return(transaction_response)
   end
 
+  it 'distinguishes operator-confirmed attribution from a storefront link' do
+    conversation = create(:conversation, account: account)
+    Umi::ShopifyOrderAttribution.create!(account_id: account.id, shop_domain: hook.reference_id, shopify_order_id: '1001',
+                                         source: 'operator', attribution_state: 'verified', conversation_id: conversation.id,
+                                         contact_id: conversation.contact_id)
+
+    expect(report[:rows].sole).to include(conversation_id: conversation.id, attribution_source: 'operator')
+  end
+
   it 'keeps only a positive Shopify customer ID from the private customer object' do
     order['customer'] = { 'id' => 321, 'email' => 'private@example.test', 'first_name' => 'Private' }
     row = report[:rows].sole

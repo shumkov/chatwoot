@@ -34,6 +34,7 @@ class Umi::Shopify::PaidOrderReport
     value.to_i
   end
 
+  # rubocop:disable Metrics/AbcSize
   def read_order(client, shop, id)
     order = client.get(path: "orders/#{id}", query: { fields: ORDER_FIELDS }).body.fetch('order')
     response = client.get(path: "orders/#{id}/transactions", query: { in_shop_currency: true, fields: TRANSACTION_FIELDS })
@@ -44,12 +45,10 @@ class Umi::Shopify::PaidOrderReport
     row = build_row(order, response.body.fetch('transactions'))
     row[:shopify_customer_id] = customer_id if customer_id.match?(/\A[1-9]\d*\z/)
     row[:paid_basket] = paid_basket(order) if row[:classification] == 'paid'
-    row.merge(
-      order_id: id,
-      conversation_id: Umi::ShopifyOrderAttribution.verified.find_by(account_id: @account_id, shop_domain: shop,
-                                                                     shopify_order_id: id)&.conversation_id
-    )
+    attribution = Umi::ShopifyOrderAttribution.verified.find_by(account_id: @account_id, shop_domain: shop, shopify_order_id: id)
+    row.merge(order_id: id, conversation_id: attribution&.conversation_id, attribution_source: attribution&.source)
   end
+  # rubocop:enable Metrics/AbcSize
 
   # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
   def paid_basket(order)

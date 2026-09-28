@@ -71,6 +71,13 @@ class Umi::Funnel::PaidCustomerLink
     customer_id = row['shopify_customer_id']
     return [attribution, attributed, attributed ? nil : 'customer_unknown'] if customer_id.blank?
 
+    if attribution&.source == 'operator' && attribution.shopify_customer_id == customer_id &&
+       attributed&.additional_attributes&.[]('shopify_customer_id').to_s == customer_id
+      return [nil, nil, 'customer_redacted'] if attributed.additional_attributes['umi_profile_redacted']
+
+      return [attribution, attributed, nil]
+    end
+
     contacts = Contact.where(account_id: @state.account_id).where("additional_attributes ->> 'shopify_customer_id' = ?", customer_id).limit(2).to_a
     return [nil, nil, 'customer_missing'] if contacts.empty?
     return [nil, nil, 'customer_ambiguous'] if contacts.size != 1

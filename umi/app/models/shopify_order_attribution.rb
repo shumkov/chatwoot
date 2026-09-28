@@ -7,7 +7,9 @@ class Umi::ShopifyOrderAttribution < ApplicationRecord
 
   belongs_to :account
 
-  validates :shop_domain, :shopify_order_id, :attribution_state, :token_nonce, presence: true
+  validates :shop_domain, :shopify_order_id, :attribution_state, presence: true
+  validates :token_nonce, presence: true, if: -> { source == 'storefront' }
+  validates :source, inclusion: { in: %w[storefront operator] }
   validates :attribution_state, inclusion: { in: STATES }
 
   scope :verified, -> { where(attribution_state: 'verified', redacted_at: nil).where.not(conversation_id: nil).where.not(contact_id: nil) }
@@ -19,6 +21,8 @@ class Umi::ShopifyOrderAttribution < ApplicationRecord
         candidate_conversation_id: nil,
         contact_id: nil,
         candidate_contact_id: nil,
+        shopify_customer_id: nil,
+        linked_by_id: nil,
         redacted_at: Time.current
       )
     end

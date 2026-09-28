@@ -4,8 +4,10 @@ import { useFunctionGetter } from 'dashboard/composables/store';
 import Spinner from 'dashboard/components-next/spinner/Spinner.vue';
 import ShopifyAPI from '../../../api/integrations/shopify';
 import ShopifyOrderItem from './ShopifyOrderItem.vue';
+import UmiShopifyLinks from './UmiShopifyLinks.vue';
 
 const props = defineProps({
+  conversationId: { type: [Number, String], default: null },
   contactId: {
     type: [Number, String],
     required: true,
@@ -15,7 +17,10 @@ const props = defineProps({
 const contact = useFunctionGetter('contacts/getContact', props.contactId);
 
 const hasSearchableInfo = computed(
-  () => !!contact.value?.email || !!contact.value?.phone_number
+  () =>
+    !!contact.value?.email ||
+    !!contact.value?.phone_number ||
+    !!contact.value?.additional_attributes?.shopify_customer_id
 );
 
 const orders = ref([]);
@@ -38,7 +43,7 @@ const fetchOrders = async () => {
 watch(
   () => props.contactId,
   () => {
-    if (hasSearchableInfo.value) {
+    if (!props.conversationId && hasSearchableInfo.value) {
       fetchOrders();
     }
   },
@@ -47,7 +52,8 @@ watch(
 </script>
 
 <template>
-  <div class="px-4 py-2 text-n-slate-12">
+  <UmiShopifyLinks v-if="conversationId" :conversation-id="conversationId" />
+  <div v-else class="px-4 py-2 text-n-slate-12">
     <div v-if="!hasSearchableInfo" class="text-center text-n-slate-12">
       {{ $t('CONVERSATION_SIDEBAR.SHOPIFY.NO_SHOPIFY_ORDERS') }}
     </div>

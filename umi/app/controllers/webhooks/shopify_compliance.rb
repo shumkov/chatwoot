@@ -79,9 +79,25 @@ module Umi::Webhooks::ShopifyCompliance
     account = compliance_account
     return if account.nil?
 
+    account.with_lock('FOR NO KEY UPDATE') { redact_customer_records(account) }
+  end
+
+  # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+  def redact_customer_records(account)
     Umi::Funnel::Privacy.redact_customer_orders!(account_id: account.id, shop_domain: params[:shop_domain].to_s.downcase,
                                                  customer_id: params.dig(:customer, :id), order_ids: params[:orders_to_redact] || [])
     payload = params[:customer] || {}
+    if payload[:id].present?
+      contacts = account.contacts.where("additional_attributes->>'shopify_customer_id' = ?", payload[:id].to_s)
+      if contacts.exists?
+        contacts.find_each do |matched_contact|
+          compliance_safely('customers/redact') do
+            Contact.transaction(requires_new: true) { apply_redaction(matched_contact, :shopify_customer_id) }
+          end
+        end
+        return
+      end
+    end
     contact, matched_by = find_redact_contact(account, payload)
     if contact.nil?
       Rails.logger.info("[umi-shopify-compliance] customers/redact: no contact for shopify customer #{payload[:id]} — nothing to do")
@@ -92,6 +108,7 @@ module Umi::Webhooks::ShopifyCompliance
     Rails.logger.info("[umi-shopify-compliance] customers/redact: contact #{contact.id} matched by #{matched_by} — " \
                       "#{redaction_action(contact, matched_by)} (shopify customer #{payload[:id]})")
   end
+  # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
   # Hook gone (Shopify can deliver after uninstall; shop/redact deletes the
   # hook): fall back to the single account, but only for the expected shop —

@@ -22,6 +22,32 @@ RSpec.describe Umi::Shopify::OrderFinancialStateService do
 
   before { allow(Umi::Shopify::PaidOrderReport).to receive(:new).and_return(reader) }
 
+  it 'keeps a purchased conversation purchased when another linked order is unpaid' do
+    conversation = create(:conversation, account: account)
+    %w[123 456].each do |order_id|
+      Umi::ShopifyOrderAttribution.create!(account: account, shop_domain: hook.reference_id, shopify_order_id: order_id,
+                                           conversation_id: conversation.id, contact_id: conversation.contact_id,
+                                           attribution_state: 'verified', token_nonce: SecureRandom.hex)
+    end
+    described_class.new(state).perform
+    other = described_class.request(account_id: account.id, shop_domain: hook.reference_id, order_id: '456')
+    row[:classification] = 'unpaid'
+    described_class.new(other).perform
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to eq('purchased')
+    expect(conversation.label_list).to include('lead-converted')
+  end
+
+  it 'does not create a contact-only paid conversion after a manually linked conversation was deleted' do
+    conversation = create(:conversation, account: account)
+    Umi::ShopifyOrderAttribution.create!(account: account, shop_domain: hook.reference_id, shopify_order_id: '123',
+                                         conversation_id: conversation.id, contact_id: conversation.contact_id,
+                                         attribution_state: 'verified', source: 'operator')
+    conversation.destroy!
+    described_class.new(state).perform
+    expect(Umi::ConversationEvent.where(event_type: 'order_paid')).to be_empty
+    expect(state.reload.redacted_at).to be_present
+  end
+
   it 'keeps the paid basket and occurrence when a later refund changes retained cash' do
     described_class.new(state).perform
     paid = state.reload.paid_event
