@@ -2,6 +2,7 @@
 
 class Umi::Funnel::Privacy
   def self.redact_contact!(contact, shopify_customer_id: nil)
+    Umi::Funnel::LegacyCleanup.purge_contact!(contact)
     redact_customer_context!(contact)
     events = Umi::ConversationEvent.where(account_id: contact.account_id, contact_id: contact.id)
     order_ids = Umi::ShopifyOrderAttribution.where(account_id: contact.account_id).where(contact_id: contact.id)

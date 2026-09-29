@@ -207,3 +207,40 @@ should pass `(conversation_id, source_message_id)` explicitly. This compatibilit
 does not schedule historical notes or replay conversions. Provider permission,
 accepted-event attribution and optimization eligibility still require their own
 live verification.
+
+## Retire the old CRM fields
+
+The fixed account 1 cleanup is a separate deployment operation. First export
+the existing n8n workflows privately, disable and drain `enrichshopify001`, and
+remove its exact Chatwoot webhook and Netdata monitor. Deploy the retained
+Klaviyo workflow's owned-key update before cleanup: its former full-contact
+snapshot could restore retired fields. Disable automation rule 1 (`lead-new`),
+keep customer-context writers disabled and keep classification out of `auto`.
+The rake task checks Chatwoot writer settings; n8n drain is an operator check.
+
+Run `bundle exec rake umi:legacy_cleanup:inventory` to freeze the private
+before-images, inspect aggregate counts and resolve held references before
+`bundle exec rake umi:legacy_cleanup:apply`. Both commands run in the production
+Rails container through the infra deployment owner. The exact 13 labels and
+10 Shopify custom keys are declared in `LegacyCleanup`; native Shopify links,
+consent, retained campaign fields and unrelated labels are preserved. Set
+`REVIEW_SENTINEL_CONFIRMED=true` only when that additional retired key has been
+checked. An existing inventory fixes the scope for subsequent commands.
+
+Storage is private under `storage/umi-stage-one-cleanup/account-1`, with a
+30-day retention window. Do not attach its raw files to logs or pull requests.
+Contact erasure purges its before-images and original-owner snapshot notes.
+Contact 1388's unresolved old Shopify context is preserved as one explicitly
+unverified private note, never as a confirmed link.
+
+`bundle exec rake umi:legacy_cleanup:restore` is explicit conditional recovery,
+not a full database rollback. It leaves newer edits, changed bindings and erased
+records untouched. A lost final catalog receipt can be confirmed only when the
+exact restored catalog is present; otherwise restoration stops for inspection
+without reinserting missing definitions. Do not delete the receipt to bypass a
+hold. `umi:legacy_cleanup:prune` also runs from scheduled reconciliation and
+closes the expired operation so it cannot be replayed as a fresh migration.
+
+Acceptance requires readback of values, label associations and definitions,
+then another readback after the ordinary writer cycles. Source tests do not
+prove production cleanup or that legacy fields will stay absent.

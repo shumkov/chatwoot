@@ -4,6 +4,7 @@ class Umi::Funnel::ReconcileJob < ApplicationJob
   queue_as :low
 
   def perform # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
+    Umi::Funnel::LegacyCleanup.new.prune
     ids = Umi::Funnel::Configuration.account_ids
     return if ids.empty?
 

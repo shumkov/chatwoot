@@ -63,6 +63,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 47 | Paid ad referral continuity | UMI FB/IG attribution builder, ad context job/trigger, conversation qualification, source/race specs and delivery runbook | Keeps each ad tap and private context note tied to its retained source, freezes the eligible referral when a later message qualifies, and suppresses obsolete messaging identities after rebinding. | Native messaging attribution preserves equivalent per-source history, qualification cutoffs and private ad context. |
 
 
+| 48 | Retired CRM data cleanup | `Umi::Funnel::LegacyCleanup`, rake entrypoints, privacy/reconciliation hooks and focused specs | Removes the fixed account-owned legacy labels and attributes after their writers stop; retains private expiring before-images and conditional recovery without resurrecting erased contacts or operator changes. | Stage-one cleanup is accepted, its recovery window has expired and no retained runtime needs the migration. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
