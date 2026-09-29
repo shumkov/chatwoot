@@ -6,6 +6,10 @@ with human correction. The design passed independent review; implementation is
 under code review. Production remains disabled until the separate deployment
 and quality checks below are completed.
 
+29 September addendum: [conversation lifecycle and integration decisions](UMI-CONVERSATION-LIFECYCLE-DECISIONS.md) records the accepted conversation-boundary policy, stage-2 historical classification, and required private change notes. These additions identify pending implementation; production is now deployed in shadow, superseding the original pre-deployment status above.
+
+The consolidated [CRM data contract](UMI-CRM-DATA-CONTRACT.md) now specifies the proposed stage-one field types, topic allowlist extension, correction behavior, customer visibility, synchronization and notes. It is not an implementation receipt. The complete [stage-one plan](UMI-FUNNEL-STAGE-ONE-SPEC.md) supersedes the old bounded-message context below: review and production must share full available current-conversation text with explicit oversized-input uncertainty, while retaining fresh-evidence requirements for conversion events.
+
 ## Purpose and authority
 
 Classify incoming sales conversations so the operator does not have to evaluate
@@ -252,29 +256,29 @@ and provider-export boundaries do not move.
 
 ### Required quality evidence
 
-The original U3/Q2 gate requires Sales-reviewed, human-labeled Thai/English
-examples and accepted thresholds. The user selected automatic operation after
-that gate; this document does not claim Sales approval of any sample.
+On 29 September the user selected assisted review: show the AI status/topics,
+reason and supporting messages first; the operator corrects only mistakes and
+explains why. This supersedes the initial blinded-label/90%-agreement proposal.
+It is qualitative acceptance, not an unbiased accuracy measurement or training.
 
-Proposed small-pilot gate for review:
-
-1. Prepare about 40 blinded examples covering clear buying steps, reciprocal
-   consultation, greetings/price-only questions, phone-only messages, support
-   and refunds from existing buyers, collaboration/recruitment, ambiguity,
-   message bursts, negation and injected instructions. Include both languages
-   and mixed-language conversations.
-2. Sales assigns the expected status/topics and resolves ambiguous labels
-   before scoring. Sanitized real examples are preferred; authored examples
-   may cover missing edge cases but must be reported separately.
-3. Require zero false qualifications in the designated hard-negative set and
-   at least 90% status agreement on Sales-labeled clear cases. Treat abstention
-   on a clear case as a disagreement, and report abstention/coverage, topic
-   errors and qualification precision separately.
+1. Repair the approximately 40-example packet with sufficient available history
+   and known customer facts; preserve existing corrections. Cover Thai/English,
+   clear buying steps, consultation, greetings/price-only and phone-only messages,
+   existing-buyer support/refunds, Instagram mentions, collaboration/recruitment,
+   ambiguity, negation and injected instructions. Declare missing attachments
+   and authored examples separately; reconcile review/production input semantics.
+2. Any operator comment disputes the complete proposal, including topic/reason
+   errors without a status change. Only explicit final confirmation accepts
+   unchanged proposals; prefilled fields and autosaved drafts are not approval.
+3. Resolve reviewed errors and require zero false qualifications on designated
+   hard-negative cases. Report uncertainty, topic errors and coverage separately;
+   do not present assisted confirmations as blinded 90% accuracy.
 4. Require zero evidence-ownership, payment-status, human-correction or
-   customer-send violations in deterministic tests. Review every disagreement.
-5. Record who accepted the sample, exact policy/model, counts and thresholds
-   before switching to auto. A set of 40 synthetic passing tests is not a
-   human-approved quality evaluation or a statistical accuracy guarantee.
+   customer-send violations in deterministic checks. Model changes do not relax
+   deterministic transition and provider-eligibility rules.
+5. Record operator acceptance, exact model/effort (unknown when unobserved),
+   policy, input version and covered cases before auto activation. Reevaluate
+   affected cases after a material model/prompt/context change.
 
 If real examples or Sales review are unavailable, ship shadow mode and report
 the pending gate plainly. Do not substitute test-suite success for approval.

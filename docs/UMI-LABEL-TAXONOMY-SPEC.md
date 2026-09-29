@@ -1,5 +1,7 @@
 # UMI — conversation labels: what to use, what to delete
 
+> Historical research. The proposed current field/label/UI/sync contract is [UMI-CRM-DATA-CONTRACT.md](UMI-CRM-DATA-CONTRACT.md); it supersedes the design recommendations below. This notice does not change the historical measurements.
+
 Written 2026-08-12. Everything here was checked against the running production
 system and the source code; the line references are in the appendix so any claim
 can be re-checked.
