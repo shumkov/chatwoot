@@ -285,6 +285,28 @@ the pending gate plainly. Do not substitute test-suite success for approval.
 After activation, use the existing bounded report/private operator review to
 sample classifications and corrections; no new dashboard or notification bot.
 
+### Historical examples and live eligibility
+
+The original 40 examples also contain conversations from before event
+collection. Export them with `REVIEW_MODE=retrospective_semantic_qa` through
+`umi:funnel:classification:export`. This mode evaluates the meaning of retained
+historical messages in a simulated evidence window; it does not create events,
+change CRM records or authorize any provider export. The default `live_context`
+mode continues to use the unmodified production context.
+
+Retrospective evidence uses the existing eligible incoming IDs, excludes
+recovered, deleted and private messages, and respects both ID and time fences
+from persisted operator corrections. Original sample IDs, prior proposals and
+human expectations remain separate from the new model response. The packet
+retains `original_export_fresh_evidence_ids` as provenance; those IDs alone are
+not proof of complete production auto eligibility. Topic correction fences
+remain subject to the separate production application check.
+
+The review page prominently identifies retrospective mode. Acceptance records
+must identify this exact packet and mode as well as the unchanged model/prompt
+configuration. Historical semantic quality and fresh live conversion eligibility
+are separate checks; passing one does not establish the other.
+
 ## Files and verification
 
 Expected narrow application changes:

@@ -62,6 +62,30 @@ RSpec.describe Umi::Funnel::ClassificationReview do
     expect(result.to_json).not_to include('secret malformed output')
   end
 
+  it 'can evaluate historical buying intent only in explicit retrospective review without making it live evidence' do
+    message.update!(created_at: 5.days.ago, content: 'Please reserve the blue dress in size M for pickup tomorrow')
+    proposal = { 'status' => 'qualified', 'topics' => [], 'roles' => [], 'reason' => 'Explicit buying request',
+                 'evidence_message_ids' => [message.id] }
+    live = described_class.export(account_id: account.id, manifest: manifest)
+    expect { Umi::Funnel::ClassificationClient.validate!(proposal, live[:samples].sole[:context]) }
+      .to raise_error(Umi::Funnel::ClassificationClient::InvalidDecision)
+
+    packet = nil
+    expect do
+      packet = described_class.export(account_id: account.id, manifest: manifest, mode: 'retrospective_semantic_qa')
+    end.not_to change(Umi::ConversationEvent, :count)
+    sample = packet[:samples].sole
+    expect(packet).to include(mode: 'retrospective_semantic_qa', configuration_digest: live[:configuration_digest])
+    expect(sample).to include(original_export_fresh_evidence_ids: [], historical_original: manifest['samples'].sole,
+                              human_expectations: manifest['samples'].sole['corrections'],
+                              input_bytes: Umi::Funnel::ClassificationClient.request_bytes(sample[:context]),
+                              context: include(fresh_evidence_ids: [message.id], messages: [include(id: message.id, context_only: false)]))
+    expect(Umi::Funnel::ClassificationClient.validate!(proposal, sample[:context])).to eq(proposal)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(instance_double(Umi::Funnel::ClassificationClient, classify: proposal))
+    expect { described_class.infer(JSON.parse(packet.to_json)) }.not_to change(Umi::ConversationEvent, :count)
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+  end
+
   it 'renders customer and model text inert with a distinct packet-scoped draft key and real evidence anchors' do
     message
     packet = JSON.parse(described_class.export(account_id: account.id, manifest: manifest).to_json)
@@ -74,6 +98,84 @@ RSpec.describe Umi::Funnel::ClassificationReview do
     expect(html).not_to include('umi-classifier-assisted-review-20260929')
     expect(html).to include('umi-classifier-review-')
     expect(html.scan('<script>').size).to eq(1)
+  end
+
+  it 'keeps recovered history context-only and omits private and deleted messages in retrospective review' do
+    message
+    recovered = create(:message, account: account, conversation: conversation, message_type: :incoming,
+                                 content_attributes: { umi_recovered: true })
+    legacy_recovered = create(:message, account: account, conversation: conversation, message_type: :incoming,
+                                        content_attributes: { umi_recovered: 'true' })
+    create(:message, account: account, conversation: conversation, message_type: :incoming, private: true)
+    create(:message, account: account, conversation: conversation, message_type: :incoming, content_attributes: { deleted: true })
+    sample = described_class.export(account_id: account.id, manifest: manifest, mode: 'retrospective_semantic_qa')[:samples].sole
+    expect(sample[:context][:incoming_ids]).to eq([message.id])
+    expect(sample[:context][:fresh_evidence_ids]).to eq([message.id])
+    expect(sample[:context][:messages].pluck(:id)).to contain_exactly(message.id, recovered.id, legacy_recovered.id)
+    expect(sample[:context][:messages].select { |row| row[:context_only] }.pluck(:id)).to contain_exactly(recovered.id, legacy_recovered.id)
+  end
+
+  it 'keeps both human correction boundaries and topic removal fences in retrospective review' do
+    message.update!(created_at: 3.hours.ago)
+    watermark = create(:message, account: account, conversation: conversation, message_type: :incoming, created_at: 2.hours.ago)
+    correction_time = 1.hour.ago
+    message.update!(created_at: 30.minutes.ago)
+    backdated = create(:message, account: account, conversation: conversation, message_type: :incoming, created_at: 2.hours.ago)
+    fresh = create(:message, account: account, conversation: conversation, message_type: :incoming, created_at: 20.minutes.ago)
+    Umi::ConversationEvent.record!(account_id: account.id, contact_id: conversation.contact_id, conversation_id: conversation.id,
+                                   event_type: 'classification_changed', provenance: 'operator', observed_at: correction_time,
+                                   occurrence_key: 'review:correction', payload: { input_message_id: watermark.id, status: 'not_sales' })
+    Umi::ConversationEvent.record!(account_id: account.id, contact_id: conversation.contact_id, conversation_id: conversation.id,
+                                   event_type: 'classification_topics_corrected', provenance: 'operator', observed_at: correction_time,
+                                   occurrence_key: 'review:topics', payload: { input_message_id: watermark.id, removed: ['sizing'] })
+    live = described_class.export(account_id: account.id, manifest: manifest)[:samples].sole[:context]
+    sample = described_class.export(account_id: account.id, manifest: manifest, mode: 'retrospective_semantic_qa')[:samples].sole
+    context = sample[:context]
+    expect(live[:fresh_evidence_ids]).to eq([fresh.id])
+    expect(sample[:original_export_fresh_evidence_ids]).to eq([fresh.id])
+    expect(context[:fresh_evidence_ids]).to eq([fresh.id])
+    expect(context[:messages].select { |row| row[:context_only] }.pluck(:id)).to contain_exactly(message.id, watermark.id, backdated.id)
+    expect(context[:human_correction]).to eq(live[:human_correction])
+    expect(context[:topic_corrections]).to eq(live[:topic_corrections])
+  end
+
+  it 'rejects an unknown mode instead of silently changing the review semantics' do
+    expect { described_class.export(account_id: account.id, manifest: manifest, mode: 'retrospective') }
+      .to raise_error(ArgumentError, 'Unknown review mode')
+  end
+
+  it 'exposes retrospective mode through the existing export task and writes only a private review artifact' do
+    require 'rake'
+    message
+    application = Rake::Application.new
+    Rake.with_application(application) do
+      Rake::Task.define_task(:environment)
+      load Rails.root.join('lib/tasks/umi_funnel_classification.rake')
+      Dir.mktmpdir do |directory|
+        manifest_path = File.join(directory, 'manifest.json')
+        output = File.join(directory, 'packet.json')
+        File.write(manifest_path, JSON.generate(manifest))
+        with_modified_env MANIFEST: manifest_path, OUTPUT: output, ACCOUNT_ID: account.id.to_s, REVIEW_MODE: 'retrospective_semantic_qa' do
+          expect { application['umi:funnel:classification:export'].invoke }.not_to change(Umi::ConversationEvent, :count)
+        end
+        packet = JSON.parse(File.read(output))
+        expect(packet['mode']).to eq('retrospective_semantic_qa')
+        expect(packet['samples'].sole['sample']).to eq(10)
+        expect(packet['samples'].sole['context']).not_to have_key('original_export_fresh_evidence_ids')
+        expect(File.stat(output).mode & 0o777).to eq(0o600)
+      end
+    end
+  end
+
+  it 'labels retrospective artifacts without mixing browser corrections with the live packet' do
+    message
+    live = JSON.parse(described_class.export(account_id: account.id, manifest: manifest).to_json)
+    retrospective = JSON.parse(described_class.export(account_id: account.id, manifest: manifest, mode: 'retrospective_semantic_qa').to_json)
+    retrospective['exported_at'] = live['exported_at']
+    html = UmiClassifierReview.render(retrospective)
+    expect(html).to include('Retrospective semantic QA only', 'does not prove production eligibility or advertising attribution')
+    expect(html).not_to include("umi-classifier-review-#{Digest::SHA256.hexdigest(JSON.generate(live))}")
+    expect(UmiClassifierReview.render(live)).not_to include('Retrospective semantic QA only')
   end
 
   it 'writes private new artifacts and refuses to overwrite prior review data' do

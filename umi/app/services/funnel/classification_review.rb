@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 class Umi::Funnel::ClassificationReview
-  def self.export(account_id:, manifest:) # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity
+  def self.export(account_id:, manifest:, mode: 'live_context') # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    raise ArgumentError, 'Unknown review mode' unless %w[live_context retrospective_semantic_qa].include?(mode)
+
     samples = manifest.fetch('samples')
     ids = samples.map { |sample| sample.fetch('sample') }
     raise ArgumentError, 'Sample IDs must be unique positive integers' unless ids.all? { |id| id.is_a?(Integer) && id.positive? } && ids.uniq == ids
@@ -16,16 +18,33 @@ class Umi::Funnel::ClassificationReview
       watermark = messages.incoming.maximum(:id)
       context = Umi::Funnel::ClassificationContext.new(conversation, watermark: watermark, cutoff: messages.maximum(:id),
                                                                      boundary: Umi::Funnel::Configuration.started_at, as_of: as_of).build
+      original_fresh_ids = context.fetch(:fresh_evidence_ids)
+      context = retrospective_context(context) if mode == 'retrospective_semantic_qa'
       { sample: sample.fetch('sample'), conversation_display_id: conversation.display_id, conversation_id: conversation.id,
+        original_export_fresh_evidence_ids: original_fresh_ids,
         context: context, input_bytes: Umi::Funnel::ClassificationClient.request_bytes(context),
         warning: Umi::Funnel::ClassificationClient.uncertainty(context, config), proposal: nil, failure: nil,
         human_expectations: sample.fetch('corrections', []), historical_original: sample,
         evidence_mapping: 'Historical evidence is retained as original data; ordinal IDs are not mapped to persisted IDs.' }
     end
-    { version: Umi::Funnel::ClassificationContext::VERSION, account_id: account_id, exported_at: Time.current.iso8601,
+    { version: Umi::Funnel::ClassificationContext::VERSION, mode: mode, account_id: account_id, exported_at: Time.current.iso8601,
       configuration: config, configuration_digest: Umi::Funnel::ClassificationClient.configuration_digest(config),
       manifest_digest: Digest::SHA256.hexdigest(JSON.generate(manifest)), samples: rows }
   end
+
+  def self.retrospective_context(original)
+    context = original.deep_dup
+    correction = context[:human_correction]
+    fresh_ids = context.fetch(:messages).select do |message|
+      context.fetch(:incoming_ids).include?(message[:id]) &&
+        (!correction || (message[:id] > correction[:input_message_id].to_i &&
+                         Time.iso8601(message[:created_at]) > Time.iso8601(correction[:observed_at])))
+    end.pluck(:id)
+    context[:fresh_evidence_ids] = fresh_ids
+    context.fetch(:messages).each { |message| message[:context_only] = fresh_ids.exclude?(message[:id]) }
+    context
+  end
+  private_class_method :retrospective_context
 
   def self.infer(packet) # rubocop:disable Metrics/MethodLength
     unless packet.fetch('configuration') == Umi::Funnel::ClassificationClient.configuration

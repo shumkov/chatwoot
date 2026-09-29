@@ -6,7 +6,8 @@ namespace :umi do
       desc 'Export complete private review contexts from an explicit sample manifest without inference'
       task export: :environment do
         manifest = JSON.parse(File.read(ENV.fetch('MANIFEST')))
-        packet = Umi::Funnel::ClassificationReview.export(account_id: Integer(ENV.fetch('ACCOUNT_ID')), manifest: manifest)
+        packet = Umi::Funnel::ClassificationReview.export(account_id: Integer(ENV.fetch('ACCOUNT_ID')), manifest: manifest,
+                                                          mode: ENV.fetch('REVIEW_MODE', 'live_context'))
         Umi::Funnel::ClassificationReview.write_new!(ENV.fetch('OUTPUT'), packet)
       end
 

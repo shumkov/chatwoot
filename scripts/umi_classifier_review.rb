@@ -10,6 +10,9 @@ module UmiClassifierReview
     <title>UMI classifier review</title>
     <style>body{max-width:960px;margin:2rem auto;padding:1rem;font-family:system-ui}article{border-top:1px solid #ccc;padding:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}textarea{width:100%;min-height:5rem}.warning{color:#9c4200}details{margin:1rem 0}</style>
     <h1>UMI classifier review</h1><p>Read the proposed result and explain only what is wrong. Retained expectations are shown separately from the new model answer. This page never changes CRM or activates the classifier.</p>
+    <% if packet['mode'] == 'retrospective_semantic_qa' %>
+      <p class="warning"><strong>Retrospective semantic QA only.</strong> Historical incoming evidence is simulated as fresh for this review. This does not prove production eligibility or advertising attribution. Topic proposals still require production correction checks.</p>
+    <% end %>
     <p>Configuration: <code><%= h(packet.fetch('configuration_digest')) %></code></p>
     <% packet.fetch('samples').each do |sample| %>
       <article id="sample-<%= h(sample.fetch('sample')) %>"><h2>Example <%= h(sample.fetch('sample')) %> · conversation #<%= h(sample.fetch('conversation_display_id')) %></h2>
