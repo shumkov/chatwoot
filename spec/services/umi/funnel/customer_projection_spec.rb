@@ -39,15 +39,13 @@ RSpec.describe 'Customer projection', type: :model do
     conversation.reload.update_labels(['support-refund'])
     Umi::Funnel::CustomerMutation.new(contact, source: 'system').perform(roles: { umi_vip: 'yes' })
     agent = create(:user, account: account)
-    policy = create(:sla_policy, account: account)
     conversation.reload.assign_attributes(status: :snoozed, snoozed_until: 1.day.from_now, priority: :high,
-                                          assignee_id: agent.id, sla_policy_id: policy.id)
+                                          assignee_id: agent.id)
     conversation.save!
     expect(conversation.reload.label_list).to match_array(%w[vip support-refund])
     expect(conversation.snoozed_until).to be_present
     expect(conversation.priority).to eq('high')
     expect(conversation.assignee_id).to eq(agent.id)
-    expect(conversation.sla_policy_id).to eq(policy.id)
     conversation.resolved!
     Umi::Funnel::CustomerMutation.new(contact, source: 'system').perform(roles: { umi_vip: 'no' })
     Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)

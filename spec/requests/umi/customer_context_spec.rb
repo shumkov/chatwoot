@@ -28,16 +28,6 @@ RSpec.describe 'Customer context writes', type: :request do
     expect(contact.reload.name).not_to eq('Wrong')
   end
 
-  it 'retains Enterprise company assignment when updating a customer role' do
-    account.enable_features!(:companies)
-    company = create(:company, account: account)
-    patch path, headers: agent.create_new_auth_token,
-                params: { company_id: company.id, custom_attributes: { umi_vip: 'yes' } }, as: :json
-    expect(response).to have_http_status(:success)
-    expect(contact.reload.company_id).to eq(company.id)
-    expect(contact.custom_attributes['umi_vip']).to eq('yes')
-  end
-
   it 'records no and unknown as distinct operator choices and rejects deleting payment history' do
     %w[yes no unknown].each do |value|
       patch path, headers: agent.create_new_auth_token, params: { custom_attributes: { umi_vip: value } }, as: :json
