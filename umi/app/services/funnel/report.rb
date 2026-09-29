@@ -5,7 +5,7 @@
 class Umi::Funnel::Report
   def self.perform(account_id:, since:, until_time: Time.current)
     account = Account.find(account_id)
-    events = Umi::ConversationEvent.where(account_id: account.id).where(observed_at: since..until_time)
+    events = Umi::ConversationEvent.where(account_id: account.id).where(observed_at: since...until_time)
     states = Umi::ShopifyOrderFinancialState.where(account_id: account.id, redacted_at: nil)
     currencies = {}
     states.find_each do |state|
