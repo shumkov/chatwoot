@@ -54,6 +54,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 43 | Private chat-settlement confirmation | UMI funnel settlement command/controller/job, Purchase source/delivery/privacy, Shopify financial source fields, attribution pointer migration and focused request/concurrency specs | An operator confirms or cancels the chat origin of an already-linked, verified paid order in a private note. Rechecks source identity and payment before one frozen Meta claim, excludes website checkouts, and keeps Purchase channels disabled until provider acceptance. | Native conversation commerce supports explicit settlement origin, cancellation and equivalent verified messaging conversion delivery. |
 
+| 44 | Current customer context aggregates | `umi/app/services/funnel/customer_context_report.rb`, report integration and focused specs | Adds non-identifying account-wide stage/role, binding and sync freshness counts to the weekly reporting source. Distinguishes unknown and expired observations without exporting customer records. | Native reports provide equivalent current customer context and explicit data freshness. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)

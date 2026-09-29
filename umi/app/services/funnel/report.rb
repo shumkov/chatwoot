@@ -17,7 +17,7 @@ class Umi::Funnel::Report
     end
     paid = events.where(event_type: 'order_paid')
     { as_of: Time.current.utc.iso8601, occurrence_window: { observed_from: since.iso8601, observed_until: until_time.iso8601 },
-      current_state_scope: 'all_account_records',
+      current_state_scope: 'all_account_records', customer_context: Umi::Funnel::CustomerContextReport.perform(account: account),
       observed_conversations: events.where(event_type: 'message_received').distinct.count(:conversation_id),
       qualified_occurrences: events.where(event_type: 'conversation_qualified').count, paid_occurrences: paid.count,
       paid_outcomes_by_currency: paid.group("payload ->> 'currency'").sum("(payload ->> 'value')::numeric").transform_values(&:to_s),
