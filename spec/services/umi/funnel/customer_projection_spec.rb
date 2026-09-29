@@ -82,8 +82,12 @@ RSpec.describe 'Customer projection', type: :model do
     conversation
     service = Umi::Funnel::CustomerMutation.new(contact, source: 'system')
     [
-      ['chooser', { 'buyer_lifecycle' => 'non_buyer', 'segments' => { 'complete' => true, 'chooser' => true, 'seeker' => false } }],
-      ['seeker', { 'buyer_lifecycle' => 'non_buyer', 'segments' => { 'complete' => true, 'chooser' => true, 'seeker' => true } }],
+      ['chooser',
+       { 'buyer_lifecycle' => 'non_buyer',
+         'segments' => { 'complete' => true, 'observed_at' => Time.current.iso8601, 'chooser' => true, 'seeker' => false } }],
+      ['seeker',
+       { 'buyer_lifecycle' => 'non_buyer',
+         'segments' => { 'complete' => true, 'observed_at' => Time.current.iso8601, 'chooser' => true, 'seeker' => true } }],
       ['client', { 'buyer_lifecycle' => 'client' }],
       ['repeat', { 'buyer_lifecycle' => 'repeat' }]
     ].each do |label, snapshot|

@@ -22,6 +22,7 @@ class Umi::Funnel::ReconcileJob < ApplicationJob
     Umi::ShopifyOrderFinancialState.pending.where(account_id: ids, redacted_at: nil, last_error: nil).find_each do |state|
       Umi::Shopify::OrderFinancialReconcileJob.perform_later(state.id)
     end
+    Umi::Funnel::ProfileSyncJob.enqueue_due
     Umi::Funnel::ConversationClassifier.enqueue
   end
 end

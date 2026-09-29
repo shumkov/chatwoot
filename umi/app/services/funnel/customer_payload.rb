@@ -5,7 +5,7 @@ class Umi::Funnel::CustomerPayload
     case value
     when Hash
       value.each_with_object({}) do |(key, entry), result|
-        next if Umi::Funnel::Configuration::TECHNICAL_KEYS.include?(key.to_s)
+        next if (Umi::Funnel::Configuration::TECHNICAL_KEYS + Umi::Funnel::Configuration::CONTACT_FIELDS).include?(key.to_s)
 
         result[key] = filter(entry)
       end

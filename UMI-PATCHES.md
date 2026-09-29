@@ -49,6 +49,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 40 | Human response and assessment reporting | `umi/app/services/funnel/operational_report.rb`, `lib/tasks/umi_funnel.rake`, focused operational report and rake specs | Aggregate first/subsequent human response intervals, unanswered waits, business-hours SLA and 24-hour assessment coverage. Excludes private/bot responses, distinguishes uncertain assessments from unevaluated cases, and reports missing schedule/history coverage. Read-only JSON for the weekly report; no public replies or timer service. | Upstream reports equivalent human-response cohorts, uncertainty queues and explicit schedule/history coverage. |
 
+| 41 | Klaviyo customer context synchronization | UMI funnel Klaviyo client, profile binding and context sync, profile/segment jobs, contact/message hooks, customer mutation/projection/payload and focused specs | Resolves exact existing identities on new activity, reconciles four typed customer roles in both directions, and projects fully read configured segment membership alongside verified paid lifecycle facts. Preserves operator corrections, handles rate limits and stale reads, and prevents erased or rebound customer state from returning. Uses the customer-context account rollout flag; no profile creation or consent changes. | Native integrations provide equivalent exact identity, typed role reconciliation, segment freshness and customer privacy behavior. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)

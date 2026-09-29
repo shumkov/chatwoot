@@ -78,4 +78,26 @@ RSpec.describe Umi::Funnel::ReconcileJob do
       expect { Umi::Funnel::Configuration.account_ids }.to raise_error(KeyError)
     end
   end
+
+  it 'queues only due verified customers in oldest-attempt order without sending provider requests' do
+    with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s, UMI_FUNNEL_KLAVIYO_ACCOUNT_ID: account.id.to_s do
+      old = create(:contact, account: account, additional_attributes: {
+                     'umi_klaviyo_profile_id' => 'OLD', 'umi_klaviyo_binding' => { 'generation' => 'old' },
+                     'umi_klaviyo_sync' => { 'checked_at' => 1.hour.ago.iso8601, 'next_sync_at' => 45.minutes.ago.iso8601 }
+                   })
+      new_contact = create(:contact, account: account, additional_attributes: {
+                             'umi_klaviyo_profile_id' => 'NEW', 'umi_klaviyo_binding' => { 'generation' => 'new' }
+                           })
+      create(:contact, account: account, additional_attributes: {
+               'umi_klaviyo_profile_id' => 'FRESH', 'umi_klaviyo_binding' => { 'generation' => 'fresh' },
+               'umi_klaviyo_sync' => { 'next_sync_at' => 10.minutes.from_now.iso8601 }
+             })
+      clear_enqueued_jobs
+      expect(Umi::Funnel::KlaviyoClient).not_to receive(:new)
+      Umi::Funnel::ProfileSyncJob.enqueue_due
+      jobs = enqueued_jobs.select { |job| job[:job] == Umi::Funnel::ProfileSyncJob }
+      expect(jobs.map { |job| job[:args].first }).to eq([new_contact.id, old.id])
+      expect(enqueued_jobs.count { |job| job[:job] == Umi::Funnel::SegmentRefreshJob }).to eq(1)
+    end
+  end
 end

@@ -76,6 +76,9 @@ class Umi::Funnel::CustomerProjection
     roles = Umi::Funnel::Configuration::ROLES.map { |key, label| "#{label}: #{attributes.fetch(key, 'unknown')}" }.join('; ')
     content = "Customer: #{attributes.fetch('umi_funnel_stage', 'unclassified')}. #{history}\n#{roles}"
     content += "\nCustomer data is stale; last verified facts retained." if projection['freshness'] == 'stale'
+    if contact.additional_attributes.dig('umi_klaviyo_sync', 'error').to_s.start_with?('identity_unresolved')
+      content += "\nCustomer identity unresolved; verify email or phone, or link an existing profile."
+    end
     conversation.messages.create!(account_id: conversation.account_id, inbox_id: conversation.inbox_id,
                                   message_type: :outgoing, private: true, sender: nil, content: content,
                                   content_attributes: { NOTE_MARKER => { 'contact_id' => contact.id } })

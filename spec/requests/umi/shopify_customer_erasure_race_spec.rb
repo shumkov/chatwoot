@@ -117,4 +117,50 @@ RSpec.describe 'Shopify customer confirmation during erasure', type: :request do
       perform_enqueued_jobs(only: ActiveRecord::DestroyAssociationAsyncJob) { account&.destroy! }
     end
   end
+  it 'completes erasure while a profile HTTP read waits and discards its late response' do
+    account = create(:account)
+    contact = create(:contact, account: account, email: 'erase@example.com', phone_number: nil,
+                               additional_attributes: { 'shopify_customer_id' => '42', 'umi_klaviyo_profile_id' => 'P1',
+                                                        'umi_klaviyo_binding' => { 'generation' => 'one' } })
+    create(:integrations_hook, :shopify, account: account, reference_id: 'umi.myshopify.com')
+    worker = nil
+    reader = instance_double(Umi::Funnel::KlaviyoClient)
+    started = Queue.new
+    release = Queue.new
+    allow(reader).to receive(:profile) do
+      started << true
+      release.pop
+      { 'id' => 'P1', 'attributes' => { 'email' => 'erase@example.com', 'properties' => { 'umi_vip' => true } } }
+    end
+    expect(reader).not_to receive(:update_roles)
+    secret = 'local-race-webhook-secret'
+    allow(GlobalConfigService).to receive(:load).and_call_original
+    allow(GlobalConfigService).to receive(:load).with('SHOPIFY_CLIENT_SECRET', nil).and_return(secret)
+    payload = { shop_domain: 'umi.myshopify.com', customer: { id: 42 }, orders_to_redact: [] }.to_json
+    signature = Base64.strict_encode64(OpenSSL::HMAC.digest('SHA256', secret, payload))
+    with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s, UMI_FUNNEL_KLAVIYO_ACCOUNT_ID: account.id.to_s do
+      worker = Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection { Umi::Funnel::CustomerContextSync.new(contact.id, client: reader).perform }
+      end
+      Timeout.timeout(10) { started.pop }
+      Timeout.timeout(10) do
+        post '/webhooks/shopify', params: payload, headers: {
+          'CONTENT_TYPE' => 'application/json', 'X-Shopify-Topic' => 'customers/redact',
+          'X-Shopify-Hmac-SHA256' => signature, 'X-Shopify-Shop-Domain' => 'umi.myshopify.com'
+        }
+      end
+      expect(response).to have_http_status(:ok)
+      release << true
+      Timeout.timeout(10) { worker.value }
+    end
+    expect(Contact.exists?(contact.id)).to be(false)
+  ensure
+    release << true if release
+    worker&.join(10)
+    perform_enqueued_jobs(only: ActiveRecord::DestroyAssociationAsyncJob) do
+      account&.conversations&.destroy_all
+      account&.contacts&.destroy_all
+      account&.destroy!
+    end
+  end
 end

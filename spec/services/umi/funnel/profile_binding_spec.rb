@@ -86,4 +86,19 @@ RSpec.describe Umi::Funnel::ProfileBinding do
     expect { binding.perform }.to raise_error(ArgumentError, /redacted/)
     expect(contact.reload.additional_attributes).not_to have_key('umi_klaviyo_profile_id')
   end
+
+  it 'changes binding generation and clears old baseline and pending even while the writer is disabled' do
+    contact.update!(additional_attributes: {
+                      'umi_klaviyo_profile_id' => 'OLD', 'umi_klaviyo_binding' => { 'generation' => 'old-generation' },
+                      'umi_klaviyo_sync' => { 'roles' => { 'umi_vip' => { 'baseline_known' => true, 'baseline' => 'no',
+                                                                          'pending' => { 'value' => 'yes' } } } }
+                    }, custom_attributes: { 'umi_vip' => 'yes', 'umi_funnel_stage' => 'repeat' })
+    with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: '' do
+      binding.perform
+    end
+    expect(contact.reload.additional_attributes['umi_klaviyo_sync']).to be_nil
+    expect(contact.additional_attributes.dig('umi_klaviyo_binding', 'generation')).to be_present
+    expect(contact.additional_attributes.dig('umi_klaviyo_binding', 'generation')).not_to eq('old-generation')
+    expect(contact.custom_attributes).not_to have_key('umi_vip')
+  end
 end

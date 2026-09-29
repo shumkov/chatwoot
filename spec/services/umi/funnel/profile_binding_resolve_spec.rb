@@ -25,6 +25,7 @@ RSpec.describe Umi::Funnel::ProfileBinding, '#resolve' do
   it 'binds one existing profile with all shared identifiers matching' do
     resolver.resolve { true }
     expect(contact.reload.additional_attributes).to include('umi_klaviyo_profile_id' => 'PROFILE1')
+    expect(contact.additional_attributes.dig('umi_klaviyo_binding', 'generation')).to be_present
     expect(client).to have_received(:profiles).with('email' => 'person@example.com', 'phone_number' => '+66812345678')
   end
 

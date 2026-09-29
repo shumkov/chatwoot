@@ -33,6 +33,30 @@ RSpec.describe 'Customer context public boundaries', type: :request do
     expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'roles')).to be_present
   end
 
+  it 'does not reveal imported purchase or role facts after an unverified visitor supplies a customer email' do
+    with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s, UMI_FUNNEL_KLAVIYO_ACCOUNT_ID: account.id.to_s do
+      patch '/api/v1/widget/contact', headers: headers, as: :json,
+                                      params: { website_token: widget.website_token, email: 'buyer@example.com',
+                                                custom_attributes: { size: 'M', temporary: true } }
+      expect(response).to have_http_status(:success)
+      profile = { 'id' => 'P1', 'attributes' => { 'email' => 'buyer@example.com', 'properties' => {
+        'umi_vip' => true, 'umi_buyer_lifecycle' => 'repeat', 'umi_paid_order_count' => 2,
+        'umi_paid_history_complete' => true, 'umi_payment_snapshot_at' => Time.current.iso8601
+      } } }
+      client = instance_double(Umi::Funnel::KlaviyoClient)
+      allow(Umi::Funnel::KlaviyoClient).to receive(:new).and_return(client)
+      allow(client).to receive(:profiles).with({ 'email' => 'buyer@example.com' }).and_return('data' => [profile], 'links' => { 'next' => nil })
+      allow(client).to receive(:profile).with('P1', properties: true).and_return(profile)
+      Umi::Funnel::ProfileSyncJob.perform_now(contact.id, force: true)
+      expect(contact.reload.custom_attributes).to include('umi_vip' => 'yes', 'umi_paid_order_count' => 2)
+
+      post '/api/v1/widget/contact/destroy_custom_attributes', headers: headers, as: :json,
+                                                               params: { website_token: widget.website_token, custom_attributes: ['temporary'] }
+      expect(response).to have_http_status(:success)
+      expect(response.parsed_body.fetch('custom_attributes')).to eq('size' => 'M')
+    end
+  end
+
   it 'allows normal pre-chat fields and removes internal state from widget message history' do
     patch '/api/v1/widget/contact', headers: headers, as: :json,
                                     params: { website_token: widget.website_token, custom_attributes: { size: 'M' },
@@ -155,6 +179,7 @@ RSpec.describe 'Customer context public boundaries', type: :request do
   end
 
   it 'filters customer broadcasts while preserving the same staff payload' do
+    contact.update!(custom_attributes: { umi_vip: 'yes', umi_paid_order_count: 2, size: 'M' })
     agent = create(:user, account: account)
     listener = ActionCableListener.instance
     data = { sender: contact.push_event_data, additional_attributes: { umi_customer_projection: { revision: 8 } } }
@@ -164,7 +189,9 @@ RSpec.describe 'Customer context public boundaries', type: :request do
     staff = jobs.find { |job| job[:args][0].include?(agent.pubsub_token) }
     customer = jobs.find { |job| job[:args][0].include?(contact_inbox.pubsub_token) }
     expect(staff[:args][2].to_json).to include('umi_klaviyo_sync', 'umi_customer_projection')
+    expect(staff[:args][2].to_json).to include('umi_vip', 'umi_paid_order_count')
     expect(customer[:args][2].to_json).not_to include('umi_klaviyo_sync', 'umi_customer_projection', 'baseline', 'actor_id')
+    expect(customer[:args][2].to_json).not_to include('umi_vip', 'umi_paid_order_count')
     expect(customer[:args][2].to_json).to include('entry_source')
   end
 end

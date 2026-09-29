@@ -88,7 +88,7 @@ RSpec.describe 'Funnel provider clients' do # rubocop:disable RSpec/DescribeClas
                                                  detail: 'The requested endpoint does not permit explicit or() and not() filters.' }] }.to_json)
     email = stub_request(:get, 'https://a.klaviyo.com/api/profiles')
             .with(query: { 'filter' => 'equals(email,"person@example.com")', 'fields[profile]' => 'email,phone_number', 'page[size]' => '2' },
-                  headers: { 'revision' => '2025-10-15' })
+                  headers: { 'revision' => '2026-07-15' })
             .to_return(status: 200, body: { data: [profile], links: { next: nil } }.to_json)
     phone = stub_request(:get, 'https://a.klaviyo.com/api/profiles')
             .with(query: { 'filter' => 'equals(phone_number,"+66812345678")', 'fields[profile]' => 'email,phone_number', 'page[size]' => '2' })
