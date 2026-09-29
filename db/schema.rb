@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_09_28_000000) do
+ActiveRecord::Schema[7.1].define(version: 2026_09_30_000000) do
   # These extensions should be enabled to support this database
   enable_extension "pg_stat_statements"
   enable_extension "pg_trgm"
@@ -1505,12 +1505,14 @@ ActiveRecord::Schema[7.1].define(version: 2026_09_28_000000) do
     t.string "shopify_customer_id"
     t.bigint "linked_by_id"
     t.datetime "linked_at"
+    t.bigint "settlement_command_message_id"
     t.index ["account_id", "attribution_state"], name: "idx_umi_order_attributions_state"
     t.index ["account_id", "shopify_order_id"], name: "idx_umi_order_attributions_order", unique: true
     t.index ["account_id", "token_nonce"], name: "idx_umi_order_attributions_token", unique: true
     t.index ["candidate_contact_id"], name: "idx_umi_order_attributions_candidate_contact"
     t.index ["contact_id"], name: "idx_umi_order_attributions_contact"
     t.index ["conversation_id"], name: "idx_umi_order_attributions_conversation"
+    t.index ["settlement_command_message_id"], name: "index_umi_order_attributions_on_settlement_command"
     t.index ["webhook_id"], name: "idx_umi_order_attributions_webhook"
   end
 

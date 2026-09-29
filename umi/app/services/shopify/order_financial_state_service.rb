@@ -4,7 +4,7 @@
 
 class Umi::Shopify::OrderFinancialStateService
   SNAPSHOT_FIELDS = %w[classification review_reasons currency original_order_value current_order_value captured refunded net_cash
-                       last_payment_at order_created_at order_updated_at paid_basket shopify_customer_id].freeze
+                       last_payment_at order_created_at order_updated_at paid_basket shopify_customer_id order_source].freeze
 
   def self.request(account_id:, shop_domain:, order_id:)
     return unless Umi::Funnel::Configuration.enabled?(account_id)

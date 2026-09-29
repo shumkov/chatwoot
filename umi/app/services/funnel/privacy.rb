@@ -26,7 +26,7 @@ class Umi::Funnel::Privacy
           conversation.update!(additional_attributes: conversation.additional_attributes.except(Umi::Funnel::CustomerProjection::KEY))
         end
         conversation.messages.where(private: true).each do |message|
-          next unless message.content_attributes[Umi::Funnel::CustomerProjection::NOTE_MARKER]
+          next unless message.content_attributes[Umi::Funnel::CustomerProjection::NOTE_MARKER] || settlement_note?(message)
 
           message.destroy!
         end
@@ -57,12 +57,20 @@ class Umi::Funnel::Privacy
   end
   # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity
 
-  def self.redact_financial_states!(states)
+  def self.redact_financial_states!(states) # rubocop:disable Metrics/AbcSize
     states.find_each do |state|
       contact = Contact.find_by(id: state.paid_event&.contact_id, account_id: state.account_id)
       operation = lambda do
         state.with_lock do
           redact_events!(Umi::ConversationEvent.where(id: state.paid_event_id)) if state.paid_event_id
+          redact_settlement_notes!(Message.where(account_id: state.account_id)
+                                         .where("(content_attributes #>> '{}')::jsonb -> 'umi_paid_in_chat' ->> 'shop_domain' = ?", state.shop_domain)
+                                         .where("(content_attributes #>> '{}')::jsonb -> 'umi_paid_in_chat' ->> 'order_id' = ?",
+                                                state.shopify_order_id))
+          Umi::ShopifyOrderAttribution.where(account_id: state.account_id, shop_domain: state.shop_domain,
+                                             shopify_order_id: state.shopify_order_id).find_each do |link|
+            link.update!(settlement_command_message_id: nil)
+          end
           state.update!(redacted_at: Time.current, snapshot: {}, paid_event_id: nil)
         end
       end
@@ -88,6 +96,9 @@ class Umi::Funnel::Privacy
 
   # rubocop:disable Metrics/AbcSize
   def self.redact_orphans!
+    orphaned = Conversation.where.not(contact_id: Contact.select(:id)).select(:id)
+    redact_settlement_notes!(Message.where(conversation_id: orphaned))
+    redact_settlement_notes!(Message.where.not(conversation_id: Conversation.select(:id)))
     links = Umi::ShopifyOrderAttribution.verified
     redact_attributions!(links.where.not(contact_id: Contact.select(:id)))
     redact_attributions!(links.where.not(conversation_id: Conversation.select(:id)))
@@ -105,13 +116,16 @@ class Umi::Funnel::Privacy
   # rubocop:enable Metrics/AbcSize
 
   def self.redact_shop!(shop)
+    notes = Message.where("(content_attributes #>> '{}')::jsonb -> 'umi_paid_in_chat' ->> 'shop_domain' = ?", shop)
+    conversation_ids = notes.reorder(nil).distinct.pluck(:conversation_id)
+    redact_settlement_notes!(Message.where(conversation_id: conversation_ids, private: true))
     Umi::ShopifyDraftLink.where(shop_domain: shop).delete_all
     Umi::ShopifyOrderFinancialState.where(shop_domain: shop).delete_all
     prefix = Umi::ConversationEvent.sanitize_sql_like("shopify:#{shop}:order:")
     Umi::ConversationEvent.where(event_type: 'order_paid').where('occurrence_key LIKE ?', "#{prefix}%").destroy_all
   end
 
-  def self.redact_attributions!(links)
+  def self.redact_attributions!(links) # rubocop:disable Metrics/MethodLength
     links.find_each do |link|
       contact = Contact.find_by(id: link.contact_id)
       operation = lambda do
@@ -122,10 +136,30 @@ class Umi::Funnel::Privacy
           state.redacted_at = Time.current
         end
         redact_financial_states!(states)
-        link.update!(contact_id: nil, conversation_id: nil, candidate_contact_id: nil, candidate_conversation_id: nil,
+        if link.conversation_id
+          redact_settlement_notes!(Message.where(account_id: link.account_id, conversation_id: link.conversation_id,
+                                                 private: true))
+        end
+        link.update!(settlement_command_message_id: nil, contact_id: nil, conversation_id: nil, candidate_contact_id: nil,
+                     candidate_conversation_id: nil,
                      shopify_customer_id: nil, linked_by_id: nil, redacted_at: Time.current)
       end
       contact ? contact.with_lock(&operation) : Umi::ShopifyOrderAttribution.transaction(&operation)
+    end
+  end
+
+  def self.settlement_note?(message)
+    message.content_attributes[Umi::Funnel::SettlementCommand::KEY] ||
+      message.content_attributes[Umi::Funnel::SettlementCommand::RESPONSE_KEY] || message.content.to_s.strip.start_with?('/paid-in-chat')
+  end
+
+  def self.redact_settlement_notes!(messages)
+    messages.where(private: true).each do |message|
+      next unless settlement_note?(message)
+
+      response_id = message.content_attributes.dig(Umi::Funnel::SettlementCommand::KEY, 'response_message_id')
+      Message.where(id: response_id, conversation_id: message.conversation_id, private: true).destroy_all if response_id
+      message.destroy!
     end
   end
 end

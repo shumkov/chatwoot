@@ -65,6 +65,25 @@ RSpec.describe Umi::Funnel::DeliveryService do
     expect(delivery.confirmed_at).to be_nil
   end
 
+  it 'does not send an old frozen payload after the source identity changes at claim' do
+    service.prepare
+    original = delivery.payload.deep_dup
+    calls = 0
+    allow(service).to receive(:provider_payload).and_wrap_original do |method, *args|
+      calls += 1
+      result = method.call(*args)
+      result.first['data'].first['user_data']['page_scoped_user_id'] = '999' if calls == 2
+      result
+    end
+    client = instance_double(Umi::Funnel::MetaClient, send_events: { state: 'accepted' })
+    allow(Umi::Funnel::MetaClient).to receive(:new).and_return(client)
+    with_modified_env UMI_FUNNEL_META_ENABLED: 'true' do
+      service.dispatch
+    end
+    expect(delivery.reload).to have_attributes(state: 'pending', reason: 'prepared_source_changed', attempt_count: 0, payload: original)
+    expect(client).not_to have_received(:send_events)
+  end
+
   it 'keeps a lost response unknown and never retries it' do
     service.prepare
     client = instance_double(Umi::Funnel::MetaClient, send_events: { state: 'unknown', error: 'Net::ReadTimeout' })

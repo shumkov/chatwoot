@@ -30,6 +30,12 @@ RSpec.describe Umi::Shopify::PaidOrderReport do
                                                  fields: Umi::Shopify::PaidOrderReport::TRANSACTION_FIELDS }).and_return(transaction_response)
   end
 
+  it 'preserves the difference between absent checkout evidence and an explicitly null checkout' do
+    expect(report[:rows].sole[:order_source]).to eq({})
+    order.merge!('checkout_id' => nil, 'source_name' => 'shopify_draft_order')
+    expect(service.perform[:rows].sole[:order_source]).to eq('checkout_id' => nil, 'source_name' => 'shopify_draft_order')
+  end
+
   it 'distinguishes operator-confirmed attribution from a storefront link' do
     conversation = create(:conversation, account: account)
     Umi::ShopifyOrderAttribution.create!(account_id: account.id, shop_domain: hook.reference_id, shopify_order_id: '1001',

@@ -17,6 +17,7 @@ class Umi::ShopifyOrderAttribution < ApplicationRecord
   def self.detach_for(contact)
     where(contact_id: contact.id).or(where(candidate_contact_id: contact.id)).find_each do |attribution|
       attribution.update!(
+        settlement_command_message_id: nil,
         conversation_id: nil,
         candidate_conversation_id: nil,
         contact_id: nil,

@@ -4,7 +4,8 @@ class Umi::Shopify::PaidOrderReport
   class IncompleteTransactions < StandardError; end
 
   ORDER_FIELDS = 'id,created_at,updated_at,financial_status,test,cancelled_at,currency,total_price,current_total_price,' \
-                 'customer,line_items,current_subtotal_price,current_total_discounts,current_total_tax,total_shipping_price_set'
+                 'checkout_id,source_name,customer,line_items,current_subtotal_price,current_total_discounts,' \
+                 'current_total_tax,total_shipping_price_set'
   TRANSACTION_FIELDS = 'id,kind,status,currency,amount,amount_rounding,processed_at'
   MONEY_FIELDS = %i[captured refunded net_cash paid_value].freeze
 
@@ -43,6 +44,7 @@ class Umi::Shopify::PaidOrderReport
 
     customer_id = order.dig('customer', 'id').to_s
     row = build_row(order, response.body.fetch('transactions'))
+    row[:order_source] = order.slice('checkout_id', 'source_name')
     row[:shopify_customer_id] = customer_id if customer_id.match?(/\A[1-9]\d*\z/)
     row[:paid_basket] = paid_basket(order) if row[:classification] == 'paid'
     attribution = Umi::ShopifyOrderAttribution.verified.find_by(account_id: @account_id, shop_domain: shop, shopify_order_id: id)

@@ -5,6 +5,11 @@ Rails.application.reloader.to_prepare do
   raise 'UMI funnel: Shopify events action changed' unless Webhooks::ShopifyController.method_defined?(:events)
   raise 'UMI funnel: Conversation validation callbacks changed' unless Conversation.respond_to?(:before_validation)
 
+  controller = Api::V1::Accounts::Conversations::MessagesController
+  raise 'UMI settlement: native message creation changed' unless controller.instance_method(:create).arity.zero?
+
+  controller.prepend(Umi::Funnel::SettlementMessages) unless controller.include?(Umi::Funnel::SettlementMessages)
+  Message.include(Umi::Funnel::SettlementMessage) unless Message.include?(Umi::Funnel::SettlementMessage)
   Message.include(Umi::Funnel::MessageCapture) unless Message.include?(Umi::Funnel::MessageCapture)
   Conversation.include(Umi::Funnel::ConversationProjection) unless Conversation.include?(Umi::Funnel::ConversationProjection)
   # Shopify's existing prepend must execute inside this wrapper so both financial and attribution work run.

@@ -69,6 +69,59 @@ Qualification requires live incoming evidence. `engaged`, `inactive`,
 owns `order_placed` and `purchased`; labels and generic sidebar edits cannot
 manufacture a paid event.
 
+## Record settlement in this chat
+
+Use a private note in the conversation that already has the verified Shopify
+order link. The exact command is `/paid-in-chat #1234`, using the visible Shopify
+order number. The order must already be genuinely paid in Shopify. This command
+records where settlement happened; it does not create an order, change payment,
+create a customer/link, or send a customer message.
+
+Wait for the private result. The result distinguishes recorded settlement with
+Meta Purchase disabled, missing eligible channel evidence, and rejected payment,
+checkout or linkage. Acceptance of the command is not a receipt from Meta.
+A website checkout remains outside this messaging sender, even after confirmation.
+An order settled at the shop must not be confirmed as settled in chat.
+
+To reverse the assertion, post `/paid-in-chat cancel #1234` and wait for its
+private result. The note appearing alone does not cancel a queued submission.
+Cancellation before claim prevents submission. After a claim, the result explains
+that the attempt may already have been sent and cannot be recalled. Payment and
+Klaviyo history stay intact. A failed confirmation is final for that note; post a
+new command after resolving the reported issue. Duplicate jobs never repeat a
+private result or create another sale.
+
+Deleting a confirmation or clearing its native message metadata removes its
+future eligibility. Deleting a cancellation does not revive an older confirmation.
+Deleting the private result does not reverse the assertion or recreate the result.
+Use the explicit cancel command for a confirmed reversal. Wrong paid-order links
+still require the existing maintenance procedure: cancel, verify the hold, then
+correct the link; do not reset provider attempts or rewrite an immutable paid event.
+
+`UMI_FUNNEL_META_PURCHASE_CHANNELS` defaults to empty, independently of the
+existing global Meta switch. Its only accepted comma-separated values are
+`messenger` and `instagram`. Both global enablement and the selected channel are
+required for Purchase preparation and dispatch. This release does not allowlist
+either channel. Instagram additionally uses `UMI_FUNNEL_META_INSTAGRAM_ID` and
+requires verified event permission and asset access. Genuine payment timing,
+exclusive sender ownership, provider acceptance and optimization eligibility must
+be verified before activation. An advertising `validate_only` response is not
+that proof. Backend tests do not prove native mobile rendering or Meta attribution.
+
+Each eligible Purchase uses the original immutable Shopify paid time/value and a
+selected live incoming message from this exact conversation at or before payment.
+Missing, recovered, deleted or post-payment-only evidence holds Meta. Financial
+source data is refreshed before preparation and rechecked at claim, including
+pending webhook requests. A changed frozen payload or destination holds the same
+never-attempted delivery; it is not silently rewritten. A later Shopify edit after
+the final read cannot be made atomic with an external POST.
+
+Unresolved Purchase prerequisites now remain visible as pending holds. Previously
+excluded `purchase_origin_unresolved` rows are not automatically reopened: a
+reviewed rollout may reopen only never-attempted rows inside the original event
+window, with the Purchase allowlist still empty. Other terminal reasons and all
+attempted rows remain untouched.
+
 ## Background operation
 
 The existing five-minute reconciliation job schedules up to 100 eligible sends

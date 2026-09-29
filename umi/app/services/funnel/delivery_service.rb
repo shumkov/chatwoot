@@ -12,6 +12,7 @@ class Umi::Funnel::DeliveryService
   def prepare(automatic: false)
     return @delivery unless @delivery.reload.state == 'pending'
 
+    @purchase_refresh_failed = !refresh_purchase_source if purchase? && purchase_enabled?
     event = @delivery.conversation_event
     contact = Contact.find_by(id: event.contact_id, account_id: event.account_id)
     if automatic && @delivery.destination == 'klaviyo' && ready_for_schedule?
@@ -32,7 +33,7 @@ class Umi::Funnel::DeliveryService
 
       payload, destination = provider_payload(source, owner)
       next unless payload
-      raise ArgumentError, 'Prepared destination cannot change' if @delivery.destination_key.present? && @delivery.destination_key != destination
+      next unless frozen_pair_matches?(payload, destination)
 
       attrs = { reason: nil, last_error: nil }
       if @delivery.payload.empty?
@@ -61,7 +62,9 @@ class Umi::Funnel::DeliveryService
       next unless @delivery.state == 'pending'
       next if automatic && Umi::Funnel::DeliveryAutomation::PENDING_REASONS.exclude?(@delivery.reason)
       next if ineligible!(source, owner)
-      next unless provider_payload(source, owner).first
+
+      payload, destination = provider_payload(source, owner)
+      next unless payload && frozen_pair_matches?(payload, destination)
 
       @delivery.update!(state: 'sending', attempted_at: Time.current, attempt_count: @delivery.attempt_count + 1, last_error: nil)
       claimed = true
@@ -90,6 +93,7 @@ class Umi::Funnel::DeliveryService
     with_source_lock do |source, owner|
       next unless @delivery.state == 'pending' && Umi::Funnel::DeliveryAutomation::PENDING_REASONS.include?(@delivery.reason)
       next unless Umi::Funnel::DeliveryAutomation.enabled?(@delivery.destination)
+      next if purchase? && !purchase_enabled?
       next if ineligible!(source, owner)
 
       if @delivery.destination == 'klaviyo' && owner.additional_attributes['umi_klaviyo_profile_id'].blank?
@@ -171,7 +175,41 @@ class Umi::Funnel::DeliveryService
 
   private
 
+  def purchase?
+    @delivery.destination == 'meta' && @delivery.conversation_event.event_type == 'order_paid'
+  end
+
+  def purchase_enabled?
+    Umi::Funnel::DeliveryAutomation.enabled?('meta') && Umi::Funnel::PurchaseSource.channels.any?
+  end
+
+  def refresh_purchase_source
+    state = Umi::ShopifyOrderFinancialState.find_by(account_id: @delivery.conversation_event.account_id,
+                                                    paid_event_id: @delivery.conversation_event_id)
+    Umi::Funnel::PurchaseSource.new(state).refresh if state
+  end
+
+  def frozen_pair_matches?(payload, destination)
+    return true if @delivery.payload.empty? && @delivery.destination_key.blank?
+    return true if @delivery.payload == payload && @delivery.destination_key == destination
+
+    raise ArgumentError, 'Prepared destination cannot change' if !purchase? && @delivery.destination_key != destination
+
+    mark!('pending', 'prepared_source_changed')
+    false
+  end
+
   def with_source_lock
+    if purchase?
+      state = Umi::ShopifyOrderFinancialState.find_by(account_id: @delivery.conversation_event.account_id,
+                                                      paid_event_id: @delivery.conversation_event_id)
+      if state
+        @purchase_source = Umi::Funnel::PurchaseSource.new(state)
+        return @purchase_source.with_lock do |source|
+          @delivery.with_lock { yield(@delivery.conversation_event.reload, source.contact) }
+        end
+      end
+    end
     event = @delivery.conversation_event.reload
     contact = Contact.find_by(id: event.contact_id, account_id: event.account_id)
     operation = -> { @delivery.with_lock { yield(event.reload, contact&.reload) } }
@@ -220,10 +258,8 @@ class Umi::Funnel::DeliveryService
   end
 
   def meta_payload(event)
-    if event.event_type != 'conversation_qualified'
-      mark!('excluded', 'purchase_origin_unresolved')
-      return []
-    end
+    return purchase_payload(event) if event.event_type == 'order_paid'
+
     if event.payload['messaging_channel'] != 'messenger'
       mark!('excluded', 'channel_not_enabled')
       return []
@@ -245,6 +281,47 @@ class Umi::Funnel::DeliveryService
                              'user_data' => { 'page_id' => page, 'page_scoped_user_id' => event.payload['scoped_user_id'] } }] }
     payload['test_event_code'] = ENV['UMI_FUNNEL_META_TEST_EVENT_CODE'] if ENV['UMI_FUNNEL_META_TEST_EVENT_CODE'].present?
     [payload, "#{page}:#{dataset}"]
+  end
+
+  def purchase_payload(event)
+    unless purchase_enabled?
+      mark!('pending', 'purchase_channel_disabled')
+      return []
+    end
+    reason = if @purchase_refresh_failed
+               'financial_observation_stale'
+             elsif @purchase_source && @purchase_source.event&.id == event.id
+               @purchase_source.reason
+             else
+               'purchase_source_unknown'
+             end
+    reason ||= 'event_too_old' if event.occurred_at < 7.days.ago
+    if reason
+      mark!('pending', reason)
+      return []
+    end
+    identity = @purchase_source.evidence.payload
+    channel = identity.fetch('messaging_channel')
+    asset = ENV.fetch(channel == 'instagram' ? 'UMI_FUNNEL_META_INSTAGRAM_ID' : 'UMI_FUNNEL_META_PAGE_ID')
+    dataset = ENV.fetch('UMI_FUNNEL_META_DATASET_ID')
+    asset_key = channel == 'instagram' ? 'instagram_id' : 'page_id'
+    scoped_key = channel == 'instagram' ? 'ig_sid' : 'page_scoped_user_id'
+    user_asset_key = channel == 'instagram' ? 'instagram_business_account_id' : 'page_id'
+    unless [asset, dataset, identity['scoped_user_id']].all? { |id| id.to_s.match?(/\A[1-9]\d*\z/) } && identity[asset_key] == asset
+      mark!('pending', 'channel_identity_mismatch')
+      return []
+    end
+    value = BigDecimal(event.payload.fetch('value'))
+    raise ArgumentError, 'Invalid paid value' unless value.finite? && value.positive?
+
+    data = { 'event_name' => 'Purchase', 'event_time' => event.occurred_at.to_i, 'event_id' => "umi-funnel-#{event.account_id}-#{event.id}",
+             'action_source' => 'business_messaging', 'messaging_channel' => channel,
+             'user_data' => { user_asset_key => asset, scoped_key => identity.fetch('scoped_user_id') },
+             'custom_data' => { 'currency' => event.payload.fetch('currency'), 'value' => value.to_f,
+                                'order_id' => event.payload.fetch('order_id') } }
+    payload = { 'data' => [data] }
+    payload['test_event_code'] = ENV['UMI_FUNNEL_META_TEST_EVENT_CODE'] if ENV['UMI_FUNNEL_META_TEST_EVENT_CODE'].present?
+    [payload, "#{asset}:#{dataset}"]
   end
 
   def klaviyo_payload(event, contact)

@@ -3,7 +3,7 @@
 class Umi::Funnel::ReconcileJob < ApplicationJob
   queue_as :low
 
-  def perform # rubocop:disable Metrics/AbcSize
+  def perform # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
     ids = Umi::Funnel::Configuration.account_ids
     return if ids.empty?
 
@@ -18,6 +18,7 @@ class Umi::Funnel::ReconcileJob < ApplicationJob
       Umi::Funnel::EventRecorder.capture_message(message)
     end
     Umi::Funnel::PaidCustomerLink.reconcile
+    Umi::Funnel::SettlementCommand.enqueue_unfinished
     Umi::Funnel::DeliveryAutomation.enqueue
     Umi::ShopifyOrderFinancialState.pending.where(account_id: ids, redacted_at: nil, last_error: nil).find_each do |state|
       Umi::Shopify::OrderFinancialReconcileJob.perform_later(state.id)

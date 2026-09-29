@@ -255,7 +255,9 @@ RSpec.describe 'Funnel automation' do # rubocop:disable RSpec/DescribeClass
     end
     dispatches = have_enqueued_job(Umi::Funnel::DeliveryJob).exactly(100).times
     readbacks = have_enqueued_job(Umi::Funnel::ReadbackJob).exactly(100).times
-    expect { Umi::Funnel::DeliveryAutomation.enqueue }.to dispatches.and(readbacks)
+    with_modified_env UMI_FUNNEL_META_PURCHASE_CHANNELS: 'messenger' do
+      expect { Umi::Funnel::DeliveryAutomation.enqueue }.to dispatches.and(readbacks)
+    end
   end
 
   it 'reports preparation holds and exhausted accepted readbacks without treating them as confirmed' do

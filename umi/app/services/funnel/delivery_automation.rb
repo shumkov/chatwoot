@@ -1,7 +1,10 @@
 # frozen_string_literal: true
 
 class Umi::Funnel::DeliveryAutomation
-  PENDING_REASONS = [nil, 'dispatch_disabled', 'account_disabled', 'identity_unlinked', 'profile_unbound'].freeze
+  PENDING_REASONS = [nil, 'dispatch_disabled', 'account_disabled', 'identity_unlinked', 'profile_unbound', 'purchase_channel_disabled',
+                     'chat_settlement_unconfirmed', 'chat_settlement_canceled', 'purchase_evidence_missing', 'financial_observation_stale',
+                     'purchase_source_unknown', 'website_checkout', 'prepared_source_changed', 'payment_not_verified',
+                     'financial_identity_conflict', 'channel_identity_mismatch'].freeze
   READBACK_DELAYS = [5.minutes, 30.minutes, 2.hours].freeze
   LIMIT = 100
 

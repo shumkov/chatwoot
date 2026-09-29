@@ -46,6 +46,7 @@ class Umi::Funnel::EventRecorder
     if channel != 'other'
       payload['scoped_user_id'] = conversation.contact_inbox.source_id if conversation.contact_inbox.source_id.present?
       payload['page_id'] = inbox.channel.page_id if inbox.channel.respond_to?(:page_id) && inbox.channel.page_id.present?
+      payload['instagram_id'] = inbox.channel.instagram_id if instagram && inbox.channel.respond_to?(:instagram_id)
       referral = message.content_attributes['referral'].to_h
       payload['ad_id'] = referral['ad_id'].to_s if referral['source'] == 'ADS' && referral['ad_id'].present?
     end
