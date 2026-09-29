@@ -50,26 +50,47 @@ module Umi::FbigAdAttribution
     }.transform_values { |value| value.presence&.to_s }.compact
   end
 
-  def promote(message, referral)
-    return if referral.blank? || !from_ads?(referral)
+  # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+  def valid_source?(message, conversation, referral = message.content_attributes['referral'])
+    message.persisted? && message.incoming? && !message.private? && message.created_at.present? &&
+      message.account_id == conversation.account_id && message.inbox_id == conversation.inbox_id &&
+      message.conversation_id == conversation.id && !message.content_attributes['deleted'] &&
+      !message.content_attributes['umi_recovered'] && referral.is_a?(Hash) && from_ads?(referral) &&
+      referral['ad_id'].to_s.match?(/\A[1-9]\d*\z/) && message.content_attributes['referral'] == referral
+  end
 
-    pairs = conversation_pairs(referral)
-    return if pairs.blank?
+  # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+
+  def latest_source(conversation)
+    conversation.messages.incoming.where(private: false).reorder(created_at: :desc, id: :desc).detect do |message|
+      valid_source?(message, conversation)
+    end
+  end
+
+  def promote(message, referral) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
+    return unless referral.is_a?(Hash) && from_ads?(referral)
 
     conversation = message.conversation
-    # Lock before reading so a sidebar update already in flight commits first.
-    # The model save remains intentional: its conversation_updated callback is
-    # the automation/webhook fanout for this post-commit attribution write.
-    conversation.reload
-    conversation.with_lock do
-      conversation.reload
-      # Clear all three before writing. A plain merge would leave a previous
-      # ad's title beside a new ad's id, describing an ad that never existed.
-      conversation.update!(
-        custom_attributes: conversation.custom_attributes.except(*CONVERSATION_KEYS).merge(pairs)
-      )
+    contact = conversation.contact
+    contact.with_lock do
+      next if contact.additional_attributes['umi_profile_redacted']
+
+      conversation.reload.with_lock do
+        next unless conversation.contact_id == contact.id
+
+        message.with_lock do
+          next unless valid_source?(message, conversation, referral)
+
+          # A delayed older webhook must not replace the latest retained touch.
+          latest = latest_source(conversation)
+          pairs = conversation_pairs(referral)
+          conversation.custom_attributes = conversation.custom_attributes.except(*CONVERSATION_KEYS).merge(pairs) if latest.id == message.id
+          conversation.label_list |= ['source-paid-ads'] if Umi::Funnel::Configuration.customer_context_enabled?(conversation.account_id)
+          conversation.save!
+          log(:referral_promoted, conversation.id, pairs)
+        end
+      end
     end
-    log(:referral_promoted, conversation.id, pairs)
   end
 
   # Erasure counterpart to `promote`. Ad attribution is behavioural data — which
@@ -104,6 +125,11 @@ module Umi::FbigAdAttribution
 
       Conversation.where(id: conversation_ids)
                   .update_all("custom_attributes = custom_attributes - #{CONVERSATION_KEYS.map { |k| "'#{k}'" }.join(' - ')}") # rubocop:disable Rails/SkipsModelValidations
+      Conversation.where(id: conversation_ids).find_each do |conversation|
+        conversation.label_list -= ['source-paid-ads']
+        conversation.send(:save_tags)
+        conversation.update_columns(cached_label_list: conversation.label_list.join(', ')) # rubocop:disable Rails/SkipsModelValidations
+      end
       purge_message_referrals(conversation_ids)
     end
   end

@@ -13,13 +13,13 @@ module Umi::Meta::AdContextNoteTrigger
   # installation where the log line is the only signal there is.
   def promote(message, referral)
     super
-    return unless from_ads?(referral)
-
-    conversation = message.conversation
-    return if conversation.reload.custom_attributes['meta_ad_id'].blank?
+    conversation = message.conversation.reload
+    source = Message.find_by(id: message.id)
+    return unless source && valid_source?(source, conversation, referral)
+    return if conversation.contact.additional_attributes['umi_profile_redacted']
 
     begin
-      Umi::Meta::AdContextNoteJob.perform_later(conversation.id)
+      Umi::Meta::AdContextNoteJob.perform_later(conversation.id, source.id)
     rescue StandardError => e
       Rails.logger.warn("[UMI-FBIG] stage=ad_context_enqueue_failed conversation=#{conversation.id} error=#{e.class}")
     end

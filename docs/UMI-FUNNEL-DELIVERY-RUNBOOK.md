@@ -177,3 +177,33 @@ Production acceptance still needs a controlled conversation/order-link checkout,
 an approved Messenger test event with Events Manager verification, and an
 existing-profile Klaviyo event with readback. Campaign budget and creative are
 not prerequisites for completing the integration.
+
+## Retained advertising referrals
+
+New qualification events select the latest valid live ad referral in the same
+conversation and scoped channel identity at or before the qualifying incoming
+message (timestamp, then message ID). The frozen payload records both `ad_id`
+and `referral_message_id`. Later ad taps do not rewrite an existing qualification
+or the first-acquisition cohort. Deleted, recovered, erased, reassigned or
+conflicting sources are not borrowed; the sidebar is not conversion evidence.
+
+Each retained ad tap queues its own private context note. The header names the
+source message, source time and ad ID even when a delayed lookup finishes after
+a newer tap. Retrying the same source does not duplicate its successful note;
+a recovered lookup clears only that source's error note. Private notes do not
+count as operator replies or go to customers. Source validity is checked again
+under contact, conversation and source-message locks after the Meta lookup.
+
+The existing `UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS` rollout gate enables the derived
+`source-paid-ads` label; raw referral capture and context notes keep working when
+that gate is off. Provision the managed labels and retire the former source
+label automation before enabling the writer. Promotion preserves unrelated
+labels, and contact erasure removes the source label as well as referral data.
+
+Already queued one-argument `Umi::Meta::AdContextNoteJob` jobs resolve the latest
+retained valid source once. After the pre-release queue has drained, the optional
+one-argument compatibility path can be removed. An intentional operational rerun
+should pass `(conversation_id, source_message_id)` explicitly. This compatibility
+does not schedule historical notes or replay conversions. Provider permission,
+accepted-event attribution and optimization eligibility still require their own
+live verification.

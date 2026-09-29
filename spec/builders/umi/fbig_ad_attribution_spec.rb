@@ -95,10 +95,10 @@ describe Umi::FbigAdAttribution do
     perform(build_event(referral: ad_referral))
     conversation = Conversation.last
 
-    described_class.promote(
-      conversation.messages.last,
-      { 'source' => 'ADS', 'ad_id' => '999888777666555' }
-    )
+    next_referral = { 'source' => 'ADS', 'ad_id' => '999888777666555' }
+    source = create(:message, conversation: conversation, account: account, inbox: inbox, message_type: :incoming,
+                              content_attributes: { referral: next_referral })
+    described_class.promote(source, next_referral)
 
     attrs = conversation.reload.custom_attributes
     expect(attrs['meta_ad_id']).to eq('999888777666555')

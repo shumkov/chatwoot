@@ -37,10 +37,11 @@ RSpec.describe Umi::Funnel::ConversationTransition do
     expect(Umi::ConversationEvent.where(event_type: 'conversation_qualified').count).to eq(1)
   end
 
-  %w[recovered private historical outgoing].each do |kind|
+  %w[recovered private historical outgoing deleted].each do |kind|
     it "rejects #{kind} evidence for qualification" do
       message.update!(content_attributes: { umi_recovered: true }) if kind == 'recovered'
       message.update!(private: true) if kind == 'private'
+      message.update!(content_attributes: { deleted: true }) if kind == 'deleted'
       message.update!(created_at: Time.utc(2025)) if kind == 'historical'
       message.update!(message_type: Message.message_types[:outgoing]) if kind == 'outgoing'
       expect do

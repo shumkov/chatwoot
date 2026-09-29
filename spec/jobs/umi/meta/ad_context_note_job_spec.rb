@@ -2,6 +2,10 @@ require 'rails_helper'
 
 describe Umi::Meta::AdContextNoteJob do
   let(:account) { create(:account) }
+  let(:source) do
+    create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming,
+                     content: 'Tapped option', content_attributes: { referral: { source: 'ADS', ad_id: '120252251820030415' } })
+  end
   let(:channel) { create(:channel_facebook_page, account: account) }
   let(:inbox) { channel.inbox }
   let(:contact) { create(:contact, account: account) }
@@ -17,6 +21,7 @@ describe Umi::Meta::AdContextNoteJob do
     stub_request(:post, /graph\.facebook\.com/)
     allow(Koala::Facebook::API).to receive(:new).and_return(api)
     allow(api).to receive(:get_object).and_return(payload)
+    source
   end
 
   def note
@@ -39,9 +44,9 @@ describe Umi::Meta::AdContextNoteJob do
       described_class.perform_now(conversation.id)
 
       welcome = Umi::Meta::AdWelcomeMessageService.new('t').fetch('120252251820030415')
-      expected = Umi::Meta::AdContextNotePresenter.new(welcome, tapped_title: nil).body
+      expected = Umi::Meta::AdContextNotePresenter.new(welcome, tapped_title: 'Tapped option').body
 
-      expect(note.content).to eq(expected)
+      expect(note.content).to end_with(expected)
       expect(note.content).to include('{{user_full_name}}')
       expect(note.content).not_to include('{% raw %}', '{% endraw %}')
     end
@@ -123,7 +128,7 @@ describe Umi::Meta::AdContextNoteJob do
     end
 
     it 'does nothing when the conversation carries no ad attribution' do
-      conversation.update!(custom_attributes: {})
+      source.update!(content_attributes: {})
 
       expect { described_class.perform_now(conversation.id) }.not_to(change { conversation.messages.count })
     end
@@ -185,7 +190,7 @@ describe Umi::Meta::AdContextNoteJob do
   describe 'erasure' do
     it 'does not post if attribution was erased while the job was in flight' do
       allow(api).to receive(:get_object) do
-        conversation.update!(custom_attributes: {})
+        source.update!(content_attributes: {})
         payload
       end
 

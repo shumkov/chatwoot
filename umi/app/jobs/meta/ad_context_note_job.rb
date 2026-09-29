@@ -1,125 +1,102 @@
 # frozen_string_literal: true
 
-# Posts the ad-context private note on a conversation that carries Meta ad
-# attribution.
-#
-# Runs in the background on purpose. The inbound message path must never wait on
-# Meta: a slow or failing Graph call there would delay the customer's message,
-# and a rescued database error inside the builder's transaction would kill it at
-# COMMIT.
+# Meta lookups run outside the inbound transaction and row locks. The retained
+# incoming source, rather than the mutable sidebar, owns each private note.
 class Umi::Meta::AdContextNoteJob < ApplicationJob
   queue_as :medium
 
-  # Flat five seconds rather than a growing backoff. The point of the note is to
-  # reach the agent before they reply, and the fastest real agent reply measured
-  # on ad taps is 26 seconds; a polynomial schedule would still be waiting.
-  retry_on Umi::Meta::AdWelcomeMessageService::Unavailable, wait: 5.seconds, attempts: 4
-
   MARKER = 'umi_ad_context'
 
-  def perform(conversation_id)
-    conversation = Conversation.find_by(id: conversation_id)
-    return if conversation.nil?
+  # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+  def perform(conversation_id, source_message_id = nil)
+    @conversation = Conversation.find_by(id: conversation_id)
+    return unless @conversation
 
-    ad_id = conversation.custom_attributes['meta_ad_id']
-    return log(:skipped_no_ad_id, conversation_id) if ad_id.blank?
-    return log(:skipped_present, conversation_id) if note?(conversation, status: 'ok')
+    @source = if source_message_id
+                @conversation.messages.find_by(id: source_message_id)
+              else
+                # Release compatibility for jobs queued before source IDs were included.
+                Umi::FbigAdAttribution.latest_source(@conversation)
+              end
+    return unless @source && Umi::FbigAdAttribution.valid_source?(@source, @conversation)
 
-    welcome = service(conversation).fetch(ad_id)
-    write(conversation, body(conversation, welcome), ad_id, 'ok', guard: 'ok')
-    log(:posted, conversation_id)
+    @contact = @conversation.contact
+    return if @contact.additional_attributes['umi_profile_redacted']
+
+    @binding = @conversation.attributes.slice('account_id', 'contact_id', 'inbox_id', 'contact_inbox_id')
+    @referral = @source.content_attributes.fetch('referral').deep_dup
+    @ad_id = @referral.fetch('ad_id').to_s
+    @tapped_title = @source.content
+    @source_time = @source.created_at
+    return if note?(status: 'ok')
+
+    welcome = service.fetch(@ad_id)
+    body = Umi::Meta::AdContextNotePresenter.new(welcome, tapped_title: @tapped_title).body
+    write(body, 'ok', guard: 'ok')
   rescue StandardError => e
-    # Terminal handler for everything, not just Unavailable. Anything escaping
-    # this job lands in the Sidekiq dead set, which nobody watches on this
-    # installation — so an agent-visible note is the only signal that works.
-    handle_failure(conversation, e)
+    handle_failure(e)
   end
+
+  # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
   private
 
-  def service(conversation)
-    token = conversation.inbox.channel.try(:page_access_token)
-    # A Meta inbox with no token is a deployment fault, not a runtime condition.
-    raise "no page_access_token on inbox #{conversation.inbox_id}" if token.blank?
+  def service
+    token = @conversation.inbox.channel.try(:page_access_token)
+    raise "no page_access_token on inbox #{@conversation.inbox_id}" if token.blank?
 
     Umi::Meta::AdWelcomeMessageService.new(token)
   end
 
-  def body(conversation, welcome)
-    Umi::Meta::AdContextNotePresenter.new(welcome, tapped_title: tapped_title(conversation)).body
-  end
+  def write(body, status, guard:) # rubocop:disable Metrics/CyclomaticComplexity
+    @contact.with_lock do
+      next if @contact.additional_attributes['umi_profile_redacted']
 
-  # The tap arrives as an ordinary incoming message whose text is the option
-  # title. The first incoming message is the tap for an ad-originated thread.
-  def tapped_title(conversation)
-    conversation.messages.incoming.first&.content
-  end
+      @conversation.with_lock do
+        next unless @conversation.attributes.slice(*@binding.keys) == @binding
 
-  # The check has to happen under the lock, not only before the Graph call: two
-  # taps seconds apart, or a redelivered Meta webhook, put two of these jobs in
-  # flight at once. Losing that race does not merely duplicate a note — if one
-  # worker succeeds and the other is rate-limited, the agent gets a correct note
-  # followed by one saying the ad could not be read.
-  def write(conversation, body, ad_id, status, guard:)
-    conversation.with_lock do
-      # reload inside the lock: the association was already loaded by the
-      # pre-flight check, and the other worker's insert happened after that.
-      conversation.reload
-      next if note?(conversation, status: guard)
-      # Attribution may have been erased by a Shopify redaction while this job
-      # was in flight; posting now would reinstate what erasure just removed.
-      next if conversation.custom_attributes['meta_ad_id'].blank?
+        @source.with_lock do
+          next unless Umi::FbigAdAttribution.valid_source?(@source, @conversation, @referral)
+          next unless @source.content == @tapped_title && @source.created_at == @source_time
+          next if note?(status: guard)
 
-      # A failure note left by an earlier outage would otherwise sit above the
-      # real one, telling the agent the ad is unreadable directly above its
-      # contents.
-      clear_failure_notes(conversation) if status == 'ok'
-
-      conversation.messages.create!(
-        account_id: conversation.account_id,
-        inbox_id: conversation.inbox_id,
-        message_type: :outgoing,
-        private: true,
-        sender: nil,
-        content: body,
-        content_attributes: { MARKER => { 'ad_id' => ad_id, 'status' => status } }
-      )
+          clear_failure_notes if status == 'ok'
+          @conversation.messages.create!(
+            account_id: @conversation.account_id, inbox_id: @conversation.inbox_id,
+            message_type: :outgoing, private: true, sender: nil,
+            content: "Ad referral — message ##{@source.id}, #{@source_time.utc.iso8601}, ad #{@ad_id}\n\n#{body}",
+            content_attributes: { MARKER => { 'source_message_id' => @source.id, 'ad_id' => @ad_id, 'status' => status } }
+          )
+        end
+      end
     end
   end
 
-  # Read in Ruby, not SQL. messages.content_attributes is a json column carrying
-  # a `store` coder, so the stored value is a JSON string and
-  # `content_attributes::jsonb -> 'key'` matches nothing at all — silently.
-  #
-  # A nil status matches any note; 'ok' matches only a successful one, so a
-  # failure note left by a transient Meta outage cannot block the real note
-  # forever.
-  def clear_failure_notes(conversation)
-    stale = conversation.messages.select { |m| m.content_attributes.dig(MARKER, 'status') == 'error' }
-    Message.where(id: stale.map(&:id)).delete_all if stale.any?
-  end
-
-  def note?(conversation, status:)
-    conversation.messages.reload.any? do |message|
+  # content_attributes is a JSON column with a store coder: SQL key operators
+  # cannot read its serialized JSON string. Always use the decoded accessor.
+  def matching_notes
+    @conversation.messages.reload.select do |message|
       marker = message.content_attributes[MARKER]
-      marker.present? && (status.nil? || marker['status'] == status)
+      marker.is_a?(Hash) && marker['source_message_id'] == @source.id && marker['ad_id'] == @ad_id
     end
   end
 
-  def handle_failure(conversation, error)
-    reason = error.is_a?(Umi::Meta::AdWelcomeMessageService::Unavailable) ? error.message : error.class.name
-    Rails.logger.error("[UMI-FBIG] stage=ad_context_failed conversation=#{conversation&.id} reason=#{reason}")
-    return if conversation.nil?
-
-    write(conversation, Umi::Meta::AdContextNotePresenter.failure_body(reason),
-          conversation.custom_attributes['meta_ad_id'], 'error', guard: nil)
-  rescue StandardError => e
-    # The note is the signal, so its own failure must not be what hides the
-    # original one.
-    Rails.logger.error("[UMI-FBIG] stage=ad_context_note_failed conversation=#{conversation&.id} error=#{e.class}")
+  def clear_failure_notes
+    ids = matching_notes.select { |message| message.content_attributes.dig(MARKER, 'status') == 'error' }.map(&:id)
+    Message.where(id: ids).delete_all if ids.any?
   end
 
-  def log(stage, conversation_id)
-    Rails.logger.info("[UMI-FBIG] stage=ad_context_#{stage} conversation=#{conversation_id}")
+  def note?(status:)
+    matching_notes.any? { |message| status.nil? || message.content_attributes.dig(MARKER, 'status') == status }
+  end
+
+  def handle_failure(error) # rubocop:disable Metrics/CyclomaticComplexity
+    reason = error.is_a?(Umi::Meta::AdWelcomeMessageService::Unavailable) ? error.message : error.class.name
+    Rails.logger.error("[UMI-FBIG] stage=ad_context_failed conversation=#{@conversation&.id} reason=#{reason}")
+    return unless @binding && @source && @ad_id
+
+    write(Umi::Meta::AdContextNotePresenter.failure_body(reason), 'error', guard: nil)
+  rescue StandardError => e
+    Rails.logger.error("[UMI-FBIG] stage=ad_context_note_failed conversation=#{@conversation&.id} error=#{e.class}")
   end
 end

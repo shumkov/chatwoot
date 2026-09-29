@@ -17,7 +17,8 @@ describe Umi::Meta::AdContextNoteTrigger do
     create(:conversation, account: account, inbox: inbox, contact: contact, contact_inbox: contact_inbox)
   end
   let(:message) do
-    create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming)
+    create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming,
+                     content_attributes: { referral: ad_referral })
   end
   let(:ad_referral) do
     { 'source' => 'ADS', 'ad_id' => '120252251820030415', 'ads_context_data' => { 'ad_title' => 'Video_2' } }
@@ -29,7 +30,7 @@ describe Umi::Meta::AdContextNoteTrigger do
 
   it 'enqueues the note once attribution has been written' do
     expect { Umi::FbigAdAttribution.promote(message, ad_referral) }
-      .to have_enqueued_job(Umi::Meta::AdContextNoteJob).with(conversation.id)
+      .to have_enqueued_job(Umi::Meta::AdContextNoteJob).with(conversation.id, message.id)
   end
 
   # Meta reuses the referral object for Instagram Shops product taps, which
@@ -44,7 +45,7 @@ describe Umi::Meta::AdContextNoteTrigger do
   # enqueue failure and patch 20's exception tracker would never be reached —
   # on an installation where that log line is the only signal there is.
   it 'lets a failure inside patch 20 surface as patch 20 reports it' do
-    allow(conversation).to receive(:update!).and_raise(ActiveRecord::LockWaitTimeout)
+    allow(conversation).to receive(:save!).and_raise(ActiveRecord::LockWaitTimeout)
     allow(message).to receive(:conversation).and_return(conversation)
 
     expect { Umi::FbigAdAttribution.promote(message, ad_referral) }.to raise_error(ActiveRecord::LockWaitTimeout)

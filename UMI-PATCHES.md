@@ -60,6 +60,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 46 | Service reservation context | UMI customer context sync/projection and focused specs | Imports the verified Shopify service hold and its independent freshness through Klaviyo into the private customer summary, without duplicate notes on timestamp refresh. | Native customer context exposes equivalent service reservation state and observation freshness. |
 
+| 47 | Paid ad referral continuity | UMI FB/IG attribution builder, ad context job/trigger, conversation qualification, source/race specs and delivery runbook | Keeps each ad tap and private context note tied to its retained source, freezes the eligible referral when a later message qualifies, and suppresses obsolete messaging identities after rebinding. | Native messaging attribution preserves equivalent per-source history, qualification cutoffs and private ad context. |
+
 
 ## Patch details
 
