@@ -25,21 +25,21 @@ class Umi::Funnel::CustomerProjection
     conversation.send(:save_cached_tag_list)
   end
 
-  def self.apply!(conversation, contact, initial: false)
+  def self.apply!(conversation, contact, initial: false, classification: nil)
     return if contact.additional_attributes['umi_profile_redacted']
     return if conversation.resolved? && (!initial || !conversation.additional_attributes[KEY])
 
     assign(conversation, contact) unless conversation.resolved?
-    summarize!(conversation, contact)
+    summarize!(conversation, contact, classification: classification)
     conversation.save!
   end
 
-  def self.summarize!(conversation, contact)
+  def self.summarize!(conversation, contact, classification: nil)
     projection = conversation.additional_attributes.fetch(KEY)
     signature = projection.except('summary').merge('facts' => projection.fetch('facts').except('umi_payment_snapshot_at'))
-    return if projection['summary'] == signature
+    return if projection['summary'] == signature && classification.nil?
 
-    write_note!(conversation, contact)
+    write_note!(conversation, contact, classification: classification)
     projection['summary'] = signature
     conversation.additional_attributes = conversation.additional_attributes.merge(KEY => projection)
   end
@@ -63,7 +63,7 @@ class Umi::Funnel::CustomerProjection
     end
   end
 
-  def self.write_note!(conversation, contact)
+  def self.write_note!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     projection = conversation.additional_attributes.fetch(KEY)
     attributes = projection.fetch('facts')
     count = attributes['umi_paid_order_count']
@@ -79,8 +79,15 @@ class Umi::Funnel::CustomerProjection
     if contact.additional_attributes.dig('umi_klaviyo_sync', 'error').to_s.start_with?('identity_unresolved')
       content += "\nCustomer identity unresolved; verify email or phone, or link an existing profile."
     end
+    content += "\n#{classification.fetch(:text)}" if classification
+    create_note!(conversation, contact, content, classification)
+  end
+
+  def self.create_note!(conversation, contact, content, classification = nil)
+    marker = { 'contact_id' => contact.id }
+    marker.merge!(classification.except(:text).stringify_keys) if classification
     conversation.messages.create!(account_id: conversation.account_id, inbox_id: conversation.inbox_id,
                                   message_type: :outgoing, private: true, sender: nil, content: content,
-                                  content_attributes: { NOTE_MARKER => { 'contact_id' => contact.id } })
+                                  content_attributes: { NOTE_MARKER => marker })
   end
 end

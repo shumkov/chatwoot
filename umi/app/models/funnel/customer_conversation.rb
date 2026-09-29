@@ -22,7 +22,10 @@ module Umi::Funnel::CustomerConversation
     current.with_lock do
       self.label_list = current.label_list
       check_umi_labels!(Array(labels))
-      super
+      before = label_list.to_a
+      result = super
+      Umi::Funnel::TopicCorrection.record!(self, before: before)
+      result
     end
   end
 

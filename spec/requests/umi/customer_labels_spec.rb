@@ -32,6 +32,7 @@ RSpec.describe 'Managed customer labels', type: :request do
     BulkActionsJob.perform_now(account: account, user: agent, params: body.with_indifferent_access)
     expect(conversation.reload).to be_resolved
     expect(conversation.label_list).to match_array(%w[vip support-exchange])
+    expect(Umi::ConversationEvent.where(event_type: 'classification_topics_corrected').sole.payload).to include('removed' => ['support-refund'])
   end
 
   it 'returns an explicit stale-label error from the ordinary labels API' do
@@ -74,5 +75,26 @@ RSpec.describe 'Managed customer labels', type: :request do
 
     expect(response).to have_http_status(:ok)
     expect(definition.reload.attribute_display_name).to eq('Changed')
+  end
+
+  it 'records native topic removal with an incoming watermark in the same transaction' do
+    message = create(:message, conversation: conversation, account: account, message_type: :incoming)
+    conversation.update_labels(['support-refund'])
+    post "/api/v1/accounts/#{account.id}/conversations/#{conversation.display_id}/labels", headers: agent.create_new_auth_token,
+                                                                                           params: { labels: ['support-exchange'] }, as: :json
+    expect(response).to have_http_status(:success)
+    event = Umi::ConversationEvent.where(event_type: 'classification_topics_corrected').sole
+    expect(event.payload).to include('removed' => ['support-refund'], 'added' => ['support-exchange'], 'input_message_id' => message.id)
+    expect(event.conversion_deliveries).to be_empty
+  end
+
+  it 'rolls back native labels when the correction fence cannot be stored' do
+    conversation.update_labels(['support-refund'])
+    allow(Umi::Funnel::TopicCorrection).to receive(:record!).and_raise(ActiveRecord::RecordInvalid.new(Umi::ConversationEvent.new))
+    post "/api/v1/accounts/#{account.id}/conversations/#{conversation.display_id}/labels", headers: agent.create_new_auth_token,
+                                                                                           params: { labels: ['support-exchange'] }, as: :json
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(conversation.reload.label_list).to eq(['support-refund'])
+    expect(Umi::ConversationEvent.where(event_type: 'classification_topics_corrected')).to be_empty
   end
 end

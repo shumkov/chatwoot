@@ -13,10 +13,12 @@ module Umi::Funnel::CustomerBulkActions
 
     records.each do |conversation|
       conversation.with_lock do
+        before = conversation.label_list.to_a
         conversation.label_list = (conversation.label_list - removed) | added
         bulk_snoozed_until(conversation)
         conversation.assign_attributes(available_params(@params) || {})
         conversation.save!
+        Umi::Funnel::TopicCorrection.record!(conversation, before: before)
       end
     end
   end

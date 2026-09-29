@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 class Umi::Funnel::ConversationClassifier
-  POLICY_VERSION = '1'
-  class InvalidDecision < StandardError; end
+  POLICY_VERSION = Umi::Funnel::ClassificationClient::VERSION
+  InvalidDecision = Umi::Funnel::ClassificationClient::InvalidDecision
 
   def self.mode
     value = ENV.fetch('UMI_FUNNEL_CLASSIFIER_MODE', 'off')
@@ -65,7 +65,8 @@ class Umi::Funnel::ConversationClassifier
     return unless Umi::Funnel::Configuration.enabled?(@conversation.account_id) && self.class.inbox_ids.include?(@conversation.inbox_id)
 
     @mode = self.class.mode
-    @model = ENV.fetch('UMI_FUNNEL_CLASSIFIER_MODEL')
+    @configuration = Umi::Funnel::ClassificationClient.configuration
+    @model = @configuration.fetch('model')
     @contact_id = @conversation.contact_id
     return if @conversation.contact.additional_attributes['umi_profile_redacted']
 
@@ -79,9 +80,21 @@ class Umi::Funnel::ConversationClassifier
     return if @auto_boundary && message.created_at < @auto_boundary
 
     @correction = latest_correction
-    @input = build_input
-    decision = Umi::Funnel::ClassificationClient.new.classify(@input)
-    validate_decision!(decision)
+    @as_of = Time.current
+    @cutoff = Umi::Funnel::ClassificationContext.public_messages(@conversation).maximum(:id)
+    @context = Umi::Funnel::ClassificationContext.new(@conversation, watermark: @watermark, cutoff: @cutoff,
+                                                                     boundary: @auto_boundary || Umi::Funnel::Configuration.started_at, as_of: @as_of)
+    @input = @context.build
+    @comparison = @context.comparison(@input).deep_dup
+    @input_bytes = Umi::Funnel::ClassificationClient.request_bytes(@input)
+    @reason_code = Umi::Funnel::ClassificationClient.uncertainty(@input, @configuration)
+    decision = if @reason_code
+                 { 'status' => 'uncertain', 'topics' => [], 'roles' => [], 'reason' => @reason_code.humanize, 'evidence_message_ids' => [] }
+               else
+                 Umi::Funnel::ClassificationClient.new.classify(@input)
+               end
+    Umi::Funnel::ClassificationClient.validate!(decision, @input)
+    @reason_code ||= 'model_uncertain' if decision['status'] == 'uncertain'
     finish(decision)
   rescue StandardError => e
     raise unless @input
@@ -110,50 +123,11 @@ class Umi::Funnel::ConversationClassifier
     self.class.public_messages.where(conversation_id: @conversation.id).incoming
   end
 
-  def build_input
-    messages = self.class.public_messages.where(conversation_id: @conversation.id, message_type: %i[incoming outgoing], id: ..@watermark)
-                   .reorder(created_at: :desc, id: :desc).limit(101).to_a
-    truncated = messages.size > 100
-    messages = messages.first(100).reverse
-    live_ids = self.class.sources.where(conversation_id: @conversation.id).pluck(Arel.sql("(payload ->> 'message_id')::bigint"))
-    fresh = messages.select do |message|
-      watermark = @correction&.payload&.[]('input_message_id')
-      after_correction = !@correction || (watermark ? message.id > watermark : message.created_at > @correction.observed_at)
-      live_ids.include?(message.id) && after_correction && message.created_at >= (@auto_boundary || Umi::Funnel::Configuration.started_at)
-    end.map(&:id)
-    attached_ids = Attachment.where(message_id: messages.map(&:id)).distinct.pluck(:message_id).to_set
-    remaining = 30_000
-    rows = messages.reverse.map do |message|
-      content = message.content.to_s
-      truncated ||= content.length > remaining
-      text = content.first(remaining)
-      remaining -= text.length
-      { id: message.id, role: message.incoming? ? 'customer' : 'staff', text: text, attachments: attached_ids.include?(message.id) }
-    end.reverse
-    { messages: rows, incoming_ids: messages.select { |message| live_ids.include?(message.id) }.map(&:id), fresh_evidence_ids: fresh,
-      truncated: truncated, current_status: @conversation.custom_attributes['umi_sales_status'],
-      human_correction: @correction&.payload&.slice('status', 'reason') }
-  end
-
-  def validate_decision!(decision)
-    raise InvalidDecision unless decision.is_a?(Hash) && decision.keys.sort == %w[evidence_message_ids reason status topics]
-    raise InvalidDecision unless Umi::Funnel::ClassificationClient::STATUSES.include?(decision['status'])
-    raise InvalidDecision unless decision['reason'].is_a?(String) && decision['reason'].strip.length.between?(1, 1000)
-
-    topics = decision['topics']
-    raise InvalidDecision unless topics.is_a?(Array) && topics.uniq == topics && (topics - Umi::Funnel::ClassificationClient::TOPICS).empty?
-
-    ids = decision['evidence_message_ids']
-    raise InvalidDecision unless ids.is_a?(Array) && ids.all?(Integer) && ids.uniq == ids && (ids - @input[:incoming_ids]).empty?
-    raise InvalidDecision if decision['status'] != 'uncertain' && ids.empty?
-    raise InvalidDecision if decision['status'] == 'qualified' && (ids - @input[:fresh_evidence_ids]).any?
-  end
-
   def finish(decision, error: nil)
     contact = Contact.find_by(id: @contact_id, account_id: @conversation.account_id)
     return unless contact
 
-    contact.with_lock do
+    contact.with_lock do # rubocop:disable Metrics/BlockLength
       next if contact.additional_attributes['umi_profile_redacted'] || self.class.mode == 'off'
 
       @conversation.reload.with_lock do
@@ -162,23 +136,32 @@ class Umi::Funnel::ConversationClassifier
                                       .exists?(["(payload ->> 'input_message_id')::bigint >= ?", @watermark])
         next unless Umi::Funnel::Configuration.enabled?(@conversation.account_id) && self.class.inbox_ids.include?(@conversation.inbox_id)
 
-        stale = @mode != self.class.mode || incoming_messages.maximum(:id) != @watermark || @model != ENV.fetch('UMI_FUNNEL_CLASSIFIER_MODEL')
+        # Native deletion updates the message row independently of the conversation.
+        # Keep the captured history stable through the final comparison and application.
+        @conversation.messages.where(id: @input.fetch(:messages).pluck(:id)).reorder(:id).lock.load
+        current_input = @context.build
+        stale = @mode != self.class.mode || incoming_messages.maximum(:id) != @watermark ||
+                @configuration != Umi::Funnel::ClassificationClient.configuration || @comparison != @context.comparison(current_input)
         stale ||= @auto_boundary && @auto_boundary != self.class.auto_started_at
-        if decision && incoming_messages.where(id: decision.fetch('evidence_message_ids')).count != decision.fetch('evidence_message_ids').size
-          error = InvalidDecision.name
-        end
-        outcome = if stale
-                    'stale'
-                  elsif latest_correction&.id != @correction&.id
+        manual = latest_correction&.id != @correction&.id || current_input[:topic_corrections] != @input[:topic_corrections]
+        outcome = if manual
                     'manual_override'
+                  elsif stale
+                    'stale'
                   elsif error
                     'failed'
+                  elsif @mode == 'auto' && @conversation.resolved?
+                    'resolved'
+                  elsif @mode == 'auto' && !accepted_configuration?
+                    'configuration_unaccepted'
                   elsif decision['status'] == 'uncertain'
                     'uncertain'
                   else
                     @mode == 'auto' ? 'applied' : 'shadow'
                   end
-        apply!(decision) if outcome == 'applied'
+        apply!(decision, contact) if outcome == 'applied'
+        uncertainty_note!(decision, contact) if outcome == 'uncertain' && @mode == 'auto'
+
         record_evaluation(outcome, error ? nil : decision, error)
       end
     end
@@ -192,11 +175,33 @@ class Umi::Funnel::ConversationClassifier
                                    event_type: 'classification_evaluated', provenance: 'classifier', occurred_at: Time.current,
                                    observed_at: Time.current, occurrence_key: "classifier:#{@conversation.id}:#{@watermark}:#{POLICY_VERSION}",
                                    evidence_message_ids: ids,
-                                   payload: { input_message_id: @watermark, policy_version: POLICY_VERSION, model: @model, mode: @mode,
+                                   payload: { input_message_id: @watermark, public_history_cutoff: @cutoff, policy_version: POLICY_VERSION,
+                                              model: @model, mode: @mode,
+                                              configuration: @configuration,
+                                              configuration_digest: Umi::Funnel::ClassificationClient.configuration_digest(@configuration),
+                                              input_bytes: @input_bytes, reason_code: @reason_code,
                                               outcome: outcome, decision: decision || {}, error: error })
   end
 
-  def apply!(decision)
+  def accepted_configuration?
+    ENV['UMI_FUNNEL_CLASSIFIER_ACCEPTED_CONFIGURATION'] == Umi::Funnel::ClassificationClient.configuration_digest(@configuration)
+  end
+
+  def uncertainty_note!(decision, contact)
+    previous = Umi::ConversationEvent.where(conversation_id: @conversation.id, event_type: 'classification_evaluated', redacted_at: nil)
+                                     .where("payload ->> 'mode' = 'auto'").order(id: :desc).first
+    return if previous && previous.payload.values_at('outcome', 'reason_code') == ['uncertain', @reason_code]
+
+    Umi::Funnel::CustomerProjection.create_note!(@conversation, contact, "Classification uncertain: #{decision.fetch('reason')}",
+                                                 kind: 'classification_uncertain', reason_code: @reason_code,
+                                                 input_message_id: @watermark,
+                                                 configuration: Umi::Funnel::ClassificationClient.configuration_digest(@configuration))
+  end
+
+  def apply!(decision, contact)
+    previous_status = @conversation.custom_attributes['umi_sales_status'] || 'unevaluated'
+    previous_topics = @conversation.label_list & Umi::Funnel::ClassificationClient::TOPICS
+    previous_roles = contact.custom_attributes.slice(*Umi::Funnel::Configuration::ROLES.keys)
     prior_qualification = Umi::ConversationEvent.exists?(conversation_id: @conversation.id, event_type: 'conversation_qualified', redacted_at: nil)
     preserved_qualification = prior_qualification && %w[not_sales unevaluated].exclude?(latest_correction&.payload&.[]('status'))
     unless preserved_qualification || %w[qualified order_placed purchased].include?(@conversation.custom_attributes['umi_sales_status'])
@@ -205,8 +210,29 @@ class Umi::Funnel::ConversationClassifier
                                               classifier: { 'model' => @model, 'policy_version' => POLICY_VERSION,
                                                             'input_message_id' => @watermark }).perform
     end
-    decision.fetch('topics').each { |title| @conversation.account.labels.find_or_create_by!(title: title) }
-    @conversation.update!(label_list: (@conversation.label_list + decision.fetch('topics')).uniq)
+    topics = decision.fetch('topics').select { |topic| Umi::Funnel::TopicCorrection.permitted?(topic, @input) }.pluck('label')
+    topics.each { |title| @conversation.account.labels.find_or_create_by!(title: title) }
+    @conversation.update!(label_list: (@conversation.label_list + topics).uniq)
+    roles = decision.fetch('roles').to_h { |role| [role.fetch('role'), 'yes'] }
+    Umi::Funnel::CustomerMutation.new(contact, source: 'ai', conversation: @conversation).perform(roles: roles, defer_projection: true) if roles.any?
+    current_status = @conversation.custom_attributes['umi_sales_status'] || 'unevaluated'
+    changes = []
+    changes << "Sales status: #{previous_status} → #{current_status}." if previous_status != current_status
+    added = topics - previous_topics
+    changes << "Topics added: #{added.join(', ')}." if added.any?
+    contact.custom_attributes.slice(*Umi::Funnel::Configuration::ROLES.keys).each do |key, value|
+      if previous_roles[key] != value
+        previous = previous_roles.fetch(key, 'unknown')
+        changes << "#{Umi::Funnel::Configuration::ROLES.fetch(key)}: #{previous} → #{value}."
+      end
+    end
+    return if changes.empty?
+
+    changes << "Reason: #{decision.fetch('reason')}"
+    Umi::Funnel::CustomerProjection.apply!(@conversation, contact, classification: {
+                                             text: changes.join("\n"), kind: 'classification_applied', input_message_id: @watermark,
+                                             configuration: Umi::Funnel::ClassificationClient.configuration_digest(@configuration)
+                                           })
   end
 end
-# rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity

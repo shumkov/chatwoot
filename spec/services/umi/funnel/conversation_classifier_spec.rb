@@ -10,7 +10,8 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
                      created_at: 1.minute.ago)
   end
   let(:decision) do
-    { 'status' => 'qualified', 'topics' => ['intent-ready-to-order'], 'reason' => 'Requested a fitting reservation',
+    { 'status' => 'qualified', 'topics' => [{ 'label' => 'intent-ready-to-order', 'evidence_message_ids' => [message.id] }],
+      'roles' => [], 'reason' => 'Requested a fitting reservation',
       'evidence_message_ids' => [message.id] }
   end
 
@@ -18,8 +19,11 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
     with_modified_env UMI_FUNNEL_ACCOUNT_IDS: account.id.to_s, UMI_FUNNEL_STARTED_AT: 2.days.ago.utc.iso8601,
                       UMI_FUNNEL_CLASSIFIER_MODE: 'shadow', UMI_FUNNEL_CLASSIFIER_INBOX_IDS: conversation.inbox_id.to_s,
                       UMI_FUNNEL_CLASSIFIER_AUTO_STARTED_AT: 1.day.ago.utc.iso8601,
-                      UMI_FUNNEL_CLASSIFIER_MODEL: 'gpt-6-sol' do
-      example.run
+                      UMI_FUNNEL_CLASSIFIER_MODEL: 'gpt-6-sol', UMI_FUNNEL_CLASSIFIER_INPUT_MAX_BYTES: '500000',
+                      UMI_FUNNEL_CLASSIFIER_API_BASE: 'https://proxy.example.test/v1' do
+      with_modified_env UMI_FUNNEL_CLASSIFIER_ACCEPTED_CONFIGURATION: Umi::Funnel::ClassificationClient.configuration_digest do
+        example.run
+      end
     end
   end
 
@@ -178,7 +182,8 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
     it "preserves #{status} when a later message asks for a refund" do
       Umi::Funnel::EventRecorder.capture_message(message)
       conversation.project_umi_sales_status!(status)
-      decision.merge!('status' => 'not_sales', 'topics' => ['support-refund'], 'reason' => 'Refund assistance')
+      decision.merge!('status' => 'not_sales', 'topics' => [{ 'label' => 'support-refund', 'evidence_message_ids' => [message.id] }],
+                      'reason' => 'Refund assistance')
       client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
       allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
       with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
@@ -317,7 +322,8 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
                                             reason: 'No further answer', evidence_message_ids: []).perform
     newer = create(:message, conversation: conversation, account: account, message_type: :incoming, content: 'Where is my other order?',
                              created_at: 40.seconds.ago)
-    decision.merge!('status' => 'not_sales', 'topics' => ['support-order-tracking'], 'evidence_message_ids' => [newer.id])
+    decision.merge!('status' => 'not_sales', 'topics' => [{ 'label' => 'support-order-tracking', 'evidence_message_ids' => [newer.id] }],
+                    'evidence_message_ids' => [newer.id])
     client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
     allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
     with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
@@ -328,7 +334,7 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
     expect(Umi::ConversationEvent.where(event_type: 'classification_changed').order(:id).last.payload['status']).to eq('inactive')
   end
 
-  it 'keeps the newest message in a long input and reads attachment presence in one query' do
+  it 'preserves complete long history and attachment metadata without truncation' do
     message.update!(content: 'Earlier context. ' * 2500)
     newer = create(:message, conversation: conversation, account: account, message_type: :incoming, content: 'Do not reserve it anymore',
                              created_at: 40.seconds.ago)
@@ -344,12 +350,12 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
     ActiveSupport::Notifications.subscribed(subscriber, 'sql.active_record') do
       Umi::Funnel::ConversationClassifier.new(conversation).perform
     end
-    expect(queries.size).to eq(1)
+    expect(queries.size).to be <= 2
     expect(client).to have_received(:classify) do |input|
       expect(input[:messages].last).to include(id: newer.id, text: newer.content, attachments: true)
       expect(input[:messages].first[:attachments]).to be(false)
-      expect(input[:messages].sum { |row| row[:text].length }).to be <= 30_000
-      expect(input[:truncated]).to be(true)
+      expect(input[:messages].first[:text]).to eq(message.content)
+      expect(input[:truncated]).to be(false)
     end
   end
 
@@ -374,5 +380,200 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
     end
     expect(Umi::ConversionDelivery.count).to eq(0)
     expect(Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload['outcome']).to eq('failed')
+  end
+
+  it 'includes pre-collection customer history and staff replies saved after the incoming trigger' do
+    message
+    earlier = create(:message, conversation: conversation, account: account, message_type: :incoming,
+                               content: 'My previous purchase fitted well', created_at: 3.days.ago)
+    reply = create(:message, conversation: conversation, account: account, message_type: :outgoing,
+                             content: 'We can reserve the medium', created_at: 35.seconds.ago)
+    client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    Umi::Funnel::ConversationClassifier.new(conversation).perform
+    expect(client).to have_received(:classify) do |input|
+      expect(input[:messages].map { |row| row[:id] }).to include(earlier.id, reply.id)
+    end
+  end
+
+  it 'does not apply an answer after the conversation is resolved during inference' do
+    Umi::Funnel::EventRecorder.capture_message(message)
+    client = instance_double(Umi::Funnel::ClassificationClient)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    allow(client).to receive(:classify) do
+      conversation.resolved!
+      decision
+    end
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+    end
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+    expect(Umi::ConversationEvent.where(event_type: 'conversation_qualified')).to be_empty
+  end
+
+  it 'rejects a result when included old public text changes during inference' do
+    Umi::Funnel::EventRecorder.capture_message(message)
+    client = instance_double(Umi::Funnel::ClassificationClient)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    allow(client).to receive(:classify) do
+      message.update!(content: 'Actually I am contacting you about a collaboration')
+      decision
+    end
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+    end
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+    expect(Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload['outcome']).to eq('stale')
+  end
+
+  it 'makes no provider call for an over-budget whole context and deduplicates the diagnostic note' do
+    message
+    expect(Umi::Funnel::ClassificationClient).not_to receive(:new)
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto', UMI_FUNNEL_CLASSIFIER_INPUT_MAX_BYTES: '100' do
+      with_modified_env UMI_FUNNEL_CLASSIFIER_ACCEPTED_CONFIGURATION: Umi::Funnel::ClassificationClient.configuration_digest do
+        2.times do |index|
+          create(:message, conversation: conversation, account: account, message_type: :incoming, content: "Hello #{index}",
+                           created_at: 40.seconds.ago)
+          Umi::Funnel::ConversationClassifier.new(conversation).perform
+        end
+      end
+    end
+    outcomes = Umi::ConversationEvent.where(event_type: 'classification_evaluated').map(&:payload)
+    expect(outcomes.size).to eq(2)
+    expect(outcomes).to all(include('outcome' => 'uncertain', 'reason_code' => 'context_too_large'))
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+    expect(conversation.messages.where(private: true).count).to eq(1)
+  end
+
+  it 'keeps shadow attachment-only uncertainty out of the timeline and provider' do
+    message.update!(content: nil)
+    message.attachments.create!(account: account, file_type: :image, external_url: 'https://example.test/photo.jpg')
+    expect(Umi::Funnel::ClassificationClient).not_to receive(:new)
+    Umi::Funnel::ConversationClassifier.new(conversation).perform
+    payload = Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload
+    expect(payload).to include('reason_code' => 'attachment_context_required')
+    expect(conversation.messages.where(private: true)).to be_empty
+  end
+
+  it 'applies status topics and an unknown positive relationship in one marked note without fan-out duplicates' do
+    message
+    decision['status'] = 'not_sales'
+    decision['roles'] = [{ 'role' => 'umi_influencer', 'evidence_message_ids' => [message.id] }]
+    client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto', UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+      Umi::Funnel::CustomerProjectionJob.perform_now(conversation.contact_id)
+    end
+    expect(conversation.reload.label_list).to include('influencer', 'intent-ready-to-order')
+    expect(conversation.contact.reload.custom_attributes['umi_influencer']).to eq('yes')
+    note = conversation.messages.where(private: true).sole
+    expect(note.content).to include('Sales status:', 'Topics added:', 'influencer: unknown → yes')
+    expect(note.content_attributes.dig(Umi::Funnel::CustomerProjection::NOTE_MARKER, 'kind')).to eq('classification_applied')
+    expect(note.sender).to be_nil
+  end
+
+  it 'rolls back all local changes and qualification when the combined note cannot be stored' do
+    message
+    decision['roles'] = [{ 'role' => 'umi_wholesale', 'evidence_message_ids' => [message.id] }]
+    client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    allow(Umi::Funnel::CustomerProjection).to receive(:write_note!).and_raise(ActiveRecord::RecordInvalid)
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto', UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+    end
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+    expect(conversation.label_list).to be_empty
+    expect(conversation.contact.reload.custom_attributes['umi_wholesale']).to be_nil
+    expect(conversation.contact.additional_attributes.dig('umi_klaviyo_sync', 'roles')).to be_nil
+    expect(Umi::ConversationEvent.where(event_type: 'conversation_qualified')).to be_empty
+    expect(Umi::ConversionDelivery.count).to eq(0)
+    expect(Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload['outcome']).to eq('failed')
+  end
+
+  it 'does not reactivate a topic removed by an operator using older buying evidence' do
+    message
+    actor = create(:user, account: account)
+    with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
+      conversation.update_labels(['intent-ready-to-order'])
+      allow(Current).to receive(:user).and_return(actor)
+      conversation.update_labels([])
+    end
+    greeting = create(:message, conversation: conversation, account: account, message_type: :incoming,
+                                content: 'Hello again', created_at: 40.seconds.ago)
+    decision.merge!('status' => 'engaged', 'evidence_message_ids' => [greeting.id])
+    client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+    end
+    expect(conversation.reload.label_list).not_to include('intent-ready-to-order')
+    expect(conversation.custom_attributes['umi_sales_status']).to eq('engaged')
+  end
+
+  it 'allows a genuinely new topic request after the operator removal' do
+    freeze_time do
+      message
+      actor = create(:user, account: account)
+      with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
+        conversation.update_labels(['intent-ready-to-order'])
+        allow(Current).to receive(:user).and_return(actor)
+        conversation.update_labels([])
+      end
+      travel 1.minute
+      fresh = create(:message, conversation: conversation, account: account, message_type: :incoming, content: 'Please reserve a blue dress')
+      travel 1.minute
+      decision['evidence_message_ids'] = [fresh.id]
+      decision['topics'].first['evidence_message_ids'] = [fresh.id]
+      client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+      allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+      with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
+        Umi::Funnel::ConversationClassifier.new(conversation).perform
+      end
+      expect(conversation.reload.label_list).to include('intent-ready-to-order')
+    end
+  end
+
+  it 'keeps topic corrections committed while inference is running' do
+    message
+    conversation.update!(label_list: ['support-refund'])
+    actor = create(:user, account: account)
+    client = instance_double(Umi::Funnel::ClassificationClient)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    allow(client).to receive(:classify) do
+      allow(Current).to receive(:user).and_return(actor)
+      conversation.update_labels([])
+      decision
+    end
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto', UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+    end
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+    expect(Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload['outcome']).to eq('manual_override')
+  end
+
+  it 'holds a changed configuration until its exact tuple has a fresh quality acceptance' do
+    message
+    client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+    allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+    with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto', UMI_FUNNEL_CLASSIFIER_INPUT_MAX_BYTES: '500001' do
+      Umi::Funnel::ConversationClassifier.new(conversation).perform
+    end
+    expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+    expect(Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload['outcome']).to eq('configuration_unaccepted')
+  end
+
+  %w[umi_vip umi_high_value].each do |role|
+    it "rejects forbidden AI #{role} proposals without local mutation" do
+      message
+      decision['roles'] = [{ 'role' => role, 'evidence_message_ids' => [message.id] }]
+      client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
+      allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
+      with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
+        Umi::Funnel::ConversationClassifier.new(conversation).perform
+      end
+      expect(conversation.reload.custom_attributes['umi_sales_status']).to be_nil
+      expect(Umi::ConversationEvent.where(event_type: 'classification_evaluated').sole.payload['outcome']).to eq('failed')
+    end
   end
 end

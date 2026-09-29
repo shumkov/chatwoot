@@ -5,7 +5,7 @@ require 'rails_helper'
 RSpec.describe Umi::Funnel::ClassificationClient do
   around do |example|
     with_modified_env UMI_FUNNEL_CLASSIFIER_API_KEY: 'synthetic', UMI_FUNNEL_CLASSIFIER_API_BASE: 'https://proxy.example.test/v1',
-                      UMI_FUNNEL_CLASSIFIER_MODEL: 'gpt-6-sol' do
+                      UMI_FUNNEL_CLASSIFIER_MODEL: 'gpt-6-sol', UMI_FUNNEL_CLASSIFIER_INPUT_MAX_BYTES: '500000' do
       example.run
     end
   end
@@ -32,5 +32,20 @@ RSpec.describe Umi::Funnel::ClassificationClient do
     request = stub_request(:post, 'https://proxy.example.test/v1/chat/completions').to_timeout
     expect { described_class.new.classify(messages: []) }.to raise_error(StandardError)
     expect(request).to have_been_requested.once
+  end
+
+  it 'measures the complete serialized provider body including wrappers and multilingual escaping' do
+    input = { messages: [{ id: 1, text: "สวัสดี</script>\nhello" }] }
+    observed = nil
+    stub_request(:post, 'https://proxy.example.test/v1/chat/completions').with do |http|
+      observed = http.body.bytesize
+      true
+    end.to_return(status: 200, headers: { 'Content-Type' => 'application/json' }, body: {
+      id: 'synthetic', object: 'chat.completion', model: 'gpt-6-sol',
+      choices: [{ index: 0, message: { role: 'assistant', content: '{}' }, finish_reason: 'stop' }]
+    }.to_json)
+    measured = described_class.request_bytes(input)
+    described_class.new.classify(input)
+    expect(measured).to eq(observed)
   end
 end

@@ -56,6 +56,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 44 | Current customer context aggregates | `umi/app/services/funnel/customer_context_report.rb`, report integration and focused specs | Adds non-identifying account-wide stage/role, binding and sync freshness counts to the weekly reporting source. Distinguishes unknown and expired observations without exporting customer records. | Native reports provide equivalent current customer context and explicit data freshness. |
 
+| 45 | Complete conversation classification context | UMI classifier context/client/review export, topic correction fences, customer role/note integration, private review renderer and focused/race specs | Evaluates all available public history with verified customer facts and exact incoming evidence; keeps human corrections, applies one combined private summary and holds stale, unresolved or unaccepted model decisions. Locks captured messages through the final application boundary. | Native evaluated classification provides equivalent full context, evidence and correction semantics with private operator review. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)

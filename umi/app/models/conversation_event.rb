@@ -6,7 +6,9 @@ class Umi::ConversationEvent < ApplicationRecord
   self.table_name = 'umi_conversation_events'
   belongs_to :account
   has_many :conversion_deliveries, class_name: 'Umi::ConversionDelivery', dependent: :delete_all
-  validates :event_type, inclusion: { in: %w[message_received classification_changed classification_evaluated conversation_qualified order_paid] }
+  validates :event_type,
+            inclusion: { in: %w[message_received classification_changed classification_topics_corrected classification_evaluated
+                                conversation_qualified order_paid] }
   validates :provenance, inclusion: { in: %w[live recovered historical operator shopify classifier] }
   validates :occurrence_key, :observed_at, presence: true
   validate :consistent_evidence

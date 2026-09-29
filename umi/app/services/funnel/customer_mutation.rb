@@ -9,7 +9,7 @@ class Umi::Funnel::CustomerMutation
   end
 
   # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-  def perform(roles: {}, snapshot: nil, sync: nil) # rubocop:disable Metrics/AbcSize
+  def perform(roles: {}, snapshot: nil, sync: nil, defer_projection: false) # rubocop:disable Metrics/AbcSize
     validate_context!
 
     @contact.with_lock do
@@ -28,7 +28,7 @@ class Umi::Funnel::CustomerMutation
       state['revision'] = state.fetch('revision', 0) + 1 if previous != current || previous_status != state['status']
       @contact.additional_attributes = @contact.additional_attributes.merge('umi_klaviyo_sync' => state)
       @contact.save!
-      project_current_conversation! if @conversation && previous != current
+      project_current_conversation! if @conversation && previous != current && !defer_projection
     end
     @contact
   end
