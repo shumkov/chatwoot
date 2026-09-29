@@ -207,9 +207,9 @@ const onUpdate = async (key, value) => {
         changedAttributeKey: key,
       });
     } else {
-      store.dispatch('contacts/update', {
+      await store.dispatch('contacts/update', {
         id: props.contactId,
-        customAttributes: updatedAttributes,
+        customAttributes: { [key]: value },
       });
     }
     useAlert(t('CUSTOM_ATTRIBUTES.FORM.UPDATE.SUCCESS'));
@@ -217,6 +217,7 @@ const onUpdate = async (key, value) => {
     const errorMessage =
       error?.response?.data?.error ||
       error?.response?.data?.message ||
+      error?.message ||
       t('CUSTOM_ATTRIBUTES.FORM.UPDATE.ERROR');
     useAlert(errorMessage);
   }
@@ -232,7 +233,7 @@ const onDelete = async key => {
         changedAttributeKey: key,
       });
     } else {
-      store.dispatch('contacts/deleteCustomAttributes', {
+      await store.dispatch('contacts/deleteCustomAttributes', {
         id: props.contactId,
         customAttributes: [key],
       });
@@ -242,6 +243,7 @@ const onDelete = async key => {
     const errorMessage =
       error?.response?.data?.error ||
       error?.response?.data?.message ||
+      error?.message ||
       t('CUSTOM_ATTRIBUTES.FORM.DELETE.ERROR');
     useAlert(errorMessage);
   }

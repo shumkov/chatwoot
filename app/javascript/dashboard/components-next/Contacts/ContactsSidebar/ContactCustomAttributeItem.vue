@@ -36,7 +36,8 @@ const handleDelete = async () => {
     );
   } catch (error) {
     useAlert(
-      error?.response?.message ||
+      error?.message ||
+        error?.response?.message ||
         t('CONTACTS_LAYOUT.SIDEBAR.ATTRIBUTES.API.DELETE_ERROR')
     );
   }
@@ -53,7 +54,8 @@ const handleUpdate = async value => {
     useAlert(t('CONTACTS_LAYOUT.SIDEBAR.ATTRIBUTES.API.SUCCESS_MESSAGE'));
   } catch (error) {
     useAlert(
-      error?.response?.message ||
+      error?.message ||
+        error?.response?.message ||
         t('CONTACTS_LAYOUT.SIDEBAR.ATTRIBUTES.API.UPDATE_ERROR')
     );
   }

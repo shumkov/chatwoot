@@ -39,7 +39,9 @@ const buildContactFormData = contactParams => {
 };
 
 export const handleContactOperationErrors = error => {
-  if (error.response?.status === 422) {
+  if (error.response?.data?.error) {
+    throw new Error(error.response.data.error);
+  } else if (error.response?.status === 422) {
     const exception = new DuplicateContactException(
       error.response.data.attributes
     );
@@ -228,7 +230,7 @@ export const actions = {
       );
       commit(types.EDIT_CONTACT, response.data.payload);
     } catch (error) {
-      throw new Error(error);
+      throw new Error(error.response?.data?.error || error);
     }
   },
 

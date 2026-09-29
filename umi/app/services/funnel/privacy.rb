@@ -2,6 +2,7 @@
 
 class Umi::Funnel::Privacy
   def self.redact_contact!(contact, shopify_customer_id: nil)
+    redact_customer_context!(contact)
     events = Umi::ConversationEvent.where(account_id: contact.account_id, contact_id: contact.id)
     order_ids = Umi::ShopifyOrderAttribution.where(account_id: contact.account_id).where(contact_id: contact.id)
                                             .or(Umi::ShopifyOrderAttribution.where(account_id: contact.account_id, candidate_contact_id: contact.id))
@@ -14,6 +15,23 @@ class Umi::Funnel::Privacy
       redact_financial_states!(Umi::ShopifyOrderFinancialState.where(account_id: contact.account_id, shop_domain: shop, shopify_order_id: order_id))
     end
     redact_events!(events)
+  end
+
+  def self.redact_customer_context!(contact)
+    contact.conversations.order(:id).each do |conversation|
+      conversation.with_lock do
+        owner = conversation.additional_attributes[Umi::Funnel::CustomerProjection::KEY]
+        if owner && owner['contact_id'] == contact.id
+          conversation.label_list -= Array(owner['labels'])
+          conversation.update!(additional_attributes: conversation.additional_attributes.except(Umi::Funnel::CustomerProjection::KEY))
+        end
+        conversation.messages.where(private: true).each do |message|
+          next unless message.content_attributes[Umi::Funnel::CustomerProjection::NOTE_MARKER]
+
+          message.destroy!
+        end
+      end
+    end
   end
 
   # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity

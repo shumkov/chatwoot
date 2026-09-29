@@ -1,0 +1,83 @@
+# frozen_string_literal: true
+
+class Umi::Funnel::CustomerProjection
+  KEY = 'umi_customer_projection'
+  NOTE_MARKER = 'umi_customer_summary'
+
+  def self.state(contact)
+    attributes = contact.custom_attributes
+    labels = []
+    stage = attributes['umi_funnel_stage']
+    labels << stage if %w[chooser seeker client repeat].include?(stage)
+    Umi::Funnel::Configuration::ROLES.each { |key, label| labels << label if attributes[key] == 'yes' }
+    { 'contact_id' => contact.id, 'binding' => contact.additional_attributes['umi_klaviyo_profile_id'],
+      'revision' => contact.additional_attributes.dig('umi_klaviyo_sync', 'revision') || 0, 'labels' => labels,
+      'facts' => attributes.slice(*Umi::Funnel::Configuration::CONTACT_FIELDS),
+      'freshness' => contact.additional_attributes.dig('umi_klaviyo_sync', 'status') }
+  end
+
+  def self.assign(conversation, contact, current_labels: conversation.label_list)
+    projection = state(contact)
+    previous = conversation.additional_attributes[KEY].to_h
+    conversation.label_list = (current_labels - Umi::Funnel::Configuration::CUSTOMER_LABELS) | projection['labels']
+    conversation.additional_attributes = conversation.additional_attributes.merge(KEY => projection.merge(previous.slice('summary')))
+    # Lifecycle projection runs after the tag cache's before_save callback.
+    conversation.send(:save_cached_tag_list)
+  end
+
+  def self.apply!(conversation, contact, initial: false)
+    return if contact.additional_attributes['umi_profile_redacted']
+    return if conversation.resolved? && (!initial || !conversation.additional_attributes[KEY])
+
+    assign(conversation, contact) unless conversation.resolved?
+    summarize!(conversation, contact)
+    conversation.save!
+  end
+
+  def self.summarize!(conversation, contact)
+    projection = conversation.additional_attributes.fetch(KEY)
+    signature = projection.except('summary').merge('facts' => projection.fetch('facts').except('umi_payment_snapshot_at'))
+    return if projection['summary'] == signature
+
+    write_note!(conversation, contact)
+    projection['summary'] = signature
+    conversation.additional_attributes = conversation.additional_attributes.merge(KEY => projection)
+  end
+
+  def self.invalidate!(contact, binding: contact.additional_attributes['umi_klaviyo_profile_id'], erased: false)
+    contact.conversations.order(:id).each do |conversation|
+      conversation.with_lock do
+        owner = conversation.additional_attributes[KEY]
+        next unless owner && owner['contact_id'] == contact.id && owner['binding'] == binding
+
+        conversation.label_list -= Array(owner['labels'])
+        conversation.additional_attributes = conversation.additional_attributes.except(KEY)
+        conversation.save!
+        next if erased
+
+        conversation.messages.create!(account_id: conversation.account_id, inbox_id: conversation.inbox_id,
+                                      message_type: :outgoing, private: true, sender: nil,
+                                      content: 'Customer identity corrected; the previous customer labels have been removed.',
+                                      content_attributes: { NOTE_MARKER => { 'contact_id' => contact.id } })
+      end
+    end
+  end
+
+  def self.write_note!(conversation, contact)
+    projection = conversation.additional_attributes.fetch(KEY)
+    attributes = projection.fetch('facts')
+    count = attributes['umi_paid_order_count']
+    history = if count.nil?
+                'Payment history unknown.'
+              else
+                "#{attributes['umi_paid_history_complete'] ? '' : 'At least '}#{count} confirmed paid orders; " \
+                  "history #{attributes['umi_paid_history_complete'] ? 'complete' : 'incomplete'}."
+              end
+    roles = Umi::Funnel::Configuration::ROLES.map { |key, label| "#{label}: #{attributes.fetch(key, 'unknown')}" }.join('; ')
+    content = "Customer: #{attributes.fetch('umi_funnel_stage', 'unclassified')}. #{history}\n#{roles}"
+    content += "\nCustomer data is stale; last verified facts retained." if projection['freshness'] == 'stale'
+    conversation.messages.create!(account_id: conversation.account_id, inbox_id: conversation.inbox_id,
+                                  message_type: :outgoing, private: true, sender: nil, content: content,
+                                  content_attributes: { NOTE_MARKER => { 'contact_id' => contact.id } })
+  end
+end

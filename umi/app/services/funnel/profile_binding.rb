@@ -99,6 +99,15 @@ class Umi::Funnel::ProfileBinding
     (email && phone ? email.or(phone) : email || phone).exists?
   end
 
+  def invalidate_previous_customer_context!
+    old_profile = @contact.additional_attributes['umi_klaviyo_profile_id']
+    return unless old_profile.present? && old_profile != @profile_id && Umi::Funnel::Configuration.customer_context_enabled?(@contact.account_id)
+
+    Umi::Funnel::CustomerProjection.invalidate!(@contact, binding: old_profile)
+    @contact.custom_attributes = @contact.custom_attributes.except(*Umi::Funnel::Configuration::CONTACT_FIELDS)
+    @contact.additional_attributes = @contact.additional_attributes.except('umi_klaviyo_sync')
+  end
+
   def bind!(profile)
     raise ArgumentError, 'Contact is redacted' if @contact.additional_attributes['umi_profile_redacted']
     raise ArgumentError, 'Klaviyo identity conflict' unless self.class.matches?(@contact, profile, @profile_id)
@@ -106,6 +115,8 @@ class Umi::Funnel::ProfileBinding
     others = Contact.where(account_id: @contact.account_id).where.not(id: @contact.id)
                     .where("additional_attributes ->> 'umi_klaviyo_profile_id' = ?", @profile_id)
     raise ArgumentError, 'Profile belongs to another contact' if others.exists?
+
+    invalidate_previous_customer_context!
 
     metadata = { 'verified_at' => Time.current.utc.iso8601 }
     metadata.merge!(@actor ? { 'actor_id' => @actor.id, 'reason' => @reason } : { 'source' => 'exact_identifier_match' })

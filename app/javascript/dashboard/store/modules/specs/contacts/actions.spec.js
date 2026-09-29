@@ -174,6 +174,69 @@ describe('#actions', () => {
     });
   });
 
+  describe('protected contact attributes', () => {
+    it.each(['update', 'deleteCustomAttributes'])(
+      '%s preserves the 422 explanation without reporting a duplicate',
+      async action => {
+        const request = action === 'update' ? axios.patch : axios.post;
+        const explanation = 'Customer payment history is managed automatically';
+        request.mockRejectedValue({
+          message: 'Request failed with status code 422',
+          response: { status: 422, data: { error: explanation } },
+        });
+        const error = await actions[action](
+          { commit },
+          {
+            id: 7,
+            customAttributes:
+              action === 'update'
+                ? { umi_paid_order_count: 2 }
+                : ['umi_paid_order_count'],
+          }
+        ).catch(failure => failure);
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toBe(explanation);
+        expect(error).not.toBeInstanceOf(DuplicateContactException);
+        expect(commit).not.toHaveBeenCalledWith(
+          types.EDIT_CONTACT,
+          expect.anything()
+        );
+        if (action === 'update') {
+          expect(commit).toHaveBeenLastCalledWith(types.SET_CONTACT_UI_FLAG, {
+            isUpdating: false,
+          });
+        }
+      }
+    );
+  });
+
+  describe('duplicate contact errors', () => {
+    it.each(['update', 'create'])(
+      '%s preserves duplicate attributes and the server message',
+      async action => {
+        const request = action === 'update' ? axios.patch : axios.post;
+        request.mockRejectedValue({
+          response: {
+            status: 422,
+            data: {
+              message: 'Email has already been taken',
+              attributes: ['email'],
+            },
+          },
+        });
+        const error = await actions[action]({ commit }, contactList[0]).catch(
+          failure => failure
+        );
+
+        expect(error).toBeInstanceOf(DuplicateContactException);
+        expect(error.data).toEqual(['email']);
+        expect(error.message).toBe('Email has already been taken');
+        expect(error.contactErrorDetail).toBe('Email has already been taken');
+      }
+    );
+  });
+
   describe('#create', () => {
     it('sends correct mutations if API is success', async () => {
       axios.post.mockResolvedValue({
