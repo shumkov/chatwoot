@@ -25,6 +25,39 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
 
   before { allow(client).to receive(:profile).with('P1', properties: true).and_return(profile) }
 
+  it 'shows service changes privately without adding labels or repeating hourly timestamps' do
+    conversation
+    properties.merge!('umi_service_recovery_state' => 'hold', 'umi_service_snapshot_at' => 5.minutes.ago.utc.iso8601)
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'service', 'state')).to eq('hold')
+    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: hold (fresh).')
+    expect(contact.custom_attributes.keys.grep(/service/)).to be_empty
+    expect(conversation.reload.label_list.grep(/service/)).to be_empty
+    count = conversation.messages.where(private: true).count
+    properties['umi_service_snapshot_at'] = Time.current.utc.iso8601
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count)
+    properties['umi_service_recovery_state'] = 'clear'
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count + 1)
+    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: clear (fresh).')
+  end
+
+  it 'shows an expired clear service observation as stale and absent service evidence as unknown' do
+    conversation
+    properties.merge!('umi_service_recovery_state' => 'clear', 'umi_service_snapshot_at' => 3.hours.ago.utc.iso8601)
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: clear (stale).')
+    properties.except!('umi_service_recovery_state', 'umi_service_snapshot_at')
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: unknown (unknown).')
+  end
+
   it 'roundtrips yes, false and explicit unset with a confirmed baseline and no echo' do
     sync.perform
     { 'yes' => true, 'no' => false, 'unknown' => nil }.each do |value, remote|

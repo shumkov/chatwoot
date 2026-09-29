@@ -13,7 +13,17 @@ class Umi::Funnel::CustomerProjection
     { 'contact_id' => contact.id, 'binding' => contact.additional_attributes['umi_klaviyo_profile_id'],
       'revision' => contact.additional_attributes.dig('umi_klaviyo_sync', 'revision') || 0, 'labels' => labels,
       'facts' => attributes.slice(*Umi::Funnel::Configuration::CONTACT_FIELDS),
-      'freshness' => contact.additional_attributes.dig('umi_klaviyo_sync', 'status') }
+      'freshness' => contact.additional_attributes.dig('umi_klaviyo_sync', 'status'), 'service' => service_state(contact) }
+  end
+
+  def self.service_state(contact)
+    sync = contact.additional_attributes.fetch('umi_klaviyo_sync', {})
+    service = sync.fetch('service', {})
+    at = Time.iso8601(service.fetch('observed_at').to_s)
+    fresh = sync['error'].blank? && at > 2.hours.ago && at <= Time.current
+    { 'state' => service.fetch('state'), 'freshness' => fresh ? 'fresh' : 'stale' }
+  rescue KeyError, ArgumentError
+    { 'state' => 'unknown', 'freshness' => 'unknown' }
   end
 
   def self.assign(conversation, contact, current_labels: conversation.label_list)
@@ -63,7 +73,7 @@ class Umi::Funnel::CustomerProjection
     end
   end
 
-  def self.write_note!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+  def self.write_note!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/AbcSize
     projection = conversation.additional_attributes.fetch(KEY)
     attributes = projection.fetch('facts')
     count = attributes['umi_paid_order_count']
@@ -75,6 +85,8 @@ class Umi::Funnel::CustomerProjection
               end
     roles = Umi::Funnel::Configuration::ROLES.map { |key, label| "#{label}: #{attributes.fetch(key, 'unknown')}" }.join('; ')
     content = "Customer: #{attributes.fetch('umi_funnel_stage', 'unclassified')}. #{history}\n#{roles}"
+    service = projection.fetch('service', { 'state' => 'unknown', 'freshness' => 'unknown' })
+    content += "\nService reservation: #{service.fetch('state')} (#{service.fetch('freshness')})."
     content += "\nCustomer data is stale; last verified facts retained." if projection['freshness'] == 'stale'
     if contact.additional_attributes.dig('umi_klaviyo_sync', 'error').to_s.start_with?('identity_unresolved')
       content += "\nCustomer identity unresolved; verify email or phone, or link an existing profile."

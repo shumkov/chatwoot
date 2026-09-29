@@ -151,6 +151,7 @@ class Umi::Funnel::CustomerContextSync
       field.delete('submitted')
     end
     metadata = { 'roles' => fields, 'checked_at' => Time.current.utc.iso8601, 'next_sync_at' => INTERVAL.from_now.utc.iso8601, 'error' => nil }
+    metadata['service'] = service_snapshot(properties)
     Umi::Funnel::CustomerMutation.new(@contact, source: 'remote').perform(
       roles: decisions.transform_values { |decision| decision.fetch('value') }, snapshot: paid_snapshot(properties),
       sync: { 'expected' => @expected, 'metadata' => metadata, 'conflicts' => decisions.filter_map do |key, value|
@@ -159,6 +160,18 @@ class Umi::Funnel::CustomerContextSync
     )
   end
   # rubocop:enable Metrics/AbcSize
+
+  def service_snapshot(properties)
+    value = properties['umi_service_recovery_state']
+    return { 'state' => 'unknown' } if value.nil?
+
+    raise Umi::Funnel::KlaviyoClient::Error, 'Invalid service snapshot' unless %w[clear hold unknown].include?(value)
+
+    at = Time.iso8601(properties.fetch('umi_service_snapshot_at').to_s)
+    { 'state' => value, 'observed_at' => at.utc.iso8601 }
+  rescue KeyError, ArgumentError
+    { 'state' => 'unknown' }
+  end
 
   # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
   def paid_snapshot(properties)

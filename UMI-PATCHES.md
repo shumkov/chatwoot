@@ -58,6 +58,9 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 45 | Complete conversation classification context | UMI classifier context/client/review export, topic correction fences, customer role/note integration, private review renderer and focused/race specs | Evaluates all available public history with verified customer facts and exact incoming evidence; keeps human corrections, applies one combined private summary and holds stale, unresolved or unaccepted model decisions. Locks captured messages through the final application boundary. | Native evaluated classification provides equivalent full context, evidence and correction semantics with private operator review. |
 
+| 46 | Service reservation context | UMI customer context sync/projection and focused specs | Imports the verified Shopify service hold and its independent freshness through Klaviyo into the private customer summary, without duplicate notes on timestamp refresh. | Native customer context exposes equivalent service reservation state and observation freshness. |
+
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
