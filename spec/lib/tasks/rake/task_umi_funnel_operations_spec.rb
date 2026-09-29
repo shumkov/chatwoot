@@ -40,4 +40,18 @@ RSpec.describe Rake::Task do
       expect { task.invoke }.to output(satisfy { |output| JSON.parse(output)['paid_occurrences'].zero? }).to_stdout
     end
   end
+
+  it 'prints only deterministic operational aggregates for the requested period and inbox' do
+    conversation
+    task = described_class['umi:funnel:operations']
+    task.reenable
+    with_modified_env ACCOUNT_ID: account.id.to_s, SINCE: '2026-09-01T00:00:00Z', UNTIL: '2026-09-08T00:00:00Z',
+                      AS_OF: '2026-09-09T00:00:00Z', INBOX_ID: conversation.inbox_id.to_s do
+      expect { task.invoke }.to output(satisfy do |output|
+        data = JSON.parse(output)
+        data['coverage']['inbox_ids'] == [conversation.inbox_id] && data['as_of'] == '2026-09-09T00:00:00.000000Z' &&
+          output.exclude?(conversation.contact.name)
+      end).to_stdout
+    end
+  end
 end

@@ -47,6 +47,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 39 | Customer context and managed labels | `config/initializers/zz_umi_customer_context.rb`; `umi/app/{controllers,jobs,models,services}/funnel/customer_*`; funnel configuration, privacy and profile binding; native custom-attribute editors and contact-store error handling; focused customer context specs | Account-scoped, default-disabled local customer facts, transactional role intent, eight customer labels and private notes; protects managed writes and customer-facing payloads, preserves lifecycle/merge/erasure ownership. `UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS` enables only accounts whose schema and replacement writers have been verified. Provisioning is additive; legacy cleanup and network sync are separate operations. | Upstream supports the same customer state, transactional projection and customer-origin protection contract. |
 
+| 40 | Human response and assessment reporting | `umi/app/services/funnel/operational_report.rb`, `lib/tasks/umi_funnel.rake`, focused operational report and rake specs | Aggregate first/subsequent human response intervals, unanswered waits, business-hours SLA and 24-hour assessment coverage. Excludes private/bot responses, distinguishes uncertain assessments from unevaluated cases, and reports missing schedule/history coverage. Read-only JSON for the weekly report; no public replies or timer service. | Upstream reports equivalent human-response cohorts, uncertainty queues and explicit schedule/history coverage. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
