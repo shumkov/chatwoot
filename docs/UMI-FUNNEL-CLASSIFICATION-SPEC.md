@@ -10,6 +10,8 @@ and quality checks below are completed.
 
 The consolidated [CRM data contract](UMI-CRM-DATA-CONTRACT.md) now specifies the proposed stage-one field types, topic allowlist extension, correction behavior, customer visibility, synchronization and notes. It is not an implementation receipt. The complete [stage-one plan](UMI-FUNNEL-STAGE-ONE-SPEC.md) supersedes the old bounded-message context below: review and production must share full available current-conversation text with explicit oversized-input uncertainty, while retaining fresh-evidence requirements for conversion events.
 
+30 September scope amendment: the [approved channel scope](#approved-channel-scope--30-september-2026) below supersedes the initial inbox-2-only rollout. Expanded activation remains pending QA and deployment; earlier compatibility and review receipts retain their historical meaning.
+
 ## Purpose and authority
 
 Classify incoming sales conversations so the operator does not have to evaluate
@@ -90,9 +92,43 @@ The Shumabit private worker, its credentials and session mappings are unchanged.
 
 ## Input and structured result
 
-Start with configured account 1 / FB–IG inbox 2. Both Messenger and Instagram
-can be classified; existing destination rules continue to exclude Instagram
-Meta exports. Do not automatically widen to other inboxes.
+### Approved channel scope — 30 September 2026
+
+The user approved extending automatic classification in account 1 beyond the
+initial FB/Instagram pilot to these existing customer channels:
+
+| Inbox ID | Channel | Classification scope |
+|---|---|---|
+| 1 | Website | Included |
+| 2 | Facebook / Instagram | Included; original pilot |
+| 3 | WhatsApp Legacy | Included |
+| 6 | WhatsApp | Included |
+| 7 | LINE | Included |
+| 8 | Email | Included |
+| 5 | Voice | Excluded |
+| 9 | Test inbox | Excluded |
+
+This is an approved configuration change, **pending channel-representation QA,
+deployment and runtime readback**. It is not an activation receipt. Retain
+release19, `gpt-6-sol`, provider-default reasoning, the accepted configuration
+digest `172465d8b3d471802719e86548f0eba2045e39a2094cf3d494881f980ce77aac`,
+and the existing automatic-activation boundary `2026-09-30T08:16:26Z`.
+Do not move that boundary or replay historical conversations when widening the
+inbox allowlist. Other inboxes remain excluded unless separately approved.
+
+Before activation, check representative full-history inputs as the current
+classifier actually receives them. In particular, cover Email content-only
+extraction, missing subject context and retained quoted HTML; cover LINE
+stickers represented as Markdown image URLs without an attachment record.
+Do not assume email subjects or typed sticker attachments are available.
+These representation checks supplement the accepted quality packet without
+changing model, prompt, extraction or evidence rules in this scope amendment.
+
+Automatic changes remain internal status/topics/allowed roles with private
+operator notes; there are no public replies. This extension changes neither
+historical-backfill scope nor Meta export eligibility, channel mappings,
+permissions or optimization claims. Existing destination gates remain separate
+from classification, including for WhatsApp and Instagram.
 
 Use durable `message_received` occurrences with live provenance, known source
 time, and no redaction. Private notes, outgoing messages, recovered/imported

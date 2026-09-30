@@ -20,7 +20,35 @@ origin: UMI-CRM-DATA-CONTRACT.md
 
 **Средства:** существующие UMI overlay/jobs/clients в Chatwoot, native Shopify/Klaviyo integration, существующий hourly lifecycle job и scheduler Shumabit. Нового сервиса, UI, мобильного форка, permission framework или агентской сессии на каждый диалог нет.
 
-**Готовность на 30 сентября:** customer fields/labels/sync, полный контекст классификатора, подтверждение оплаты в чате, service hold, отчёт и структурная очистка реализованы и прошли локальные проверки и независимые ревью. Новый релиз ещё не развернут; миграция, provider readback, проверка 40 примеров с подтверждением пользователя и включение auto остаются открытыми. Этот документ сам по себе не является production acceptance. Не объявляем всю оптимизацию Meta готовой, пока не пройдены канальные проверки ниже.
+**Historical planning snapshot, before release19 (retained for provenance):** customer fields/labels/sync, полный контекст классификатора, подтверждение оплаты в чате, service hold, отчёт и структурная очистка реализованы и прошли локальные проверки и независимые ревью. Новый релиз ещё не развернут; миграция, provider readback, проверка 40 примеров с подтверждением пользователя и включение auto остаются открытыми. Этот документ сам по себе не является production acceptance. Не объявляем всю оптимизацию Meta готовой, пока не пройдены канальные проверки ниже.
+
+**Current status:** release19 is deployed; the 40-example quality packet and
+pilot auto classification are accepted. The expanded customer-channel scope below
+still requires its own QA, configuration deployment and runtime readback. Meta
+channel/event/optimization gates remain separate and open where unverified.
+Current production receipts are maintained in the
+[infra stage-one readiness record](https://github.com/shumkov/umi-vps-infra/blob/main/docs/UMI-FUNNEL-STAGE-ONE-READINESS.md).
+
+## Approved classifier channel scope — 30 September 2026
+
+The user approved stage-one automatic classification for account 1 inboxes
+**1 (Website), 2 (Facebook/Instagram), 3 (WhatsApp Legacy), 6 (WhatsApp),
+7 (LINE), and 8 (Email)**. Voice inbox 5 and test inbox 9 remain excluded.
+This supersedes the initial inbox-2-only scope and the deferral of these named
+customer channels to stage two. **Expanded activation is pending representative
+channel QA, configuration deployment and runtime readback.** Approval of the
+scope is not proof that it is already active.
+
+Keep release19, `gpt-6-sol` with provider-default reasoning, accepted configuration
+digest `172465d8b3d471802719e86548f0eba2045e39a2094cf3d494881f980ce77aac`,
+and auto boundary `2026-09-30T08:16:26Z` unchanged. The
+[classification scope and QA contract](UMI-FUNNEL-CLASSIFICATION-SPEC.md#approved-channel-scope--30-september-2026)
+covers actual full-history channel representations, including Email content-only
+extraction/subject and quoted-HTML limitations, and LINE sticker Markdown image
+URLs without attachment records. No historical backfill, public AI reply, Meta
+channel expansion or new optimization claim is authorized by this change.
+Historical pilot, model-quality and provider receipts remain unchanged; the
+FB/Instagram advertising pilot remains a separate reporting/attribution scope.
 
 ## Сквозная цель и порядок проверки
 
@@ -56,7 +84,7 @@ origin: UMI-CRM-DATA-CONTRACT.md
 
 ### Автоматизация и коммерческие факты
 
-- **R5.** AI оценивает новые eligible сообщения в inbox 2 (FB/Instagram), показывает готовую оценку на проверке, затем самостоятельно применяет status/topics/допустимые роли. Пользователь отмечает только ошибки и причины. Клиентам AI не пишет. Текущий Sol сохраняется; смена на Sonnet — этап 2.
+- **R5.** AI оценивает новые eligible сообщения в согласованных inbox 1,2,3,6,7,8 (Website, FB/Instagram, WhatsApp Legacy, WhatsApp, LINE, Email) после проверки представления сообщений каждого канала, показывает готовую оценку на проверке, затем самостоятельно применяет status/topics/допустимые роли. Пользователь отмечает только ошибки и причины. Клиентам AI не пишет. Текущий Sol сохраняется; смена на Sonnet — этап 2.
 - **R6.** Shopify владеет фактом оплаты и возврата. Draft, authorization, неоплаченный pickup/TBYB не дают покупку. Связывание клиента не означает атрибуцию всех его заказов конкретному диалогу. Один order не считается дважды через несколько каналов.
 - **R7.** Klaviyo владеет поведением на сайте и аудиториями, Chatwoot — смыслом беседы. Четыре role properties синхронизируются в обе стороны; стадии/темы диалога не зеркалируются в единственный профильный intent. Согласия на маркетинг не меняются.
 - **R8.** Примерка/pickup учитываются как обслуживание, отдельно от оплаты. Первый этап даёт достоверное обнаружение и исключения из обычного cart recovery; не включает новые рекламные рассылки. Attendance/no-show не выдумываем из отмены или прошедшей даты.
@@ -186,7 +214,7 @@ Paid client: ровно 1 подтверждённая покупка и пол�
 
 Свежие post-activation входящие доказательства обязательны для нового qualification. Старые/восстановленные сообщения, private notes, новое «привет» после старого отклонённого запроса не оживляют конверсию. Темы накапливаются; снятая оператором тема не возвращается на старом доказательстве. order_placed/purchased — только Shopify. Qualified не сбрасывается AI из-за последующей поддержки/тишины.
 
-Review packet содержит 40 существующих примеров с сохранёнными correction IDs/комментариями. Пересчитываем предложения с новым контекстом; оператор видит готовое решение и указывает только ошибки. Добавляем случаи mentions/друзей бренда, influencer/wholesale, повторного покупателя, возврата, языковой неоднозначности, частичной истории. Жёсткие отрицательные примеры не должны получить ложную квалификацию. Незавершённое/оспоренное решение не принимается по молчанию. После поправок prompt/context повторно получаем исходные предложения модели для всего набора; решения, вручную исправленные оператором, являются ожидаемыми ответами, а не доказательством качества модели. Сохраняем ошибки и расхождения повторного прогона, модель/prompt/schema/context/provider configuration version и явное принятие результата. Не требуем заявлять неизвестный effective effort: provider_default остаётся provider_default. Изменение этих входов требует новой проверки перед auto. После явного подтверждения результата — auto на inbox 2. Архив не размечается и не экспортируется.
+Review packet содержит 40 существующих примеров с сохранёнными correction IDs/комментариями. Пересчитываем предложения с новым контекстом; оператор видит готовое решение и указывает только ошибки. Добавляем случаи mentions/друзей бренда, influencer/wholesale, повторного покупателя, возврата, языковой неоднозначности, частичной истории. Жёсткие отрицательные примеры не должны получить ложную квалификацию. Незавершённое/оспоренное решение не принимается по молчанию. После поправок prompt/context повторно получаем исходные предложения модели для всего набора; решения, вручную исправленные оператором, являются ожидаемыми ответами, а не доказательством качества модели. Сохраняем ошибки и расхождения повторного прогона, модель/prompt/schema/context/provider configuration version и явное принятие результата. Не требуем заявлять неизвестный effective effort: provider_default остаётся provider_default. Изменение этих входов требует новой проверки перед auto. После явного подтверждения результата — auto на согласованном allowlist inbox 1,2,3,6,7,8, с channel QA и deployment/readback по дополнению от 30 сентября. Inbox 5 и 9 исключены. Архив не размечается и не экспортируется.
 
 ### Рекламная атрибуция
 
@@ -376,7 +404,7 @@ Website row имеет явного owner: установить, что реал
 
 ### U15 — integration delivery and activation
 
-**Covers R1–R10. Depends:** U8–U14. **Build:** signed release+reviewed infra deployment, precise migration/readback, mobile/web/operator checks, correction-only quality acceptance then auto inbox2, provider receipts and report readiness. Existing Shumabit private-note summarize/follow-up regression remains private. No unrelated service restart or model migration.
+**Covers R1–R10. Depends:** U8–U14. **Build:** signed release+reviewed infra deployment, precise migration/readback, mobile/web/operator checks, correction-only quality acceptance plus channel-representation QA, then auto for approved inboxes 1,2,3,6,7,8 with deployment/readback, provider receipts and report readiness. Existing Shumabit private-note summarize/follow-up regression remains private. No unrelated service restart or model migration.
 
 **Tests:** synthetic integration scenario covers new ad DM→matched existing VIP→correct labels/note→qualified→linked order→paid→Klaviyo/eligible Meta once→Friday facts. Production acceptance may compose separately identified genuine receipts for those edges; it does not wait for one customer who happens to satisfy the whole scenario. Every receipt states the exact edge it proves; synthetic success never replaces provider eligibility/identity acceptance. Separate support-only Repeat path produces no new sale. Natural old-unresolved routing versus all-resolved new conversation, including pending/snoozed. Paid/refund acceptance uses genuine business facts, no artificial customer purchase.
 
@@ -401,7 +429,7 @@ No full-stage completion while a required receipt is missing. Distinguish **CRM 
 
 ## 11. Non-goals, unresolved inputs and review
 
-Stage2: bulk historical AI classification, Sonnet/model migration, customer-facing Shumabit, Chatwoot-side order creation, broad influencer outreach, additional AI channels, opportunity engine. Source ad spend/ROAS and reliable no-show/attendance measurement are separate follow-ups, not invented metrics. Response-time/SLA measurement is in stage1; automatic marketing-flow activation and autonomous public comment replies are not included; ad-comment coverage/ownership verification is part of stage-one operational acceptance. The native mobile Reel translation bug stays a separately diagnosed upstream issue, not an excuse for a mobile fork.
+Stage2: bulk historical AI classification, Sonnet/model migration, customer-facing Shumabit, Chatwoot-side order creation, broad influencer outreach, AI channels outside the explicitly approved stage-one allowlist, opportunity engine. Source ad spend/ROAS and reliable no-show/attendance measurement are separate follow-ups, not invented metrics. Response-time/SLA measurement is in stage1; automatic marketing-flow activation and autonomous public comment replies are not included; ad-comment coverage/ownership verification is part of stage-one operational acceptance. The native mobile Reel translation bug stays a separately diagnosed upstream issue, not an excuse for a mobile fork.
 
 Report destination is settled: UMI group → Orders topic. No remaining user input for schedule or destination; verify current transport IDs before delivery. Default time/horizon are stated, editable routine settings. VIP/manual policy and cleanup authorization are settled. Unknown profile identities are handled as explicit per-record exceptions, not guesses and not a block on other records.
 
