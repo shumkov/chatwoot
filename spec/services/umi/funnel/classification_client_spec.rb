@@ -10,10 +10,15 @@ RSpec.describe Umi::Funnel::ClassificationClient do
     end
   end
 
-  it 'uses the existing proxy with a strict schema, no tools, a bounded response and no global config mutation' do
+  it 'avoids the OpenAI uniqueItems schema rejection while retaining strict output and bounded requests' do
     original_key = RubyLLM.config.openai_api_key
     request = stub_request(:post, 'https://proxy.example.test/v1/chat/completions').with do |http|
       body = JSON.parse(http.body)
+      %w[topics roles].each do |field|
+        evidence = body.dig('response_format', 'json_schema', 'schema', 'properties', field, 'items', 'properties', 'evidence_message_ids')
+        expect(evidence).to include('type' => 'array', 'minItems' => 1)
+        expect(evidence).not_to have_key('uniqueItems')
+      end
       body['model'] == 'gpt-6-sol' && body['max_completion_tokens'] == 2048 && !body.key?('tools') &&
         body.dig('response_format', 'json_schema', 'strict') == true && body['messages'].last['content'].include?('Hello')
     end.to_return(status: 200, headers: { 'Content-Type' => 'application/json' }, body: {
@@ -26,6 +31,21 @@ RSpec.describe Umi::Funnel::ClassificationClient do
     expect(described_class.new.classify(messages: [{ id: 1, text: 'Hello' }])).to include('status' => 'engaged')
     expect(request).to have_been_requested.once
     expect(RubyLLM.config.openai_api_key).to eq(original_key)
+  end
+
+  %w[status topics roles].each do |field|
+    it "rejects duplicate #{field} evidence locally even though the provider cannot enforce uniqueness" do
+      decision = { 'status' => 'engaged', 'topics' => [], 'roles' => [], 'reason' => 'Greeting', 'evidence_message_ids' => [1] }
+      if field == 'status'
+        decision['evidence_message_ids'] = [1, 1]
+      else
+        key, value = field == 'topics' ? %w[label intent-product-details] : %w[role umi_influencer]
+        decision[field] = [{ key => value, 'evidence_message_ids' => [1, 1] }]
+      end
+
+      expect { described_class.validate!(decision, incoming_ids: [1], fresh_evidence_ids: [1]) }
+        .to raise_error(described_class::InvalidDecision)
+    end
   end
 
   it 'does not retry a timed-out inference' do

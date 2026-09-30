@@ -8,7 +8,7 @@ class Umi::Funnel::ClassificationClient
               support-order-tracking support-exchange support-refund support-complaint support-after-sales support-special-request].freeze
   VERSION = '2'
   ROLES = %w[umi_influencer umi_wholesale].freeze
-  EVIDENCE = { type: 'array', items: { type: 'integer' }, minItems: 1, uniqueItems: true }.freeze
+  EVIDENCE = { type: 'array', items: { type: 'integer' }, minItems: 1 }.freeze
   SCHEMA = {
     name: 'umi_conversation_classification', strict: true,
     schema: { type: 'object', additionalProperties: false,
