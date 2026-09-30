@@ -179,8 +179,8 @@ class Umi::Funnel::CustomerContextSync
     return { 'status' => 'stale' } unless at > 2.hours.ago && at <= Time.current
 
     lifecycle = properties.fetch('umi_buyer_lifecycle')
-    count = properties.fetch('umi_paid_order_count')
     complete = properties.fetch('umi_paid_history_complete')
+    count = lifecycle == 'unclassified' && complete == false ? properties['umi_paid_order_count'] : properties.fetch('umi_paid_order_count')
     valid = %w[non_buyer client repeat unclassified].include?(lifecycle) && [true, false].include?(complete) &&
             (count.nil? || (count.is_a?(Integer) && count >= 0))
     raise Umi::Funnel::KlaviyoClient::Error, 'Invalid paid snapshot' unless valid

@@ -418,3 +418,33 @@ The 29 September deepening received six fresh native reviews and three separate 
 - Theme try-on worktree: assets/tbyb.js and docs/TRY_BEFORE_BUY_ADMIN_SETUP.md; active storefront entry_source in assets/assistance.js. Shumabit: tools/scheduler/jobs.yaml/lib/cron.js, Chatwoot engine route and deterministic report tasks.
 - [Shopify fulfillment-order access and asynchronous routing](https://shopify.dev/docs/api/admin-graphql/latest/objects/FulfillmentOrder), [delivery method types](https://shopify.dev/docs/api/admin-graphql/latest/enums/DeliveryMethodType), [pickup workflow](https://help.shopify.com/en/manual/fulfillment/setup/delivery-methods/pickup-in-store).
 - [Klaviyo Shopify event semantics](https://help.klaviyo.com/hc/en-us/articles/115005080447), [flow filters](https://help.klaviyo.com/hc/en-us/articles/115002779411), [draft recovery exclusions](https://help.klaviyo.com/hc/en-us/articles/12278373016603), [explicit property unset](https://www.klaviyo.com/blog/solution-recipe-25-append-unappend-and-unset-custom-properties-programmatically-with-klaviyo).
+
+### Production acceptance correction — nullable payment count (30 September)
+
+The first full profile refresh found 13 exact-linked profiles whose current
+Klaviyo properties were `umi_buyer_lifecycle=unclassified`,
+`umi_paid_history_complete=false`, a fresh payment timestamp, and no
+`umi_paid_order_count` key. The lifecycle sender deliberately writes null when
+Shopify identity/payment history cannot establish a count. Klaviyo clears a
+property set to null ([Update Profile](https://developers.klaviyo.com/en/reference/update_profile));
+Chatwoot's required-key read instead treats this valid unknown-history snapshot
+as stale. That can retain a previous buyer projection incorrectly.
+
+Normalize an omitted count to unknown only when the explicitly present lifecycle
+is `unclassified` and history-complete is false. Keep count unknown, never zero.
+All other missing required fields, missing counts for buyer/non-buyer snapshots,
+and expired timestamps retain the existing stale behavior. Apply the fresh
+unknown snapshot through the existing mutation/projection path so old Client or
+Repeat labels clear and the operator receives the ordinary private summary.
+Do not alter role resolution, identities, consent, events or provider properties.
+An alternative numeric sentinel or new status field is rejected: it changes the
+shared data contract unnecessarily. Defaulting every absent count to zero or nil
+is rejected because it would accept malformed buyer evidence.
+
+Verification: reproduce the exact provider shape in the sync spec, starting
+with a previously confirmed buyer projection; observe failure before the fix,
+then verify unclassified/unknown count and removal of the old buyer label after
+it. Cover malformed missing-count buyer data, explicit nil and a stale timestamp.
+Run the related sync/projection tests and independent reviews, then release
+through the existing immutable-image infra procedure. Re-read the affected
+production profiles after their normal refresh without changing provider facts.

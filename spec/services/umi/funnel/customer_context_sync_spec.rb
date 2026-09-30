@@ -25,6 +25,46 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
 
   before { allow(client).to receive(:profile).with('P1', properties: true).and_return(profile) }
 
+  %w[client repeat].product([false, true]).each do |previous_stage, count_present|
+    it "clears a previous #{previous_stage} when Klaviyo returns unknown history with #{count_present ? 'null' : 'omitted'} count" do
+      properties.merge!('umi_buyer_lifecycle' => previous_stage, 'umi_paid_order_count' => previous_stage == 'repeat' ? 2 : 1)
+      conversation
+      sync.perform
+      Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+      expect(conversation.reload.label_list).to include(previous_stage)
+
+      properties.merge!('umi_buyer_lifecycle' => 'unclassified', 'umi_paid_history_complete' => false)
+      count_present ? properties['umi_paid_order_count'] = nil : properties.delete('umi_paid_order_count')
+      sync.perform
+      Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+
+      expect(contact.reload.custom_attributes).to include('umi_funnel_stage' => 'unclassified', 'umi_paid_order_count' => nil,
+                                                          'umi_paid_history_complete' => false)
+      expect(contact.additional_attributes.dig('umi_klaviyo_sync', 'status')).to eq('fresh')
+      expect(conversation.reload.label_list & %w[client repeat]).to be_empty
+      expect(conversation.messages.where(private: true).last.content).to include('Customer: unclassified.', 'Payment history unknown.')
+    end
+  end
+
+  %w[client repeat non_buyer].each do |stage|
+    it "keeps a #{stage} snapshot with an omitted count stale" do
+      properties['umi_buyer_lifecycle'] = stage
+      properties.delete('umi_paid_order_count')
+      sync.perform
+      expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'status')).to eq('stale')
+      expect(contact.custom_attributes['umi_funnel_stage']).to be_nil
+    end
+  end
+
+  it 'does not accept an omitted unknown count from an expired payment snapshot' do
+    properties.merge!('umi_buyer_lifecycle' => 'unclassified', 'umi_paid_history_complete' => false,
+                      'umi_payment_snapshot_at' => 3.hours.ago.utc.iso8601)
+    properties.delete('umi_paid_order_count')
+    sync.perform
+    expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'status')).to eq('stale')
+    expect(contact.custom_attributes['umi_funnel_stage']).to be_nil
+  end
+
   it 'shows service changes privately without adding labels or repeating hourly timestamps' do
     conversation
     properties.merge!('umi_service_recovery_state' => 'hold', 'umi_service_snapshot_at' => 5.minutes.ago.utc.iso8601)
