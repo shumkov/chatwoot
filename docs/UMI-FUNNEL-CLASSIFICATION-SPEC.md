@@ -10,7 +10,7 @@ and quality checks below are completed.
 
 The consolidated [CRM data contract](UMI-CRM-DATA-CONTRACT.md) now specifies the proposed stage-one field types, topic allowlist extension, correction behavior, customer visibility, synchronization and notes. It is not an implementation receipt. The complete [stage-one plan](UMI-FUNNEL-STAGE-ONE-SPEC.md) supersedes the old bounded-message context below: review and production must share full available current-conversation text with explicit oversized-input uncertainty, while retaining fresh-evidence requirements for conversion events.
 
-30 September scope amendment: the [approved channel scope](#approved-channel-scope--30-september-2026) below supersedes the initial inbox-2-only rollout. Expanded activation remains pending QA and deployment; earlier compatibility and review receipts retain their historical meaning.
+30 September scope amendment: the [approved channel scope](#approved-channel-scope--30-september-2026) below supersedes the initial inbox-2-only rollout. Activation requires channel QA, deployment and runtime readback; current delivery status is recorded in the [infra readiness record](https://github.com/shumkov/umi-vps-infra/blob/main/docs/UMI-FUNNEL-STAGE-ONE-READINESS.md). Earlier compatibility and review receipts retain their historical meaning.
 
 ## Purpose and authority
 
@@ -108,8 +108,9 @@ initial FB/Instagram pilot to these existing customer channels:
 | 5 | Voice | Excluded |
 | 9 | Test inbox | Excluded |
 
-This is an approved configuration change, **pending channel-representation QA,
-deployment and runtime readback**. It is not an activation receipt. Retain
+This is an approved configuration change. **Activation requires channel-representation
+QA, deployment and runtime readback**; current delivery status belongs in the linked
+infra readiness record. This specification is not an activation receipt. Retain
 release19, `gpt-6-sol`, provider-default reasoning, the accepted configuration
 digest `172465d8b3d471802719e86548f0eba2045e39a2094cf3d494881f980ce77aac`,
 and the existing automatic-activation boundary `2026-09-30T08:16:26Z`.

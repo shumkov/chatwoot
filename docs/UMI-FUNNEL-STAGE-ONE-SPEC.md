@@ -23,8 +23,8 @@ origin: UMI-CRM-DATA-CONTRACT.md
 **Historical planning snapshot, before release19 (retained for provenance):** customer fields/labels/sync, полный контекст классификатора, подтверждение оплаты в чате, service hold, отчёт и структурная очистка реализованы и прошли локальные проверки и независимые ревью. Новый релиз ещё не развернут; миграция, provider readback, проверка 40 примеров с подтверждением пользователя и включение auto остаются открытыми. Этот документ сам по себе не является production acceptance. Не объявляем всю оптимизацию Meta готовой, пока не пройдены канальные проверки ниже.
 
 **Current status:** release19 is deployed; the 40-example quality packet and
-pilot auto classification are accepted. The expanded customer-channel scope below
-still requires its own QA, configuration deployment and runtime readback. Meta
+pilot auto classification are accepted. Activation of the expanded customer-channel
+scope requires channel QA, configuration deployment and runtime readback. Meta
 channel/event/optimization gates remain separate and open where unverified.
 Current production receipts are maintained in the
 [infra stage-one readiness record](https://github.com/shumkov/umi-vps-infra/blob/main/docs/UMI-FUNNEL-STAGE-ONE-READINESS.md).
@@ -35,9 +35,9 @@ The user approved stage-one automatic classification for account 1 inboxes
 **1 (Website), 2 (Facebook/Instagram), 3 (WhatsApp Legacy), 6 (WhatsApp),
 7 (LINE), and 8 (Email)**. Voice inbox 5 and test inbox 9 remain excluded.
 This supersedes the initial inbox-2-only scope and the deferral of these named
-customer channels to stage two. **Expanded activation is pending representative
-channel QA, configuration deployment and runtime readback.** Approval of the
-scope is not proof that it is already active.
+customer channels to stage two. **Activation requires representative channel QA,
+configuration deployment and runtime readback.** Current delivery status is recorded
+in the linked infra readiness record; scope approval alone is not an activation receipt.
 
 Keep release19, `gpt-6-sol` with provider-default reasoning, accepted configuration
 digest `172465d8b3d471802719e86548f0eba2045e39a2094cf3d494881f980ce77aac`,
