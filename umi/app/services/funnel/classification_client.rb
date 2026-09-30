@@ -6,7 +6,7 @@ class Umi::Funnel::ClassificationClient
   STATUSES = %w[engaged qualified not_sales uncertain].freeze
   TOPICS = %w[intent-size-advice intent-color-advice intent-product-details intent-ready-to-order
               support-order-tracking support-exchange support-refund support-complaint support-after-sales support-special-request].freeze
-  VERSION = '3'
+  VERSION = '4'
   ROLES = %w[umi_influencer umi_wholesale].freeze
   EVIDENCE = { type: 'array', items: { type: 'integer' }, minItems: 1 }.freeze
   SCHEMA = {
@@ -30,6 +30,9 @@ class Umi::Funnel::ClassificationClient
     colour, material, styling or delivery showing purchase consideration. Message count is not a qualification rule.
     Greetings, price-only questions and a phone number alone are engagement, not qualification. Support-only,
     recruitment and collaboration are not_sales. Never infer intent from appearance, identity or presumed wealth.
+    Basic shopping enquiries about price, stock, location, delivery time or policy and staff answers alone remain engaged.
+    Qualification needs a concrete buying step or customer participation in substantive consultation beyond that basic fact.
+    Customer questions about product/stock availability support intent-product-details even when engaged; that topic alone never qualifies.
     A qualified buyer's later support request does not cancel prior qualification. Never infer orders, payment,
     customer identity, consent or marketing eligibility. Cite only supplied incoming message IDs supporting the decision.
     For qualification, cite ONLY qualifying incoming evidence from fresh_evidence_ids: old rejected or pre-activation buying
@@ -45,7 +48,8 @@ class Umi::Funnel::ClassificationClient
     Every proposed topic and role needs its own nonempty list of supporting incoming IDs. Respect per-topic removal fences.
     Supplied recovered messages are context only; do not cite them as evidence. Unseen attachments are not understood.
     Topics are independent and may overlap. Use only allowed topic labels. If text is insufficient, an attachment is
-    essential, return uncertain. Explain briefly without copying personal data.
+    essential, return uncertain. Automatic story-mention notices are not authored customer text: if all incoming content
+    consists of these notices with unseen attachments, return uncertain. Explain briefly without copying personal data.
   TEXT
 
   class InvalidDecision < StandardError; end

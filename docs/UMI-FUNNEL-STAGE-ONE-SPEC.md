@@ -472,3 +472,19 @@ and 30 to retain non-sales collaboration plus its supported complaint. Review
 all evidence semantics and hard negatives, preserve every original artifact,
 and obtain explicit operator quality acceptance before automatic application.
 This is a clarification of agreed semantics, not a new campaign or sending scope.
+
+The version-3 rerun fixed all three earlier defects, with independently checked
+evidence. It exposed two further review corrections: automatic story-only notices
+in sample 11 must remain uncertain, and availability enquiries in sample 12 need
+the product-details topic. Sample 37's basic delivery question is a qualification
+threshold ambiguity; the operator was asked, and engaged is the provisional
+conservative interpretation, not recorded operator acceptance.
+
+Version 4 clarifies basic shopping enquiries versus substantive consultation,
+product-availability topics, and wholly automatic story/attachment histories.
+Two independent domain reviews narrowed the wording to preserve collaboration
+precedence, authored replies, mixed histories and real fit consultation. Private
+evaluation is RED on 11/12/37 under version 3. Verify the complete unchanged
+40-context set with version 4, retaining the earlier evidence/complaint gates
+and genuine buying cases. No automatic application follows without explicit
+quality acceptance; this does not add message-count qualification heuristics.
