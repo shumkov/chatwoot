@@ -477,8 +477,9 @@ The version-3 rerun fixed all three earlier defects, with independently checked
 evidence. It exposed two further review corrections: automatic story-only notices
 in sample 11 must remain uncertain, and availability enquiries in sample 12 need
 the product-details topic. Sample 37's basic delivery question is a qualification
-threshold ambiguity; the operator was asked, and engaged is the provisional
-conservative interpretation, not recorded operator acceptance.
+threshold ambiguity; the operator subsequently delegated clarification and
+accepted our engaged interpretation for a basic delivery enquiry. This is not
+acceptance of the complete quality packet or automatic activation.
 
 Version 4 clarifies basic shopping enquiries versus substantive consultation,
 product-availability topics, and wholly automatic story/attachment histories.
@@ -488,3 +489,15 @@ evaluation is RED on 11/12/37 under version 3. Verify the complete unchanged
 40-context set with version 4, retaining the earlier evidence/complaint gates
 and genuine buying cases. No automatic application follows without explicit
 quality acceptance; this does not add message-count qualification heuristics.
+
+Version 4 passed the earlier targeted corrections but incorrectly downgraded
+sample 36, where the customer evaluates an offered size against their own fit
+needs and then asks about that alternative. The run stopped and its original
+result remains preserved. Version 5 makes the positive consultation boundary
+explicit: responding to relevant advice while evaluating a specific item or
+alternative against fit or usage needs qualifies without an order commitment.
+Remaining undecided does not erase that consultation; stating a desired size
+or colour only for a stock check remains engaged. Two independent reviewers
+confirmed the distinction against the complete examples 36 and 37. Verify a
+new immutable full-context run against all existing gates, reviewing connected
+evidence rather than treating a size statement alone as qualification.

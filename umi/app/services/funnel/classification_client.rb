@@ -6,7 +6,7 @@ class Umi::Funnel::ClassificationClient
   STATUSES = %w[engaged qualified not_sales uncertain].freeze
   TOPICS = %w[intent-size-advice intent-color-advice intent-product-details intent-ready-to-order
               support-order-tracking support-exchange support-refund support-complaint support-after-sales support-special-request].freeze
-  VERSION = '4'
+  VERSION = '5'
   ROLES = %w[umi_influencer umi_wholesale].freeze
   EVIDENCE = { type: 'array', items: { type: 'integer' }, minItems: 1 }.freeze
   SCHEMA = {
@@ -32,6 +32,9 @@ class Umi::Funnel::ClassificationClient
     recruitment and collaboration are not_sales. Never infer intent from appearance, identity or presumed wealth.
     Basic shopping enquiries about price, stock, location, delivery time or policy and staff answers alone remain engaged.
     Qualification needs a concrete buying step or customer participation in substantive consultation beyond that basic fact.
+    Substantive consultation includes a customer evaluating a specific item or proposed alternative against their own fit
+    or usage needs and responding to relevant advice. An order commitment is not required, and remaining undecided does
+    not undo that consultation. Merely stating a desired size or colour for a stock check remains a basic enquiry.
     Customer questions about product/stock availability support intent-product-details even when engaged; that topic alone never qualifies.
     A qualified buyer's later support request does not cancel prior qualification. Never infer orders, payment,
     customer identity, consent or marketing eligibility. Cite only supplied incoming message IDs supporting the decision.
