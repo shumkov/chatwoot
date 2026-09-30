@@ -448,3 +448,27 @@ it. Cover malformed missing-count buyer data, explicit nil and a stale timestamp
 Run the related sync/projection tests and independent reviews, then release
 through the existing immutable-image infra procedure. Re-read the affected
 production profiles after their normal refresh without changing provider facts.
+
+### Quality correction — qualification evidence and historical topics (30 September)
+
+The first complete full-context run returned 40 valid proposals. Independent
+blind review found no hard-negative false qualifications, but samples 16 and 22
+included later support-only messages in qualification evidence. That violates
+the existing evidence-only rule and can move the qualification time/referral
+cutoff. Sample 30 omitted a supported historical wrong-shipment complaint.
+
+The reviewed minimal correction clarifies the prompt: use a small sufficient set
+of fresh buying evidence, exclude support-only follow-up from status evidence,
+and evaluate topics across the full conversation while respecting removals.
+Pre-purchase delivery/care/returns consultation may still qualify. No additional
+model stage or heuristic semantic validator is introduced. Policy/prompt version
+3 binds a fresh configuration digest. Two independent reviews accepted this
+approach after narrowing the wording to after-sales-only exclusions.
+
+A private regression evaluation fails on the original proposals for all three
+observed defects. Re-run the complete 40 over identical frozen contexts; require
+16/22 to retain genuine qualification without the identified support-only IDs,
+and 30 to retain non-sales collaboration plus its supported complaint. Review
+all evidence semantics and hard negatives, preserve every original artifact,
+and obtain explicit operator quality acceptance before automatic application.
+This is a clarification of agreed semantics, not a new campaign or sending scope.

@@ -6,7 +6,7 @@ class Umi::Funnel::ClassificationClient
   STATUSES = %w[engaged qualified not_sales uncertain].freeze
   TOPICS = %w[intent-size-advice intent-color-advice intent-product-details intent-ready-to-order
               support-order-tracking support-exchange support-refund support-complaint support-after-sales support-special-request].freeze
-  VERSION = '2'
+  VERSION = '3'
   ROLES = %w[umi_influencer umi_wholesale].freeze
   EVIDENCE = { type: 'array', items: { type: 'integer' }, minItems: 1 }.freeze
   SCHEMA = {
@@ -34,6 +34,11 @@ class Umi::Funnel::ClassificationClient
     customer identity, consent or marketing eligibility. Cite only supplied incoming message IDs supporting the decision.
     For qualification, cite ONLY qualifying incoming evidence from fresh_evidence_ids: old rejected or pre-activation buying
     messages may provide context but a later greeting does not revive them. Respect the supplied human correction.
+    For qualified status, evidence_message_ids must contain the smallest sufficient set of fresh incoming IDs demonstrating
+    the buying step or substantive purchase consultation. Exclude support-only messages about an existing order, later
+    garment-care questions, and mere thanks or social messages. Cite support separately under relevant topics when supported;
+    do not invent a topic for every message. Evaluate topics across the full supplied conversation, including earlier support,
+    while respecting topic-removal fences.
     Customer facts describe last verified history, not current purchase intent. Unknown or stale facts are not proof of identity or payment.
     Only explicit collaboration or wholesale business context can propose umi_influencer or umi_wholesale. A tag/mention,
     friend of the brand, or discount request alone proves neither. Propose only positive roles currently unknown; never VIP or high value.
