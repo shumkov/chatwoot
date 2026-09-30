@@ -490,8 +490,8 @@ evaluation is RED on 11/12/37 under version 3. Verify the complete unchanged
 and genuine buying cases. No automatic application follows without explicit
 quality acceptance; this does not add message-count qualification heuristics.
 
-Version 4 passed the earlier targeted corrections but incorrectly downgraded
-sample 36, where the customer evaluates an offered size against their own fit
+Version 4 passed the earlier targeted corrections but returned engaged on
+sample 36, initially reviewed as evaluating an offered size against personal fit
 needs and then asks about that alternative. The run stopped and its original
 result remains preserved. Version 5 makes the positive consultation boundary
 explicit: responding to relevant advice while evaluating a specific item or
@@ -501,3 +501,14 @@ or colour only for a stock check remains engaged. Two independent reviewers
 confirmed the distinction against the complete examples 36 and 37. Verify a
 new immutable full-context run against all existing gates, reviewing connected
 evidence rather than treating a size statement alone as qualification.
+
+Adjudication after the version-5 result: both independent reviewers withdrew
+the mandatory-qualified expectation for sample 36. Asking the price of an
+alternative after unsolicited staff fit advice supports interest, but does not
+unambiguously establish customer-led evaluation of suitability. Engaged is a
+defensible conservative answer; qualified was also defensible under the broad
+wording. Preserve this disagreement and prior results. Do not add an exact
+few-shot to force a preferred result or count this as a hard-positive regression.
+Retain the general prompt clarification; continue the full unchanged review
+with strong buying positives, hard negatives and evidence gates unchanged.
+Record this boundary case separately in the operator review packet.
