@@ -42,7 +42,7 @@ The existing published ad set's optimization selector is disabled. Reading it co
 2. Completed for combined Messenger + Instagram in Thailand: validate_only accepted MESSAGING_PURCHASE_CONVERSION after supplying the verified advertiser/payer identity. No campaign was created. Instagram-only remains unverified and is not claimed.
 3. Settle explicit origin evidence for manual chat/PromptPay versus in-store and web checkout; unknown origin holds Meta Purchase while retaining the paid fact and Klaviyo event.
 4. Verify native website Purchase timing for unpaid/TBYB and single-sender ownership using genuine evidence.
-5. Implement and test eligible mappings, then obtain separate provider receipt, dataset diagnostics, source/identity evidence and goal availability. Test-event acceptance alone is insufficient.
+5. Eligible messaging Purchase mappings and their fixtures are implemented in the delivered application; the Purchase channel allowlist remains empty. Obtain separate provider receipt, dataset diagnostics, source/identity evidence and usable optimization before enabling the eligible channel. Test-event acceptance alone is insufficient.
 
 ## Observed website event diagnostics
 
@@ -86,7 +86,7 @@ After the user completed passkey reauthentication, Shumabit's assigned assets sh
 
 ## Authenticated API contract readback
 
-On 30 September the official [Business Messaging onboarding guide](https://developers.facebook.com/documentation/ads-commerce/conversions-api/business-messaging) (page updated 5 May 2026) was readable in authenticated Chrome after the old URL redirected; the unauthenticated fetch returned HTTP429. Its Instagram Purchase example uses `user_data.instagram_business_account_id` and `user_data.ig_sid`, with `action_source=business_messaging` and `messaging_channel=instagram`. `ig_account_id` is not the documented field. The pending implementation and fixture must use the documented names; this readback proves the contract, not provider acceptance.
+On 30 September the official [Business Messaging onboarding guide](https://developers.facebook.com/documentation/ads-commerce/conversions-api/business-messaging) (page updated 5 May 2026) was readable in authenticated Chrome after the old URL redirected; the unauthenticated fetch returned HTTP429. Its Instagram Purchase example uses `user_data.instagram_business_account_id` and `user_data.ig_sid`, with `action_source=business_messaging` and `messaging_channel=instagram`. `ig_account_id` is not the documented field. The delivered implementation and fixture use these documented names; this readback proves the contract, not provider acceptance.
 
 The same guide's FAQ still limits purchase optimization to Messenger and WhatsApp and describes conversation optimization for Instagram. This conflicts with treating the earlier Instagram `validate_only` HTTP200 as optimization eligibility: retain that response only as configuration-validation evidence. Instagram Purchase optimization remains unproven, separately from its missing token permission. No events, ads, or settings were changed by this documentation check.
 
