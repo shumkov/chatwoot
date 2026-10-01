@@ -45,6 +45,46 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     expect(Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start, as_of: start + 5.minutes).index[:business_open]).to be false
   end
 
+  it 'keeps old unanswered history available without activating reminders or carrying its timer into a resumed chat' do
+    old = create(:message, conversation: conversation, message_type: :incoming, created_at: start - 90.days)
+    expect(queue.index[:conversations].sole).to include(active_since: nil, waiting: nil)
+    fresh = create(:message, conversation: conversation, message_type: :incoming, created_at: as_of - 2.minutes)
+    row = queue.show(conversation.reload.display_id)[:conversation]
+    expect(row).to include(active_since: fresh.created_at.utc.iso8601(6), waiting: include(message_id: fresh.id, business_seconds: 120))
+    expect(row[:messages].pluck(:id)).to include(old.id, fresh.id)
+  end
+
+  it 'does not reactivate history through private notes, bots, automation, recovered messages, views or labels' do
+    create(:message, conversation: conversation, message_type: :outgoing, sender: agent, private: true, created_at: start)
+    create(:message, conversation: conversation, message_type: :outgoing, sender: create(:agent_bot), created_at: start)
+    create(:message, conversation: conversation, message_type: :outgoing, sender: agent,
+                     content_attributes: { automation_rule_id: 1 }, created_at: start)
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start,
+                     content_attributes: { umi_recovered: true })
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start,
+                     content_attributes: { deleted: true })
+    conversation.update!(label_list: ['support-size'], agent_last_seen_at: as_of)
+    expect(queue.index[:conversations].sole[:active_since]).to be_nil
+  end
+
+  %i[sent failed].each do |delivery|
+    it "reactivates an old chat on a #{delivery} public human message without inventing an incoming timer" do
+      create(:message, conversation: conversation, message_type: :incoming, created_at: start - 1.day)
+      create(:message, conversation: conversation, message_type: :outgoing, sender: agent, status: delivery, created_at: start)
+      expect(queue.index[:conversations].sole).to include(active_since: start.utc.iso8601(6), waiting: nil)
+    end
+  end
+
+  it 'invalidates cached decisions when the activation boundary changes and preserves prior reply history' do
+    create(:message, conversation: conversation, message_type: :outgoing, sender: agent, created_at: start - 1.day)
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    original = queue.index[:conversations].sole
+    later = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start + 1.second, as_of: as_of).index[:conversations].sole
+    expect(original[:waiting][:first_response]).to be false
+    expect(later[:revision]).not_to eq(original[:revision])
+    expect(later).to include(active_since: nil, waiting: nil)
+  end
+
   it 'counts long waits using full business days plus the first and last partial days' do
     create(:message, conversation: conversation, message_type: :incoming, created_at: start)
     finish = start + 3650.days + 12.hours + 10.minutes
@@ -243,6 +283,7 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     with_modified_env UMI_FUNNEL_CLASSIFIER_INBOX_IDS: email_inbox.id.to_s do
       email_queue = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start, as_of: as_of)
       expect(email_queue.index[:conversations].sole[:waiting]).to be_nil
+      expect(email_queue.index[:conversations].sole[:active_since]).to be_nil
       expect(email_queue.instance_variable_get(:@messages).values.flatten.sole.content_attributes.to_json).not_to include('Embedded private text')
     end
   end

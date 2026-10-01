@@ -8,6 +8,56 @@ implementation after explicitly choosing ten instead of fifteen minutes.
 
 ## Goal and scope
 
+### Live rollout boundary — approved 1 October 2026
+
+The user approved reminders for new and resumed work only. Historical unresolved
+work belongs in a separate stage-two audit, not the initial Telegram queue. This
+supersedes the initial-backlog delivery behavior below; the API still exposes
+historical rows so they remain inspectable without notifying Mai.
+
+Keep one durable activation timestamp in the existing consumer state. Add
+`active_since` to each API row/detail: the first non-deleted, non-recovered public
+customer incoming (excluding automatic email replies) or public human outgoing
+message at/after that boundary. Failed human sends count as renewed work, but do
+not end a waiting episode. No qualifying message means null. Opening a card,
+labels, sync activity, private notes, bot replies and imported history alone do
+not reactivate a chat. Full history is still supplied when eligible.
+
+The reminder consumer requires this field and filters null rows on both list and
+fresh detail, failing visibly on an old API response that omits the field. A
+ten-minute waiting episode can only start from a live customer incoming at/after
+activation; pre-activation unanswered messages cannot cause an immediate overdue
+alert when a chat resumes. Earlier human replies still establish whether this is
+a first or subsequent response. Include the activation boundary in the semantic
+revision so cache results cannot cross it.
+
+Prompt and task validation require at least one cited message at/after
+`active_since`, excluding recovered and deleted evidence, for each task. Older
+messages may explain the task but cannot alone revive old work. A private
+commitment after public reactivation remains eligible evidence. Merely mentioning
+an old topic does not reopen it: the model must identify currently unfinished
+work. Preserve full histories, support work, meaningful follow-ups, unanswered
+parts and failed-message handling. No historical audit item is auto-enqueued.
+
+Use the existing API rather than fetching every full conversation each minute or
+inventing a second baseline/cache system. The API continues to provide all rows
+for read-only investigation; the consumer owns the notification scope. Reset the
+unused initial activation boundary once at production enablement with a backup;
+do not roll it forward on scheduler runs or future deployments. Verify there are
+no delivery receipts before replacing that unused boundary. Back up and remove
+any unused delivery ledger too: zero receipts does not prove its hourly summary
+membership is empty. The first tick must establish membership for the new boundary.
+
+Verification: an old unresolved chat produces no notification; live incoming
+reactivates it and gets ten working minutes from that incoming, not the old one;
+public human/failed outgoing can reactivate; private/bot/import/view/label changes
+cannot. Old-only AI evidence is rejected; current private commitments after
+reactivation remain valid. List/detail exclusion, cache invalidation when the
+boundary changes, ordinary new chats and existing hourly/dedup behavior need
+regression coverage. Install both halves before enabling the two jobs. Preview
+must exclude the old tail; verify schedules and a natural run. If no genuine new
+work is due, verify an empty natural run rather than fabricating a customer task.
+
 Help Mai notice outstanding customer work: unanswered questions, promised checks,
 booking/order/service actions and appropriate follow-ups. Each item has a Chatwoot
 link, evidence, and a concrete next action. Customer messages remain operator-owned.

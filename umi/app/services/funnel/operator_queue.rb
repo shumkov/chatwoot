@@ -123,7 +123,16 @@ class Umi::Funnel::OperatorQueue
     { id: conversation.id, display_id: conversation.display_id, inbox_id: conversation.inbox_id, status: conversation.status,
       snoozed_until: conversation.snoozed_until&.utc&.iso8601(6), assignee_name: conversation.assignee&.name,
       sales_status: conversation.custom_attributes['umi_sales_status'], revision: revision(conversation),
-      waiting: waiting, chronology: chronology }
+      active_since: active_since(conversation), waiting: waiting, chronology: chronology }
+  end
+
+  def active_since(conversation) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    message = visible_messages(conversation).find do |item|
+      next false if item.created_at < @since || item.private? || item.content_attributes['umi_recovered'] == true
+
+      (item.incoming? && !item.auto_reply_email?) || (item.outgoing? && !item.send(:bot_response?) && item.send(:human_response?))
+    end
+    message&.created_at&.utc&.iso8601(6)
   end
 
   def revision(conversation)
@@ -132,7 +141,7 @@ class Umi::Funnel::OperatorQueue
               conversation.custom_attributes['umi_sales_status'], conversation.contact.additional_attributes['umi_klaviyo_profile_id'],
               conversation.inbox.channel_type, conversation.assignee&.name, @inbox_ids, CHANNELS,
               message_rows(conversation, digest_content: true), messages.map(&:auto_reply_email?),
-              customer(conversation), commerce(conversation)]
+              customer(conversation), commerce(conversation), @since.utc.iso8601(6)]
     Digest::SHA256.hexdigest(inputs.to_json)
   end
 
@@ -147,7 +156,7 @@ class Umi::Funnel::OperatorQueue
       if message.incoming? && !message.auto_reply_email?
         if recovered
           chronology = 'unverifiable' unless waiting
-        else
+        elsif message.created_at >= @since
           # A live incoming establishes a verifiable lower bound even if earlier imports have no reliable timestamp.
           chronology = 'available'
           waiting ||= { message_id: message.id, started_at: message.created_at.utc.iso8601(6),
