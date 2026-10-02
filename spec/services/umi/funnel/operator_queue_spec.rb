@@ -288,6 +288,34 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     end
   end
 
+  it 'exposes automatic email replies and invalidates weekly analysis when that fact changes' do
+    email_inbox = create(:inbox, :with_email, account: account)
+    email_conversation = create(:conversation, account: account, inbox: email_inbox)
+    message = create(:message, conversation: email_conversation, inbox: email_inbox, message_type: :incoming, content_type: :incoming_email,
+                               created_at: start, content_attributes: { email: { auto_reply: true } })
+    with_modified_env UMI_FUNNEL_CLASSIFIER_INBOX_IDS: email_inbox.id.to_s do
+      email_queue = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start, as_of: as_of)
+      before = email_queue.show(email_conversation.reload.display_id)[:conversation]
+      expect(JSON.parse(before.to_json)['messages'].sole).to include('id' => message.id, 'auto_reply' => true)
+      expect(before).to include(active_since: nil, waiting: nil)
+
+      message.update!(content_attributes: { email: { auto_reply: false } })
+      after = email_queue.show(email_conversation.display_id)[:conversation]
+      expect(JSON.parse(after.to_json)['messages'].sole).to include('auto_reply' => false)
+      expect(after[:revision]).not_to eq(before[:revision])
+      expect(after[:revision]).to eq(email_queue.index[:conversations].sole[:revision])
+      expect(after[:waiting]).to include(message_id: message.id)
+    end
+  end
+
+  it 'exposes false automatic-email flags for ordinary messages using the native predicate' do
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start + 1.minute,
+                     content_attributes: { email: { auto_reply: true } })
+    messages = JSON.parse(queue.show(conversation.reload.display_id).to_json).dig('conversation', 'messages')
+    expect(messages.pluck('auto_reply')).to eq([false, false])
+  end
+
   it 'does not skip a candidate when an earlier row leaves scope between keyset pages' do
     create_list(:conversation, 51, account: account, inbox: inbox)
     first = queue.index

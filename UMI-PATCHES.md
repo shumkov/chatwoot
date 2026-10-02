@@ -59,6 +59,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 50 | Reviewed historical conversation classification | `umi/app/services/funnel/historical_classification.rb`, historical customer projection, live classifier/context/transition and commerce fallback; focused historical and concurrency specs; `docs/UMI-HISTORICAL-CRM-AUDIT-SPEC.md` | Applies reviewed full-history classifications and customer labels to unchanged archives without reopening chats or producing advertising outcomes. Keeps manual corrections and live commerce authoritative, records one private summary, and permits later genuine buying intent to qualify with new evidence. | Historical enrichment is accepted and no retained reconstruction needs this writer; retain the evidence boundary until an equivalent native mechanism replaces it. |
 
+| 51 | Automatic-email fact for weekly quality selection | `umi/app/services/funnel/operator_queue.rb`, `spec/services/umi/funnel/operator_queue_spec.rb` | Exposes the native automatic-email boolean in full message context so weekly quality reports exclude automatic replies without duplicating email parsing. Changes remain bound to the queue revision. | Native conversation reporting exposes equivalent automatic-message provenance. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
