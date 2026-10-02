@@ -63,6 +63,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 52 | Labels API token account context | `config/initializers/zz_umi_labels_api_account.rb`, `spec/requests/umi/labels_api_access_spec.rb` | Resolves account membership before the labels controller’s inherited API-access check; its duplicate account callback otherwise leaves `Current.account` unset and makes valid token requests return 500. Keeps native authentication, membership and API-feature denials. | Upstream removes the duplicate labels account callback or otherwise ensures account context precedes token API validation. |
 
+| 53 | Instagram CAPI account field | `umi/app/services/funnel/delivery_service.rb`, `spec/services/umi/funnel/settlement_command_spec.rb` | Sends `ig_account_id`, required by live Graph v23, instead of the rejected `instagram_business_account_id`; preserves the configured account ID and existing Purchase eligibility gates. | The custom messaging conversion sender is replaced by an equivalent native sender or the supported Meta wire contract changes. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)

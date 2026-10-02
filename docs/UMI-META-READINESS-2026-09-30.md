@@ -2,6 +2,16 @@
 
 Read-only evidence gathered against production APIs and authenticated Meta/Shopify UI. This is a prerequisite receipt, not activation or campaign attribution acceptance. No campaign, budget, token, data-sharing setting or production code was changed. After a separate explicit confirmation, the verified company was saved as the default advertiser and payer. After explicit user confirmation, instagram_manage_events was added to an App Review request draft; submission/approval is not yet confirmed.
 
+## Access update, 3 October 2026 Bangkok
+
+The access observations below are the historical 30 September checkpoint.
+Advanced `instagram_manage_events` is now granted. The dedicated production
+funnel Page credential was rotated, and v23 accepts an Instagram technical
+TestEvent using `ig_account_id`. See the [current access and transport receipt](UMI-WEBSITE-AD-MESSAGING-INVESTIGATION.md#instagram-event-transport-verification-3-october-bangkok).
+Real Purchase delivery, matching Events Manager evidence and Instagram-only
+optimization remain unverified; Purchase channels remain disabled. The Page
+credential has a finite data-access expiry: 31 December 2026, 23:34:46 Bangkok.
+
 ## Verified assets and access
 
 - UMI Ads account: `521070490831440`; existing messaging ad set `120252533076010415` uses `CONVERSATIONS`, destination `MESSAGING_INSTAGRAM_DIRECT_MESSENGER`, Page `516819784857962`.

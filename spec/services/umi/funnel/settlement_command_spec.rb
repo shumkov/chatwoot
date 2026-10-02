@@ -294,7 +294,7 @@ RSpec.describe Umi::Funnel::SettlementCommand do # rubocop:disable RSpec/Multipl
     expect(delivery.reload).to have_attributes(state: 'unknown', attempt_count: 1)
   end
 
-  it 'uses the Instagram asset and scoped ID only when that channel is explicitly enabled' do
+  it 'provides the ig_account_id required by Instagram CAPI only when that channel is explicitly enabled' do
     inbox.channel.update!(instagram_id: '987')
     conversation.update!(additional_attributes: { type: 'instagram_direct_message' })
     incoming.destroy!
@@ -309,7 +309,7 @@ RSpec.describe Umi::Funnel::SettlementCommand do # rubocop:disable RSpec/Multipl
     with_modified_env UMI_FUNNEL_META_PURCHASE_CHANNELS: 'instagram', UMI_FUNNEL_META_INSTAGRAM_ID: '987' do
       Umi::Funnel::DeliveryService.new(delivery).prepare
     end
-    expect(delivery.reload.payload.dig('data', 0, 'user_data')).to eq('instagram_business_account_id' => '987', 'ig_sid' => '456')
+    expect(delivery.reload.payload.dig('data', 0, 'user_data')).to eq('ig_account_id' => '987', 'ig_sid' => '456')
   end
 
   it 'rejects an invalid channel configuration rather than silently enabling Purchase' do

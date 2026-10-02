@@ -306,7 +306,7 @@ class Umi::Funnel::DeliveryService
     dataset = ENV.fetch('UMI_FUNNEL_META_DATASET_ID')
     asset_key = channel == 'instagram' ? 'instagram_id' : 'page_id'
     scoped_key = channel == 'instagram' ? 'ig_sid' : 'page_scoped_user_id'
-    user_asset_key = channel == 'instagram' ? 'instagram_business_account_id' : 'page_id'
+    user_asset_key = channel == 'instagram' ? 'ig_account_id' : 'page_id'
     unless [asset, dataset, identity['scoped_user_id']].all? { |id| id.to_s.match?(/\A[1-9]\d*\z/) } && identity[asset_key] == asset
       mark!('pending', 'channel_identity_mismatch')
       return []
