@@ -33,27 +33,39 @@ in private artifacts outside Git; this document contains only aggregate receipts
   purchase history from evidence linking an individual order to a conversation.
 - [x] Audit a varied full-history pilot with matched commerce context and the
   Mai playbook; verify references and correct evaluation criteria where needed.
-- [ ] Run the remaining archive analysis with explicit full-history coverage;
+- [x] Run the remaining archive analysis with explicit full-history coverage;
   expose incomplete attachments/chronology/identity instead of inventing facts.
-- [ ] Produce proposed customer links, conversation/order links and canonical
+- [x] Produce proposed customer links, conversation/order links and canonical
   labels/attributes as a concrete change list; preserve human corrections.
-- [ ] Review write effects: Meta/Klaviyo events, Klaviyo profile-triggered flows,
+- [x] Review write effects: Meta/Klaviyo events, Klaviyo profile-triggered flows,
   customer-context sync, private notes and live reminder eligibility.
-- [ ] Implement only missing supported historical-write behavior if necessary,
+- [x] Implement only missing supported historical-write behavior if necessary,
   with reviewed design, meaningful tests and independent code review.
-- [ ] Apply verified unambiguous enrichment in bounded batches with current-state
+- [x] Apply verified unambiguous enrichment in bounded batches with current-state
   checks, readback and reconciliation. Leave disputed associations for Ivan.
-- [ ] Deliver the audit: readable PDF, short Telegram summary and private sortable
+- [x] Deliver the audit: readable PDF, short Telegram summary and private sortable
   action list with conversation links, evidence, next steps and unknown outcomes.
-- [ ] Incorporate the agreed quality rubric in the recurring Friday report;
-  verify a scheduled run and keep Chatwoot facts separate from Shumabit formatting.
+- [x] Incorporate the agreed quality rubric in the recurring Friday report;
+  keep Chatwoot facts separate from Shumabit formatting. Full21-history pilot,
+  real PDF and production installation accepted on2October.
+- [ ] Observe the next natural Friday delivery with the newly installed quality
+  section. The2October scheduled aggregate report was verified separately; it
+  is not resent or presented as proof of the later quality installation.
 
 ### Current checkpoint — 2 October 2026
 
-Identity evidence review and audit calibration are complete. The latest execution
-receipt below supersedes the initial discovery limitations in this table. The 46 reviewed contact merges are applied with verified profile readback.
-Full archive draft generation is running; no report publication has occurred.
-Draft judgments require review before application/publication.
+Full archive analysis covers 1,095 conversations and 12,175 visible message rows.
+48 verified customer identities are reconciled. 899 historical classification
+decisions are applied and read back; nine test-only threads are excluded and
+187 histories remain held. Customer roles are applied to 142 contacts: 112 remain
+local pending a verified identity and 30 are verified in existing Klaviyo
+profiles. Five approved candidates remain held; the separate 45 semantically
+unapproved contact-role proposals were not applied. The final six-page archive
+PDF and 1,095-row register are delivered to UMI Orders as messages22759/22760.
+Recurring weekly quality is
+installed after a 21-chat pilot. Telegram Shumabit has verified administrator API
+and native Rake access. The latest receipts below supersede initial discovery
+limitations, which are retained as history.
 
 | Source | Initial snapshot coverage | Remaining limitation |
 | --- | --- | --- |
@@ -208,8 +220,10 @@ and remains an explicit implementation task, not a reason to reopen old chats.
 - [ ] Add the deferred command feedback behavior: immediate private in-progress
   note, then edit that same note to success/failure. Start with `/paid-in-chat`
   and reuse the pattern for actual existing commands; no new permission system.
-- [ ] Finish Mai's practical guide and evidence-backed training examples. She
-  and Ivan correct erroneous audit judgments rather than label every chat.
+- [x] Deliver Mai's practical guide (Orders message22758). She and Ivan correct
+  erroneous audit judgments rather than label every chat.
+- [x] Deliver the separate archive PDF with evidence-backed training examples
+  (Orders message22759), followed by the current review register (message22760).
 - [ ] Verify operator coverage of advertising comments and the real scheduled
   reminder/Friday-report deliveries; keep historical backlog out of live alerts.
 - [ ] Meta follow-up after review: obtain granted scope, verify genuine eligible
@@ -540,3 +554,483 @@ with prepared recommendations so Ivan only corrects errors/ambiguities.
 - Weekly conversation-quality integration is separately designed in
   `UMI-WEEKLY-CONVERSATION-QUALITY-SPEC.md`; it is not included in this release.
   Existing Friday report delivery does not prove quality-audit coverage.
+
+### Delivery checkpoint — 2 October, 03:08 UTC
+
+- Historical writer merged through Chatwoot PR71 as `769f28489`; automatic-email
+  source fact merged through PR72 as `da5551f77`. Signed release tag
+  `umi-v4.16.0-23` points to the latter and includes both changes. Relevant CI is
+  green; upstream deployment/MFA checks were skipped by their workflow conditions.
+  Image build and infrastructure-owned production acceptance remain outstanding.
+- Single-conversation application manifest for #36 has 28 passing preparation
+  checks and independent review. Previously uncaptured content attributes and
+  attachment timestamps were explicitly reviewed as a fresh baseline amendment;
+  this does not pretend they were captured in the original export. Locked preview,
+  actual application and persisted side-effect checks remain outstanding.
+- Weekly quality implementation merged through Shumabit PR23 as `91399dd4`.
+  Two code reviews are clean; 78 tests passed, none skipped. Synthetic PDF pages
+  were visually inspected. Real collection/inference pilot, measured coverage and
+  production activation remain separate tasks. Today's accepted report is not
+  resent or overwritten.
+- All six text inboxes now use daily 09:00–21:00 Asia/Bangkok business hours.
+  Native updates to inboxes3/6/7/8 were accepted at02:43:38Z with exact GET
+  readback and unrelated settings preserved. No out-of-office message was added.
+- Archive checkpoint03:02:50Z:699/1095 conversations and9786 messages validated.
+  Six timed-out histories have separate manual review receipts; original failed
+  calls were preserved, never blindly retried. The remaining396 are incomplete.
+- Practical operator guide drafted in `UMI-MAI-CHAT-GUIDE.md`, aligned to the
+  six-rule rubric and current private payment-command behavior. Independent review
+  and inclusion in the final human-readable handoff remain outstanding.
+
+### Additional exact order identity — 2 October, 03:25 UTC
+
+- Independently reviewed all15 messages of conversation246. Incoming2711 names
+  the customer's own order1521 without a hash prefix; later substitution and
+  pickup replies corroborate it. The initial reference scanner only recognized
+  the outgoing `#1521` form, leaving this identity unresolved in the frozen input.
+- Fresh Shopify order/customer, unique Klaviyo profile and contact ownership
+  agreed, without a name/handle inference. Native reverse merge retained2146
+  with conversation246 and removed empty imported377. The original46-pair plan
+  is unchanged; this uses a separate reviewed one-pair plan and unchanged executor.
+- Fresh dependency/automation/webhook and prospective commerce checks passed.
+  Native POST returned200; subsequent async profile readback verified the exact
+  binding, all15 messages, conversation and inbox ownership, no new private/public
+  messages, and no events or deliveries. Private receipts:
+  `identity-246-consolidation/merge-receipts/2146/`.
+- Reconciled identities now48:47 reverse merges plus the earlier exact customer
+  link. Current paid customer context does not credit this service conversation
+  with acquisition or chat settlement. Its original audit receipt stays unchanged;
+  application needs an explicit reviewed identity/commerce amendment.
+- Mai guide received an independent domain review: CLEAN. Clarified that a pending
+  payment-command cancellation takes effect only when its private result appears.
+
+
+### Production acceptance — 2 October, 03:47 UTC
+
+- Infrastructure PR114 is merged as `fc4bbc985`. Release23 is deployed and
+  accepted: Rails and Sidekiq match the signed application source and image;
+  thirteen sibling containers, seven owners, environment and schedules were
+  preserved. Four health endpoints returned200. Schema and the pre-existing
+  Sidekiq dead set are unchanged. The existing Caddy role reloaded its identical
+  configuration without restarting the container. No migrations ran.
+- Historical canary36 was applied once at03:36:21Z after an eligible locked
+  preview. Event9126 and private note12294 record `qualified` plus
+  `intent-ready-to-order`. All ten original messages, contact ownership and open
+  status were preserved. Persisted readback found no conversion deliveries,
+  public messages, live qualification events or live reminder activity. Original
+  cutoff135 and frozen snapshot time remain recorded. Acceptance receipt:
+  `canary36-accepted.json` in the private audit evidence directory.
+- Bulk preparation must recognize this canary as already applied from its exact
+  receipt. It must hold meaningful messages created after the frozen cutoff;
+  amendments cannot bypass the native original-as-of guard. Erasure is an early
+  branch in both classification and customer-role manifests: permitted IDs and
+  hold codes only, never copied decision prose or identity details.
+- The weekly-quality collector read383 candidates:21 eligible,362 excluded,
+  zero unknown. Full inputs are frozen privately. The first two inference checks
+  use the actual Friday model and low effort against complete135/60-message
+  histories; inference acceptance and recurring activation are not yet complete.
+
+### Archive reconciliation and weekly calibration — 2 October, 04:38 UTC
+
+- All original inference lanes have finished. The last eleven untouched histories
+  completed successfully; timed-out calls retain their original failure receipts
+  and separate full-history manual reviews. Final combined coverage is being
+  verified against all 1,095 original IDs and 12,175 visible message rows.
+- The current native export is accepted at04:28:31Z:1,095 rows, including21
+  deletion holds containing IDs and markers only. Rails stores some message
+  attributes as a JSON-encoded string; the first bulk exporter did not decode
+  that form. Offline erasure checks prevented application. The exporter,
+  executor and postcheck now share the verified decoded deletion predicate;
+  the old export and its provisional manifest are invalidated.
+- The corrected export is `bulk-export-20261002T042446Z/current.json`. The
+  exact703-row simple metadata rule and conversation246's independent reply
+  metadata amendment have been accepted against this source. Neither approval
+  supplies missing classification evidence or authorizes customer-role writes.
+- A substantial set of archive judgments cites outgoing operator messages.
+  Native historical classification correctly requires public incoming evidence.
+  Original audit/coaching results remain immutable; affected classifications
+  need a separate narrow review, not automatic removal of invalid citations.
+  Histories with no public incoming message remain unclassified/held; writing
+  uncertain events and private notes would add no useful customer evidence.
+- Weekly quality prompt fixes are merged through Shumabit PR25 (`73bc2c3`).
+  Optional additional advice is not a service failure after the actual question
+  was answered. Explicit integration-test exchanges, including their greetings,
+  are excluded from operator performance. Exact example13 went from an
+  unsupported criticism/praise to all criteria not applicable. Existing78
+  controls pass without skips. A final fixed21-history cohort under this prompt
+  is authorized; runtime installation and real PDF acceptance remain pending.
+- The accepted Friday report message22754 is preserved and will not be resent.
+  The final archive report is a separate deliverable.
+
+### Full archive acceptance and first batch — 2 October, 04:50 UTC
+
+- Final archive coverage is verified:1,095 unique conversations,12,175 message
+  rows,1,077 model receipts and18 independent manual replacements. No missing
+  IDs remain. Original failed calls and their unknown usage remain recorded.
+- Nine whole test threads are excluded from historical application. An
+  independent full33-message review confirms the eight additional test IDs
+  2,3,100,101,102,103,107,209 alongside14. Mixed13 remains included.
+- The complete preparation reconciles260 eligible,825 held,9 tests and the
+  already accepted canary36. A full-history semantic review corrected three
+  otherwise citation-valid proposals461/736/772 to engaged: product links,
+  basic prices/composition and a vague future visit do not establish qualified
+  purchase consultation. Their original outputs remain unchanged.
+- All257 other eligible rows passed native read-only preview. First batch
+  5/6/56/210/246 applied once and passed persisted verification at04:49:44Z:
+  five historical events/private notes, original histories and conversation
+  status preserved, zero public messages or conversion deliveries. Remaining
+ 252 rows are being applied through the same reviewed locked executor.
+- Remaining source-eligible classification work uses a separate short judgment
+  pass over complete archived public histories plus retained metadata. It
+  preserves the live classifier v5 meaning while explicitly using historical
+  incoming evidence, not pretending old messages are fresh live events.
+  Current customer facts are labeled with their capture time and cannot prove
+  a historical purchase or conversation attribution. Original coaching and
+  role outputs are never rewritten.
+- Proposed correction cohort588 excludes erasure, manual/current classification,
+  changed raw history, unreviewed events and material identity/commerce changes.
+  Absent/null provider-key representation may normalize only when every
+  non-null value and actual contact identifier is unchanged. Each new model
+  result is an explicit contextual amendment, replacing hundreds of generic
+  metadata waivers. No-incoming153 remain held without pointless status notes.
+- Start with a reviewed varied batch of at most five full histories; validate
+  exact IDs, incoming citations, complete byte-bounded inputs, source and
+  prompt binding. Maximum four concurrent calls, no truncation or blind retries.
+  Provider failures remain held; all qualification changes and a fixed domain
+  sample receive independent semantic review before native preview/application.
+
+### Production and access checkpoint — 2 October, 08:55 UTC
+
+- The remaining 252 rows and three reviewed engagement corrections were applied
+  and independently read back. Together with the first five, this is 260 new
+  historical applications, plus the earlier canary: 261 total. Twenty uncertain
+  results preserve the existing status; 241 establish a definitive status.
+  Original histories and open/resolved state are preserved, with no public
+  messages or conversion deliveries. Receipts include
+  `historical-260-application-accepted.json`.
+- The 588-history correction pilot passed source and independent semantic
+  review: personal fit consultation is qualified, collaboration and automated
+  verification are not sales, stock questions are engaged, and an unseen shared
+  post stays uncertain. The remaining 117 batches are running in four disjoint
+  lanes, with no retry of attempted histories. Their results still require
+  review and fresh native preview before application.
+- All historical role proposals have explicit decisions: 152 supported rows
+  represent 147 contact-role groups; 45 proposals are held. Coordinator accepted
+  the semantic reconciliation after verifying every source hash. These are
+  candidates, not applied customer roles. Finish classification before role
+  changes; preserve explicit no and unresolved consignment taxonomy.
+- The weekly quality runtime from Shumabit commit `296da54` is installed.
+  Its 21-conversation full-history pilot and readable PDF are accepted. The
+  previously delivered Friday report is unchanged; the next natural scheduled
+  quality report remains to be observed.
+- Telegram Shumabit's missing Chatwoot credential was repaired in canonical
+  Infisical configuration, reusing administrator user 1/account 1. Ordinary
+  skill requests, without bridge ENV overrides, now read conversations, full
+  message pages, contacts, inboxes and attributes. No bot restart was needed.
+  A separate account-label API HTTP 500 was reproduced and is being repaired.
+- Linh's two Meta-reported messaging conversations are not yet matched to
+  particular Chatwoot histories. Today's real product inquiry is conversation
+  1109; 1110 and 1102 contain story mentions. None has stored ad referral IDs.
+  Do not identify the story mentions as campaign leads or use timing alone to
+  attribute 1109. Meta Ads Insights and original webhook payloads were not
+  independently reconciled in this read-only check.
+
+### Review and operator guide checkpoint — 2 October, 09:25 UTC
+
+- Mai's four-page English guide was visually checked and delivered separately
+  to UMI Orders, message22758 at09:19UTC. It covers complete answers, product
+  and fit advice, customer/order links, QR payment, classification corrections,
+  five-working-minute response target and daily09:00–21:00Bangkok hours.
+  The existing Friday report was not resent.
+- Telegram Shumabit's skill index and full-history helper are installed from
+  reviewed Shumabit PR27. Ordinary access retrieves all318messages in251,
+  matching the database. A fresh Polygram agent load sees the skill; existing
+  cached prompts were not refreshed, and no active session was interrupted.
+- All118classification-correction batches are terminal:578successful model
+  decisions and10independently reviewed manual replacements after two timeouts.
+  Failed calls remain recorded with unknown accounting. All47model-qualified
+  cases and the manual qualified case were independently reviewed, alongside a
+  fixed29-history domain sample. Four false qualifications were corrected to
+  engaged; two unsupported topic assignments were removed in a successor only.
+- The accepted preparation distribution is408not_sales,113engaged,44qualified,
+  23uncertain. These are reviewed decisions, not yet applied production counts.
+  Fresh persistent application-ledger readback still contains260attempts plus
+  the separately accepted canary36; none may be applied again.
+- Chatwoot PR73 is merged after its required checks passed. Release24 repairs
+  the labels API callback order; its image is being prepared for deployment.
+
+### Bounded application checkpoint — 2 October, 09:50 UTC
+
+- All588successor classifications passed a native read-only preview. The
+  reviewed five-case pilot33/52/53/82/284 was applied once and persisted checks
+  passed at09:42:34UTC: five historical events/private notes, unchanged original
+  history and conversation state, zero public messages or Meta deliveries.
+  The remaining583 are authorized through the same serial native writer and
+  durable attempt ledger; completion still requires persisted readback.
+- A separate42-history identity-aware classification cohort is prepared from
+  already accepted customer links and complete unchanged histories. Its first
+  five results passed status review: repeat/VIP history in199 stays engaged
+  for ordinary location/stock/return-policy questions. Customer payment history
+  does not turn a conversation into a paid conversion.
+- Topic review introduced a conservative historical criterion refinement:
+  pure gift/barter fulfilment does not establish retail intent. The broad
+  existing topic definitions did not state this explicitly. Exact208/216
+  topic-only corrections are retained separately from original model output;
+  live-prompt calibration is a follow-up, not claimed implemented here.
+- Eight further identity-linked histories contain only37exact new customer
+  summary notes; all original messages are unchanged. Root reviewed their full
+  text/metadata and accepted this concrete context amendment. Conversation40
+  changed only its projected client label, not open/resolved state. This is not
+  a general permission to ignore arbitrary marked private notes.
+- Fresh read-only role preflight found30unique bound Klaviyo targets with
+  matching identifiers and absent role properties. Three unbound contacts
+  have no existing exact profile; one bound case has conflicting ownership.
+  Those four remain held. The113contacts without usable provider identifiers
+  can retain local roles pending a future verified customer link. No role
+  application or provider write has occurred at this checkpoint.
+
+### Persisted classification result — 2 October, 09:52 UTC
+
+All588additional classifications were applied and read back successfully,
+including the five-case pilot. Combined with the earlier261, this is849unique
+historical decisions. No held execution, public customer message or Meta
+conversion delivery occurred in this batch. Original messages, conversation
+ownership and open/resolved state are preserved. Receipts are persisted outside
+containers before release24 activation:
+`classification-correction-preview-stage/apply-pilot5-accepted.json` and
+`classification-correction-preview-stage/apply-rest583-accepted.json`.
+
+The remaining50identity/context judgments completed without provider failures.
+Every newly qualified result received full-history independent review. Case40
+is engaged because it only asks which location stocks sizes for fitting; case300
+is qualified because the person confirms the concrete fitting visit after the
+store supplies the specific location/item/size availability. A date is not
+required, but a vague future wish to visit is insufficient. These successors
+still require preparation, native preview and application before being counted.
+
+
+### Shumabit access and release acceptance — 2 October, 10:11 UTC
+
+Telegram Shumabit has administrator access to account 1 through its ordinary
+credential fallback. Profile, conversations, full messages, contacts, inboxes,
+attributes and account labels have all returned HTTP 200. The existing skill was
+updated; no separate integration or permission system was introduced. Existing
+Polygram prompt caches were not refreshed and no bot session was interrupted.
+
+Chatwoot release 24 is deployed at image digest
+`sha256:e9060204c5161f2f692aafe40a10b96a16d0c22a1e38f1532c8f31213412d0cc`.
+The account-label API correction is merged in PR73; infra PR115 pins the image.
+The first attempt stopped at the busy-work guard before mutation. A separately
+accepted second attempt replaced only Rails and Sidekiq after queues drained.
+Thirteen sibling containers, eight service owners, seven protected configuration
+files and the cron remained unchanged. Ordinary Shumabit profile/labels requests
+both returned 200. Four HTTP health checks passed; schema and existing dead-job
+count were unchanged. No customer messages or conversion events were sent by
+deployment. Receipts: `labels-release24-preparation/attempt2/`,
+`ordinary-access-accepted.json` and `http-health.json`.
+
+Fresh Meta token inspection at 10:14:16 UTC returned valid system-user and inbox-2
+page tokens for app2163627007746338. Both lack `instagram_manage_events`;
+`page_events` is present. This verifies the current missing scope, not the
+current App Review UI status. No event, permission or advertisement was changed.
+Receipt: `labels-release24-preparation/meta-scope-readonly-proof.json`.
+
+
+### Historical classification application — 2 October, 10:17 UTC
+
+The final 50 identity/context decisions passed fresh native preview on release
+24. The five-case pilot and remaining 45 were applied once and passed persisted
+readback at 10:16:00 and 10:16:54 UTC. Combined acceptance is 899 unique historical
+decisions, with no public messages or Meta conversion deliveries. These decisions
+preserve conversation ownership, open/resolved state and original history.
+The final cohort contains 31 not-sales, 16 qualified and three engaged outcomes.
+Nine test-only threads remain excluded; 187 histories remain held rather than
+forcing a classification from missing, deleted or changed evidence.
+Receipts: `final50-native-stage/apply-pilot5-accepted.json` and
+`final50-native-stage/apply-rest45-accepted.json`.
+
+Ordinary Shumabit also executed `umi:funnel:report` successfully inside the
+production Rails container, without sudo, at 10:24 UTC. It returned the native
+JSON aggregate for an explicit account/time range. `rake -T umi` successfully
+listed the deployed tasks. This verifies native application access separately
+from REST credentials; it does not claim that every mutating task was exercised.
+Receipt: `shumabit-rake-access-accepted.json`.
+
+Shumabit PR28 adds explicit local Rails/Rake instructions to the existing API
+skill. The exact merged skill was installed at 10:27:54 UTC, with its owner/mode
+preserved and no restart. It documents task inputs, native container credentials
+and the ordinary user's Docker access. Receipt:
+`shumabit-rake-skill-install-accepted.json`.
+
+### Shumabit system map and attribution research — 2 October, 10:50 UTC
+
+Shumabit PR29 extends the same API skill with the system map and authoritative
+specification/patch paths. Seventeen release-matched paths were checked inside
+`/app`; bridge and report specifications that are absent from the installed
+workspace use source-repository links. The data contract takes precedence over
+the older taxonomy proposal. Shopify payment facts, Klaviyo customer properties,
+Chatwoot contact/conversation fields and managed labels have explicit owners.
+
+The ordinary user's native examples now use `docker exec`, correcting PR28's
+Compose examples: `/opt/umi` is root-only, although Docker access works without
+sudo. Protected host paths require `sudo -n`. Only the reviewed skill file from
+merge `2c84d464e40c0ddddb2cda9996bc201b4f720bfa` was installed at 10:50:11 UTC;
+its owner/mode were preserved, with no restart. Receipt:
+`skill-map-install-accepted.json`.
+
+The website-purchase ad investigation is recorded separately in
+[Messages associated with website-purchase ads](UMI-WEBSITE-AD-MESSAGING-INVESTIGATION.md).
+The observed two starts comprise one view-attributed and one click-attributed
+result. Existing capture covers Meta's documented nested ADS referral regardless
+of campaign objective; the exact website messaging add-on and its live payload
+are not yet verified. Missing ad metadata is not evidence of organic traffic.
+Identifying Linh's individual conversations is left to Shumabit.
+
+### Classification closure and accepted customer-note context
+
+Final classification closure reconciles all 1,095 frozen histories: 899 accepted
+applications, 187 held and nine test exclusions. The decisions are 578 not-sales,
+208 engaged, 70 qualified and 43 uncertain. An uncertain evaluation preserves
+the existing sales status; 899 applications do not mean 899 status changes.
+No public customer messages or historical Meta deliveries were added.
+
+All 899 generated private notes were captured with complete message attributes
+and independently reviewed against accepted decisions and native customer
+context. Original messages, attachments and ownership remain unchanged. The
+earlier application receipts did not retain every new note's exact body bytes;
+this is a fresh acceptance of current note context, not a claim to have recovered
+missing historical body receipts. No current context holds remained.
+
+Closure receipt: `historical-classification-closure-v2.json`, SHA256
+`957952141696f8a7d58a47abf5f42ae896ede562d4be0ec8549b262aae544c03`.
+Independent context receipt:
+`historical-classification-context-independent-accepted.json`.
+
+### Native role application: callback correction
+
+The first local role cohort exposed a defect in the private, one-time audit
+executor. Reloading the saved Contact inside the outer transaction cleared
+Rails' saved-change metadata before the native after-commit callbacks inspected
+it. The role and explicit historical explanation persisted, but one customer's
+other open conversation did not receive its projected labels. The same issue
+would also suppress profile synchronization for a bound customer.
+
+Verification now reads a separate Contact instance, preserving callback state.
+Two native tests with real commits failed against the old expression and passed
+after the one-line correction; the 25 existing guard tests also passed, with
+67 assertions and no failures or skips. Independent source review accepted
+executor SHA256 `598a85becad5a0ef747968f07bb662fe78f8c3ecab93673a1db78b0a79d7fb6e`.
+No deployed Chatwoot application change was required.
+
+Readback identified exactly one missing active projection among the 111 local
+role applications: contact214, conversation46. Recovery uses the existing native
+CustomerProjectionJob only for that contact, with unchanged role facts and
+pending revisions, preserved histories and a separate recovery receipt. It does
+not repeat role mutations or alter the original attempt ledger. Final persisted
+and reminder-consumer acceptance is recorded with the role closure below.
+
+The local cohort is accepted: all 111 contacts passed persisted and asynchronous
+projection checks after the single native recovery. The actual reminder consumer
+returned zero eligible historical targets and zero planned actions. No Klaviyo
+profile was created and this cohort made no provider writes; roles remain local
+pending a future verified identity. Receipt:
+`historical-role-local111-accepted.json`.
+
+### Native role application: prewrite comparison correction
+
+Fresh profile checks exposed another false hold in the private audit executor:
+routine synchronization changed bookkeeping timestamps without changing the
+customer facts being approved. The prewrite comparison now ignores exactly
+`contact.updated_at` and the `segments.observed_at`, `checked_at` and
+`next_sync_at` timestamps inside `contact.additional_attributes.umi_klaviyo_sync`.
+The containers, segment membership, identity, role revisions, consent and all
+other facts remain part of the comparison. Full snapshots and the provider,
+acknowledgement and postwrite checks are unchanged.
+
+The actual held-contact fixture failed before the correction and passed after
+it. Independent review accepted 26 tests, 76 assertions and zero failures,
+errors or skips. Receipt: `historical-role-bookkeeping-correction-receipt.json`;
+executor SHA256
+`b821791e1826057cfdaf1a6ff36d2a96e54a6b42620726df05c907f544fc785d`.
+This changes the one-time executor only, not the deployed application.
+
+### Native role application: asynchronous readback correction
+
+After all 28 remaining bound contacts committed, readback found a separate
+verification mismatch on seven contacts. The native SegmentRefreshJob had
+republished identical segment membership with a later `segments.observed_at`.
+The other 21 contacts matched without this adjustment. Provider role, identity
+and consent checks had passed before the local acknowledgement comparison.
+
+The verifier now accepts only a valid, forward-or-equal observation timestamp
+when that field exists in both segment snapshots. It still compares all other
+segment fields and customer facts exactly. The real contact207 fixture failed
+against the previous verifier and passed after the correction; independent
+review accepted 28 tests, 92 assertions and zero failures, errors or skips.
+The combined reviewed executor SHA256 is
+`ddee6987912b661cebf531aaded4b8dd1f90e248db30ea87d271b494662b6175`.
+Verification is repeated read-only; no role is reapplied to these contacts.
+
+### Final role application and historical reminder boundary
+
+All 28 bound contacts passed persisted, provider, consent and asynchronous
+projection verification with the corrected verifier. Together with the earlier
+bound canary and the accepted successor below, 30 contacts are verified in
+existing Klaviyo profiles. No new profile was created.
+
+Two separately reviewed successor attempts completed the original no-write
+cases: contact195 had been held before mutation, and contact2361's original
+transaction had rolled back completely. Each successor bound the retained
+original attempt and accepted zero-write evidence to a fresh snapshot. The
+original ledgers remain unchanged; each successor has its own exclusive attempt
+file. Contact195 is provider-verified; contact2361 remains local pending identity.
+There was no repeat application to any previously committed contact.
+
+The approved 147-contact application cohort therefore closes with 142 applied:
+112 local/provider-pending and 30 provider-verified. Five remain held. The final
+membership check finds deleted history for contact239, so its role row retains
+only the identifier/reason and does not claim current conversation membership.
+The other four holds are three absent existing exact profiles and one ownership
+ambiguity. Separately, 45 contact-role proposal groups were never semantically
+approved; they are not part of this 147-contact application cohort.
+
+The actual reminder consumer was read at 12:31:58 UTC. None of the 158 historical
+conversation targets appeared in its eligible queue or planned actions. The
+global queue contained seven unrelated targets; this is not a claim that the
+whole operational queue was empty. No message was sent by this check.
+
+Final receipt: `historical-role-application-final.json`, SHA256
+`bf77701564be8d490582a900d08f773f096d8167386df2fad855215de6ba2d7b`.
+It records 140 influencer and two wholesale applications, 145 native private
+notes/projections and 146 verified current contact memberships. Source bindings
+are retained separately in `historical-role-final-execution-source-bindings.json`,
+SHA256 `968c2ce80602fa25e27ccb11f32c74ce637aba58ec29d2233050b311d2cafa20`.
+
+### Final audit delivery — 2 October, 12:42 UTC
+
+The six-page archive PDF was rendered and all pages visually checked. Its
+figures, examples and remaining limitations passed independent factual review.
+The current CSV contains 1,095 unique conversation rows with classification,
+customer-role application, evidence/note references, provider outcome and
+projection context. Every row explicitly disables automatic execution. Deleted
+history remains minimal; blank role cells do not mean a negative role, and the
+45 semantically unapproved proposal groups are not represented as applied roles.
+
+Both files were sent once through Shumabit's existing Telegram helper. The
+returned chat and topic matched UMI Orders; receipts were persisted and copied
+locally. The PDF's short Russian caption gives the main results and coaching
+priorities, with the detailed report attached. Delivery acceptance:
+
+- PDF: message22759 at 12:42:31 UTC; SHA256
+  `f72c61bb6648aa3e1a6b1f1580ec5af07d1db74ee49900b5d021afc5cfd00cb3`;
+  receipt `archive-pdf-delivery-receipt.json`.
+- CSV: message22760 at 12:42:45 UTC; SHA256
+  `ca8201d01182c0f5b47e251f66e790fed4dfb764d59cb15f787d7e3ab2bdc007`;
+  receipt `review-register-delivery-receipt.json`.
+
+The earlier scheduled report and Mai guide were not resent. The corrected local
+guide and the archive report clarify the influencer evidence rule. No public
+customer message, fabricated purchase or historical Meta replay was part of this
+delivery. The next natural quality-report/reminder observations, advertising
+comment coverage, deferred command feedback and Meta permission/optimization
+acceptance remain the explicit follow-ups above.
