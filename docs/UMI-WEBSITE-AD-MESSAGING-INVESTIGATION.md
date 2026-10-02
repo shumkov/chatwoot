@@ -97,12 +97,13 @@ It used Events Manager test code `TEST98219`, its synthetic `ig_sid: "0"`, and
 supplied. The preceding request using `instagram_business_account_id` was
 rejected with HTTP 400/code 100/subcode 2804079, explicitly requiring
 `ig_account_id`. The same configured account ID was accepted after changing the
-field name; no new account-ID mapping is needed.
+field name. This proves removal of the field-name rejection, not account/sender
+matching; subsequent ID comparisons are recorded in the release acceptance note.
 
-This pins a one-field correction in the Purchase payload builder. A focused
-regression must fail on the old field and pass on `ig_account_id`; Messenger
-identity and channel/source/payment gates remain unchanged. Release 24 still
-contains the old field until the corrected application release is deployed.
+The focused regression failed on the old field; after the one-field correction,
+all 53 focused examples passed. Messenger identity and channel/source/payment
+gates remain unchanged. Release 25 was deployed and verified at 18:17:30 UTC on
+2 October; see the [acceptance record](UMI-META-RELEASE25-ACCEPTANCE.md).
 
 API acceptance proves test-event transport. The Events Manager UI has not yet
 shown a matching event record. It does not establish a real Purchase, attribution
@@ -116,6 +117,9 @@ Private receipts in the historical-audit artifact directory:
 `meta-token-rotation/accepted.json`, `meta-token-rotation/final-check.json`,
 `meta-ig-rejected-test-diagnostic-receipt-20261002.json`, and
 `meta-ig-fieldcheck-receipt-20261002.json`. Credential values are excluded.
+
+Later [release 25 acceptance](UMI-META-RELEASE25-ACCEPTANCE.md) records successful
+Instagram-only configuration validation and the remaining Purchase evidence.
 
 ## What our existing capture covers
 

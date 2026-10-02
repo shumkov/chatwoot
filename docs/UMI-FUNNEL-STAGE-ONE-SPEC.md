@@ -19,8 +19,9 @@ accepted an Instagram technical TestEvent after correcting the user-data key to
 `ig_account_id`; the application fix and release are tracked in the
 [current verification record](UMI-WEBSITE-AD-MESSAGING-INVESTIGATION.md#instagram-event-transport-verification-3-october-bangkok).
 Purchase channels stay disabled until genuine eligible paid-source/provider
-acceptance. TestEvent acceptance does not close that gate or Instagram-only
-optimization. Renew Page-token data access before 31 December 2026, 23:34:46 Bangkok.
+acceptance. TestEvent acceptance does not close that gate. The later
+[release 25 acceptance record](UMI-META-RELEASE25-ACCEPTANCE.md) confirms Instagram-only
+configuration validation, while launch acceptance and actual event matching remain open. Renew Page-token data access before 31 December 2026, 23:34:46 Bangkok.
 
 ## Goal Capsule
 

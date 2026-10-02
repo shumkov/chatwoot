@@ -8,8 +8,10 @@ The access observations below are the historical 30 September checkpoint.
 Advanced `instagram_manage_events` is now granted. The dedicated production
 funnel Page credential was rotated, and v23 accepts an Instagram technical
 TestEvent using `ig_account_id`. See the [current access and transport receipt](UMI-WEBSITE-AD-MESSAGING-INVESTIGATION.md#instagram-event-transport-verification-3-october-bangkok).
-Real Purchase delivery, matching Events Manager evidence and Instagram-only
-optimization remain unverified; Purchase channels remain disabled. The Page
+The later [release 25 acceptance record](UMI-META-RELEASE25-ACCEPTANCE.md) includes
+successful Instagram-only configuration validation. Real Purchase delivery,
+matching Events Manager evidence and launch acceptance remain unverified;
+Purchase channels remain disabled. The Page
 credential has a finite data-access expiry: 31 December 2026, 23:34:46 Bangkok.
 
 ## Verified assets and access
