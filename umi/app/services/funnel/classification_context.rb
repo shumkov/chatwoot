@@ -42,11 +42,13 @@ class Umi::Funnel::ClassificationContext
 
   private
 
-  def fresh_evidence(incoming, correction)
+  def fresh_evidence(incoming, correction) # rubocop:disable Metrics/CyclomaticComplexity
+    historical = Umi::Funnel::HistoricalClassification.reviewed_event(@conversation)
     live_ids = Umi::Funnel::ConversationClassifier.sources.where(conversation_id: @conversation.id)
                                                   .pluck(Arel.sql("(payload ->> 'message_id')::bigint")).to_set
     incoming.select do |message|
       live_ids.include?(message.id) && message.created_at >= @boundary &&
+        Umi::Funnel::HistoricalClassification.fresh_evidence?(message, historical) &&
         (!correction || (message.id > correction.payload['input_message_id'].to_i && message.created_at > correction.observed_at))
     end.map(&:id)
   end
