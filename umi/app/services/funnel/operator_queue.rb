@@ -184,6 +184,7 @@ class Umi::Funnel::OperatorQueue
       { id: message.id, created_at: message.created_at.utc.iso8601(6), direction: message.message_type, private: message.private?,
         delivery_status: message.failed? ? 'failed' : 'sent',
         human: message.send(:human_response?) && !message.send(:bot_response?),
+        auto_reply: message.auto_reply_email?,
         content: digest_content ? message[:content_digest] : message.content.to_s,
         attachment_types: Array(@attachments[message.id]).map(&:file_type),
         recovered: message.content_attributes['umi_recovered'] == true,

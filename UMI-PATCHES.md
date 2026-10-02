@@ -57,6 +57,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 49 | Read-only operator reminder facts | `umi/app/services/funnel/operator_queue.rb`, UMI operator queue controller/routes and focused service/request specs | Complete scoped context, revision-bound keyset queue, explicit live-activity boundary and daily Bangkok human-response timers for internal operator reminders. Old history stays available without triggering the live queue. Reuses funnel account/classifier inbox allowlists independently of classifier mode; no customer sends or new background service. | Native operator reminders provide equivalent full-history promises, human-response timing and freshness-bound internal delivery. |
 
+| 51 | Automatic-email fact for weekly quality selection | `umi/app/services/funnel/operator_queue.rb`, `spec/services/umi/funnel/operator_queue_spec.rb` | Exposes the native automatic-email boolean in full message context so weekly quality reports exclude automatic replies without duplicating email parsing. Changes remain bound to the queue revision. | Native conversation reporting exposes equivalent automatic-message provenance. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
