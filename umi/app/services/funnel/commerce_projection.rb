@@ -45,8 +45,12 @@ class Umi::Funnel::CommerceProjection
   end
 
   def classification
-    Umi::ConversationEvent.where(account_id: @conversation.account_id, conversation_id: @conversation.id,
-                                 contact_id: @conversation.contact_id, event_type: 'classification_changed', redacted_at: nil)
-                          .order(id: :desc).first&.payload&.fetch('status') || 'unevaluated'
+    live = Umi::ConversationEvent.where(account_id: @conversation.account_id, conversation_id: @conversation.id,
+                                        contact_id: @conversation.contact_id, event_type: 'classification_changed', redacted_at: nil)
+                                 .order(id: :desc).first
+    return live.payload.fetch('status') if live
+
+    status = Umi::Funnel::HistoricalClassification.applied_event(@conversation)&.payload&.dig('decision', 'status')
+    %w[engaged qualified not_sales].include?(status) ? status : 'unevaluated'
   end
 end

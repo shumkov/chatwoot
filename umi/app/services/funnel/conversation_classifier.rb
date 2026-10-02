@@ -204,7 +204,7 @@ class Umi::Funnel::ConversationClassifier
     previous_roles = contact.custom_attributes.slice(*Umi::Funnel::Configuration::ROLES.keys)
     prior_qualification = Umi::ConversationEvent.exists?(conversation_id: @conversation.id, event_type: 'conversation_qualified', redacted_at: nil)
     preserved_qualification = prior_qualification && %w[not_sales unevaluated].exclude?(latest_correction&.payload&.[]('status'))
-    unless preserved_qualification || %w[qualified order_placed purchased].include?(@conversation.custom_attributes['umi_sales_status'])
+    unless preserved_qualification || %w[order_placed purchased].include?(@conversation.custom_attributes['umi_sales_status'])
       Umi::Funnel::ConversationTransition.new(conversation: @conversation, status: decision.fetch('status'), actor: nil,
                                               reason: decision.fetch('reason'), evidence_message_ids: decision.fetch('evidence_message_ids'),
                                               classifier: { 'model' => @model, 'policy_version' => POLICY_VERSION,

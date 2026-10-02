@@ -39,14 +39,17 @@ class Umi::Funnel::ConversationTransition
 
   def transition!
     previous = @conversation.custom_attributes['umi_sales_status'] || 'unevaluated'
-    return if @classifier && %w[qualified order_placed purchased].include?(previous)
+    qualified = previous == 'qualified' && Umi::ConversationEvent.exists?(conversation_id: @conversation.id,
+                                                                          event_type: 'conversation_qualified', redacted_at: nil)
+    return if @classifier && (qualified || %w[order_placed purchased].include?(previous))
 
     latest = Umi::ConversationEvent.where(conversation_id: @conversation.id, event_type: 'classification_changed').order(id: :desc).first
     return latest if latest && latest.payload['status'] == @status && latest.payload['reason'] == @reason && latest.evidence_message_ids == @ids
 
+    historical = Umi::Funnel::HistoricalClassification.reviewed_event(@conversation)
     eligible = @conversation.messages.where(id: @ids).reorder(:id).lock.select do |message|
       message.incoming? && !message.private? && !message.content_attributes['umi_recovered'] && !message.content_attributes['deleted'] &&
-        message.created_at >= Umi::Funnel::Configuration.started_at
+        message.created_at >= Umi::Funnel::Configuration.started_at && Umi::Funnel::HistoricalClassification.fresh_evidence?(message, historical)
     end
     eligible = eligible.filter_map { |message| Umi::Funnel::EventRecorder.capture_message(message) }
                        .select { |event| event.provenance == 'live' && event.occurred_at && !event.redacted_at }
