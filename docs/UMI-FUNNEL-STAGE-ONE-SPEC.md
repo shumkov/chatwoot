@@ -12,6 +12,16 @@ origin: UMI-CRM-DATA-CONTRACT.md
 
 # Первый этап: подготовить систему к messaging campaigns
 
+## Meta access checkpoint — 3 October 2026 Bangkok
+
+Advanced access and production token authorization are complete. Graph v23
+accepted an Instagram technical TestEvent after correcting the user-data key to
+`ig_account_id`; the application fix and release are tracked in the
+[current verification record](UMI-WEBSITE-AD-MESSAGING-INVESTIGATION.md#instagram-event-transport-verification-3-october-bangkok).
+Purchase channels stay disabled until genuine eligible paid-source/provider
+acceptance. TestEvent acceptance does not close that gate or Instagram-only
+optimization. Renew Page-token data access before 31 December 2026, 23:34:46 Bangkok.
+
 ## Goal Capsule
 
 **Цель:** оператор принимает рекламные обращения, сразу понимает контекст клиента, получает автоматическую классификацию и видит связанные заказы/оплаты; Klaviyo получает корректные аудитории, Meta — только допустимые события, Shumabit — данные для пятничного отчёта.
