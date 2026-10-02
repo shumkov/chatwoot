@@ -181,9 +181,19 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
   %w[qualified order_placed purchased].each do |status|
     it "preserves #{status} when a later message asks for a refund" do
       Umi::Funnel::EventRecorder.capture_message(message)
-      conversation.project_umi_sales_status!(status)
-      decision.merge!('status' => 'not_sales', 'topics' => [{ 'label' => 'support-refund', 'evidence_message_ids' => [message.id] }],
-                      'reason' => 'Refund assistance')
+      if status == 'qualified'
+        Umi::Funnel::ConversationTransition.new(conversation: conversation, actor: create(:user, account: account), status: status,
+                                                reason: 'Requested a reservation', evidence_message_ids: [message.id]).perform
+      else
+        conversation.project_umi_sales_status!(status)
+      end
+      refund = create(:message, conversation: conversation, account: account, message_type: :incoming,
+                                content: 'How can I return it for a refund?', created_at: 40.seconds.ago)
+      Umi::Funnel::EventRecorder.capture_message(refund)
+      previous_events = Umi::ConversationEvent.where(event_type: %w[classification_changed conversation_qualified]).pluck(:id)
+      previous_deliveries = Umi::ConversionDelivery.pluck(:id)
+      decision.merge!('status' => 'not_sales', 'topics' => [{ 'label' => 'support-refund', 'evidence_message_ids' => [refund.id] }],
+                      'reason' => 'Refund assistance', 'evidence_message_ids' => [refund.id])
       client = instance_double(Umi::Funnel::ClassificationClient, classify: decision)
       allow(Umi::Funnel::ClassificationClient).to receive(:new).and_return(client)
       with_modified_env UMI_FUNNEL_CLASSIFIER_MODE: 'auto' do
@@ -191,7 +201,8 @@ RSpec.describe 'Automatic conversation classification' do # rubocop:disable RSpe
       end
       expect(conversation.reload.custom_attributes['umi_sales_status']).to eq(status)
       expect(conversation.label_list).to include('support-refund')
-      expect(Umi::ConversationEvent.where(event_type: 'classification_changed')).to be_empty
+      expect(Umi::ConversationEvent.where(event_type: %w[classification_changed conversation_qualified]).pluck(:id)).to eq(previous_events)
+      expect(Umi::ConversionDelivery.pluck(:id)).to eq(previous_deliveries)
     end
   end
 

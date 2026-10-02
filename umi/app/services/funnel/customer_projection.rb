@@ -35,11 +35,11 @@ class Umi::Funnel::CustomerProjection
     conversation.send(:save_cached_tag_list)
   end
 
-  def self.apply!(conversation, contact, initial: false, classification: nil)
+  def self.apply!(conversation, contact, initial: false, classification: nil, historical: false) # rubocop:disable Metrics/CyclomaticComplexity
     return if contact.additional_attributes['umi_profile_redacted']
-    return if conversation.resolved? && (!initial || !conversation.additional_attributes[KEY])
+    return if !historical && conversation.resolved? && (!initial || !conversation.additional_attributes[KEY])
 
-    assign(conversation, contact) unless conversation.resolved?
+    assign(conversation, contact) if historical || !conversation.resolved?
     summarize!(conversation, contact, classification: classification)
     conversation.save!
   end

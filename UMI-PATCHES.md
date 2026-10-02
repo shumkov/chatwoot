@@ -57,6 +57,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 49 | Read-only operator reminder facts | `umi/app/services/funnel/operator_queue.rb`, UMI operator queue controller/routes and focused service/request specs | Complete scoped context, revision-bound keyset queue, explicit live-activity boundary and daily Bangkok human-response timers for internal operator reminders. Old history stays available without triggering the live queue. Reuses funnel account/classifier inbox allowlists independently of classifier mode; no customer sends or new background service. | Native operator reminders provide equivalent full-history promises, human-response timing and freshness-bound internal delivery. |
 
+| 50 | Reviewed historical conversation classification | `umi/app/services/funnel/historical_classification.rb`, historical customer projection, live classifier/context/transition and commerce fallback; focused historical and concurrency specs; `docs/UMI-HISTORICAL-CRM-AUDIT-SPEC.md` | Applies reviewed full-history classifications and customer labels to unchanged archives without reopening chats or producing advertising outcomes. Keeps manual corrections and live commerce authoritative, records one private summary, and permits later genuine buying intent to qualify with new evidence. | Historical enrichment is accepted and no retained reconstruction needs this writer; retain the evidence boundary until an equivalent native mechanism replaces it. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
