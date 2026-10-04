@@ -5,6 +5,7 @@ class Umi::Funnel::SegmentRefreshJob < MutexApplicationJob
   SEGMENTS = { 'chooser' => 'SS6aWp', 'seeker' => 'RUy6Wc' }.freeze
   METRICS = { 'site' => ['Active on Site', 'api'], 'product' => ['Viewed Product', 'api'],
               'cart' => ['Added to Cart', 'shopify'], 'checkout' => ['Checkout Started', 'shopify'] }.freeze
+  RECENT_INTENT_NAME = 'UMI - Recent conversation intent'
 
   # rubocop:disable Metrics/AbcSize
   def perform(account_id)
@@ -31,7 +32,8 @@ class Umi::Funnel::SegmentRefreshJob < MutexApplicationJob
   # rubocop:disable Metrics/AbcSize
   def refresh
     client = Umi::Funnel::KlaviyoClient.new
-    validate_segments!(client)
+    metrics = client.metrics
+    validate_segments!(client, metrics)
     contacts = Contact.where(account_id: @account.id).select { |contact| Umi::Funnel::CustomerContextSync.eligible?(contact) }
     versions = contacts.to_h { |contact| [contact.id, Umi::Funnel::CustomerContextSync.version(contact)] }
     linked = versions.values.pluck('profile_id').to_set
@@ -43,17 +45,114 @@ class Umi::Funnel::SegmentRefreshJob < MutexApplicationJob
     observed_at = Time.current.utc.iso8601
     contacts.each { |contact| publish(contact, versions.fetch(contact.id), observations, observed_at) }
     record_status('error' => nil, 'checked_at' => observed_at, 'next_sync_at' => 5.minutes.from_now.utc.iso8601)
+    refresh_recent_intent(client, metrics)
   end
   # rubocop:enable Metrics/AbcSize
 
-  def validate_segments!(client)
-    expected = definitions(client.metrics)
+  def validate_segments!(client, metrics)
+    expected = definitions(metrics)
     SEGMENTS.each do |name, id|
       segment = client.segment(id)
       next if segment['id'] == id && segment.dig('attributes', 'name') == "UMI - #{name.capitalize}" &&
               segment.dig('attributes', 'definition') == expected.fetch(name)
 
       raise Umi::Funnel::KlaviyoClient::Error, 'Configured segment definition differs'
+    end
+  end
+
+  # rubocop:disable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+  def refresh_recent_intent(client, metrics)
+    return unless Umi::Funnel::Configuration.enabled?(@account.id) && Umi::Funnel::DeliveryAutomation.enabled?('klaviyo')
+
+    state = @account.reload.custom_attributes.dig('umi_segment_refresh', 'recent_intent').to_h
+    return if state['next_check_at'].present? && Time.iso8601(state['next_check_at']) > Time.current
+    unless state['segment_id'].present? || state['create_attempted_at'].present? || confirmed_qualification?
+      return record_recent_intent('status' => 'awaiting_qualification')
+    end
+
+    matches = metrics.select do |metric|
+      metric.dig('attributes', 'name') == Umi::Funnel::DeliveryService::METRICS.fetch('conversation_qualified') &&
+        metric.dig('attributes', 'integration', 'key') == 'api'
+    end
+    return record_recent_intent('status' => 'awaiting_metric') if matches.empty?
+
+    raise Umi::Funnel::KlaviyoClient::Error, 'Ambiguous qualification metric' unless matches.one?
+
+    metric_id = matches.first.fetch('id')
+    definition = { condition_groups: [{ conditions: [activity_condition(metric_id)] }] }.deep_stringify_keys
+    record_recent_intent('metric_id' => metric_id) if state['metric_id'] != metric_id
+    id = state['segment_id']
+    if id.blank?
+      segments = client.segments(name: RECENT_INTENT_NAME)
+      raise Umi::Funnel::KlaviyoClient::Error, 'Duplicate recent-intent segments' if segments.many?
+
+      segment = segments.first
+      if segment
+        validate_recent_intent!(segment, definition)
+        id = segment.fetch('id')
+        record_recent_intent('segment_id' => id, 'status' => 'awaiting_readback')
+      elsif state['create_attempted_at'].present?
+        return record_recent_intent('status' => 'creation_unknown')
+      else
+        id = create_recent_intent(client, definition)
+        return unless id
+      end
+    end
+    segment = client.segment(id)
+    raise Umi::Funnel::KlaviyoClient::Error, 'Recent-intent segment ID differs' unless segment['id'] == id
+
+    validate_recent_intent!(segment, definition)
+    record_recent_intent('status' => 'ready', 'last_error' => nil, 'next_check_at' => nil)
+  rescue Umi::Funnel::KlaviyoClient::Error => e
+    delay = e.is_a?(Umi::Funnel::KlaviyoClient::RateLimited) ? e.retry_after.seconds : 15.minutes
+    record_recent_intent('status' => 'error', 'last_error' => e.message, 'next_check_at' => delay.from_now.utc.iso8601)
+    Rails.logger.warn("[umi-funnel] recent-intent segment #{@account.id}: #{e.class.name}")
+  end
+  # rubocop:enable Metrics/AbcSize, Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+
+  def confirmed_qualification?
+    Umi::ConversionDelivery.joins(:conversation_event)
+                           .where(destination: 'klaviyo', state: 'confirmed')
+                           .where.not(confirmed_at: nil).where.not(provider_reference: nil)
+                           .exists?(umi_conversation_events: { account_id: @account.id, event_type: 'conversation_qualified', redacted_at: nil,
+                                                               provenance: %w[operator classifier],
+                                                               occurred_at: Umi::Funnel::Configuration.started_at..Time.current })
+  end
+
+  def create_recent_intent(client, definition) # rubocop:disable Metrics/AbcSize
+    claimed = @account.with_lock do
+      state = @account.custom_attributes.dig('umi_segment_refresh', 'recent_intent').to_h
+      next false if state['segment_id'].present? || state['create_attempted_at'].present?
+      next false if state['next_check_at'].present? && Time.iso8601(state['next_check_at']) > Time.current
+
+      record_recent_intent('status' => 'creating', 'create_attempted_at' => Time.current.utc.iso8601)
+      true
+    end
+    return unless claimed
+
+    begin
+      segment = client.create_segment(name: RECENT_INTENT_NAME, definition: definition)
+    rescue Umi::Funnel::KlaviyoClient::RateLimited => e
+      record_recent_intent('create_attempted_at' => nil, 'status' => 'error', 'last_error' => e.message,
+                           'next_check_at' => e.retry_after.seconds.from_now.utc.iso8601)
+      return
+    end
+    id = segment.fetch('id')
+    record_recent_intent('segment_id' => id, 'status' => 'awaiting_readback')
+    id
+  end
+
+  def validate_recent_intent!(segment, definition)
+    return if segment.dig('attributes', 'name') == RECENT_INTENT_NAME && segment.dig('attributes', 'definition') == definition
+
+    raise Umi::Funnel::KlaviyoClient::Error, 'Recent-intent definition differs'
+  end
+
+  def record_recent_intent(values)
+    @account.with_lock do
+      state = @account.custom_attributes.fetch('umi_segment_refresh', {})
+      recent = state.fetch('recent_intent', {}).merge(values).merge('checked_at' => Time.current.utc.iso8601)
+      @account.update!(custom_attributes: @account.custom_attributes.merge('umi_segment_refresh' => state.merge('recent_intent' => recent)))
     end
   end
 

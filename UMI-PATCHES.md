@@ -69,6 +69,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 55 | Private settlement command progress | `umi/app/services/funnel/settlement_command.rb`, focused settlement/request/race specs; command feedback specification | A private payment command immediately acknowledges queueing and edits the same note with its result. Preserves deleted messages, privacy erasure and existing payment/Meta eligibility. | Native conversation commerce provides equivalent private asynchronous command feedback. |
 
+| 56 | Automatic recent conversation audience | `umi/app/jobs/funnel/segment_refresh_job.rb`, `umi/app/services/funnel/klaviyo_client.rb`, focused job/client specs; recent-intent specification | Provisions the native 30-day Klaviyo audience after a genuine confirmed qualification, with provider readback and one durable create claim. Reuses existing scheduler and keeps Chooser/Seeker refresh independent. | Native integration automatically provisions the equivalent audience from confirmed conversation outcomes. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
