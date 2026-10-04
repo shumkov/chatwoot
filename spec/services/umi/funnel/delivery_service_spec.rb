@@ -7,11 +7,13 @@ RSpec.describe Umi::Funnel::DeliveryService do
   let(:conversation) { create(:conversation, account: account) }
   let(:contact) { conversation.contact }
   let(:occurred_at) { 1.hour.ago.change(usec: 0) }
+  let(:messaging_channel) { 'messenger' }
   let(:event) do
     Umi::ConversationEvent.record!(account_id: account.id, conversation_id: conversation.id, contact_id: contact.id,
                                    event_type: 'conversation_qualified', occurrence_key: "conversation:#{conversation.id}:qualified",
                                    occurred_at: occurred_at, observed_at: Time.current, provenance: 'operator',
-                                   payload: { 'messaging_channel' => 'messenger', 'page_id' => '123', 'scoped_user_id' => '456',
+                                   payload: { 'messaging_channel' => messaging_channel, 'page_id' => '123', 'scoped_user_id' => '456',
+                                              'instagram_id' => '987',
                                               'qualification_reason' => 'Requested fitting' })
   end
   let(:delivery) { event.conversion_deliveries.find_by!(destination: 'meta') }
@@ -45,6 +47,48 @@ RSpec.describe Umi::Funnel::DeliveryService do
     service.dispatch
 
     expect(delivery.reload).to have_attributes(state: 'pending', attempt_count: 0, reason: 'dispatch_disabled')
+  end
+
+  context 'when a qualified lead comes from Instagram' do
+    let(:messaging_channel) { 'instagram' }
+
+    around do |example|
+      with_modified_env UMI_FUNNEL_META_INSTAGRAM_ID: '987' do
+        example.run
+      end
+    end
+
+    it 'prepares Instagram qualification instead of excluding the active advertising channel' do
+      service.prepare
+
+      expect(delivery.reload).to have_attributes(state: 'pending', reason: nil, destination_key: '987:789')
+      expect(delivery.payload['data']).to eq([{ 'event_name' => 'QualifiedLead', 'event_time' => occurred_at.to_i,
+                                                'action_source' => 'business_messaging', 'messaging_channel' => 'instagram',
+                                                'user_data' => { 'ig_account_id' => '987', 'ig_sid' => '456' } }])
+      expect(a_request(:post, /graph.facebook.com/)).not_to have_been_made
+    end
+
+    it 'does not send an Instagram qualification for a different business account' do
+      with_modified_env UMI_FUNNEL_META_INSTAGRAM_ID: '999', UMI_FUNNEL_META_ENABLED: 'true' do
+        service.dispatch
+      end
+
+      expect(delivery.reload).to have_attributes(state: 'excluded', reason: 'channel_identity_mismatch', attempt_count: 0)
+      expect(a_request(:post, /graph.facebook.com/)).not_to have_been_made
+    end
+  end
+
+  context 'when a qualification comes from an unsupported messaging channel' do
+    let(:messaging_channel) { 'other' }
+
+    it 'does not export it' do
+      with_modified_env UMI_FUNNEL_META_ENABLED: 'true' do
+        service.dispatch
+      end
+
+      expect(delivery.reload).to have_attributes(state: 'excluded', reason: 'channel_not_enabled', attempt_count: 0)
+      expect(a_request(:post, /graph.facebook.com/)).not_to have_been_made
+    end
   end
 
   it 'commits the claim before sending once and does not send an accepted event again' do

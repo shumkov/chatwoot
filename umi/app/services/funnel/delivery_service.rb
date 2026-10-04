@@ -260,7 +260,8 @@ class Umi::Funnel::DeliveryService
   def meta_payload(event)
     return purchase_payload(event) if event.event_type == 'order_paid'
 
-    if event.payload['messaging_channel'] != 'messenger'
+    channel = event.payload['messaging_channel']
+    if %w[messenger instagram].exclude?(channel)
       mark!('excluded', 'channel_not_enabled')
       return []
     end
@@ -268,19 +269,22 @@ class Umi::Funnel::DeliveryService
       mark!('excluded', 'event_too_old')
       return []
     end
-    page = ENV.fetch('UMI_FUNNEL_META_PAGE_ID')
+    asset = ENV.fetch(channel == 'instagram' ? 'UMI_FUNNEL_META_INSTAGRAM_ID' : 'UMI_FUNNEL_META_PAGE_ID')
     dataset = ENV.fetch('UMI_FUNNEL_META_DATASET_ID')
-    raise ArgumentError, 'Invalid Meta destination IDs' unless [page, dataset].all? { |id| id.match?(/\A[1-9]\d*\z/) }
+    asset_key = channel == 'instagram' ? 'instagram_id' : 'page_id'
+    user_asset_key = channel == 'instagram' ? 'ig_account_id' : 'page_id'
+    scoped_key = channel == 'instagram' ? 'ig_sid' : 'page_scoped_user_id'
+    raise ArgumentError, 'Invalid Meta destination IDs' unless [asset, dataset].all? { |id| id.match?(/\A[1-9]\d*\z/) }
 
-    if event.payload['page_id'] != page || !event.payload['scoped_user_id'].to_s.match?(/\A[1-9]\d*\z/)
+    if event.payload[asset_key] != asset || !event.payload['scoped_user_id'].to_s.match?(/\A[1-9]\d*\z/)
       mark!('excluded', 'channel_identity_mismatch')
       return []
     end
     payload = { 'data' => [{ 'event_name' => 'QualifiedLead', 'event_time' => event.occurred_at.to_i,
-                             'action_source' => 'business_messaging', 'messaging_channel' => 'messenger',
-                             'user_data' => { 'page_id' => page, 'page_scoped_user_id' => event.payload['scoped_user_id'] } }] }
+                             'action_source' => 'business_messaging', 'messaging_channel' => channel,
+                             'user_data' => { user_asset_key => asset, scoped_key => event.payload['scoped_user_id'] } }] }
     payload['test_event_code'] = ENV['UMI_FUNNEL_META_TEST_EVENT_CODE'] if ENV['UMI_FUNNEL_META_TEST_EVENT_CODE'].present?
-    [payload, "#{page}:#{dataset}"]
+    [payload, "#{asset}:#{dataset}"]
   end
 
   def purchase_payload(event)

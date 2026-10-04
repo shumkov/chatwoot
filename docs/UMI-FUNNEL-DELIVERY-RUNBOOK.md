@@ -14,6 +14,13 @@ Messenger configuration uses `UMI_FUNNEL_META_ACCOUNT_ID=1`,
 `UMI_FUNNEL_META_PAGE_ID=516819784857962`,
 `UMI_FUNNEL_META_DATASET_ID=1540380063308828` and the secret
 `UMI_FUNNEL_META_ACCESS_TOKEN`. `UMI_FUNNEL_META_ENABLED` defaults false.
+Instagram qualification uses the same dataset, token and destination switch,
+with `UMI_FUNNEL_META_INSTAGRAM_ID=17841468119523354`. It sends `QualifiedLead`
+using the original occurrence time and Instagram-scoped identity. Qualification
+does not require a purchase or Klaviyo profile binding. Setting
+`UMI_FUNNEL_META_PURCHASE_CHANNELS=instagram` additionally enables future verified
+paid-in-chat outcomes; it does not turn website checkout into a messaging sale.
+See the [activation contract](UMI-INSTAGRAM-OUTCOME-ACTIVATION-SPEC.md).
 For an approved Events Manager test, set `UMI_FUNNEL_META_TEST_EVENT_CODE` before
 preparing its event. That code becomes part of the frozen payload; changing ENV
 later does not turn the same recorded test into a production conversion.

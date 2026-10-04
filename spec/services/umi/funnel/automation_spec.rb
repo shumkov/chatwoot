@@ -6,11 +6,13 @@ RSpec.describe 'Funnel automation' do # rubocop:disable RSpec/DescribeClass
   let(:account) { create(:account) }
   let(:conversation) { create(:conversation, account: account) }
   let(:contact) { conversation.contact }
+  let(:messaging_channel) { 'messenger' }
   let(:event) do
     Umi::ConversationEvent.record!(account_id: account.id, contact_id: contact.id, conversation_id: conversation.id,
                                    event_type: 'conversation_qualified', occurrence_key: "conversation:#{conversation.id}:qualified",
                                    occurred_at: 1.hour.ago, observed_at: Time.current, provenance: 'operator',
-                                   payload: { 'messaging_channel' => 'messenger', 'page_id' => '123', 'scoped_user_id' => '456' })
+                                   payload: { 'messaging_channel' => messaging_channel, 'page_id' => '123', 'scoped_user_id' => '456',
+                                              'instagram_id' => '987' })
   end
   let(:delivery) { event.conversion_deliveries.find_by!(destination: 'meta') }
 
@@ -53,6 +55,29 @@ RSpec.describe 'Funnel automation' do # rubocop:disable RSpec/DescribeClass
     expect(lookup).to have_been_requested.once
     expect(send_event).to have_been_requested.once
     expect(a_request(:post, %r{/profiles})).not_to have_been_made
+  end
+
+  context 'with an Instagram qualification' do
+    let(:messaging_channel) { 'instagram' }
+
+    it 'automatically sends once without waiting for a purchase or Klaviyo identity' do
+      contact.update!(email: nil, phone_number: nil)
+      delivery
+      request = stub_request(:post, 'https://graph.facebook.com/v23.0/789/events')
+                .with(body: { data: [{ event_name: 'QualifiedLead', event_time: event.occurred_at.to_i,
+                                       action_source: 'business_messaging', messaging_channel: 'instagram',
+                                       user_data: { ig_account_id: '987', ig_sid: '456' } }] })
+                .to_return(status: 200, body: '{"events_received":1,"fbtrace_id":"ig-qualified-receipt"}')
+
+      with_modified_env UMI_FUNNEL_META_INSTAGRAM_ID: '987', UMI_FUNNEL_META_PURCHASE_CHANNELS: '' do
+        expect { Umi::Funnel::DeliveryAutomation.enqueue }.to have_enqueued_job(Umi::Funnel::DeliveryJob).with(delivery.id)
+        2.times { Umi::Funnel::DeliveryJob.perform_now(delivery.id) }
+      end
+
+      expect(request).to have_been_requested.once
+      expect(delivery.reload).to have_attributes(state: 'accepted', attempt_count: 1, provider_reference: 'ig-qualified-receipt')
+      expect(contact.reload.additional_attributes['umi_klaviyo_profile_id']).to be_nil
+    end
   end
 
   it 'rotates already-unbound identities so the 101st deliverable outcome can run' do
