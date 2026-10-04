@@ -12,6 +12,13 @@ origin: UMI-CRM-DATA-CONTRACT.md
 
 # Первый этап: подготовить систему к messaging campaigns
 
+## Latest closure work - 5 October 2026
+
+Use the [current closure record](UMI-STAGE-CLOSURE-2026-10-05.md) for delivery,
+provider observations and remaining decisions. It links the narrow automatic
+recent-intent and private command-feedback patches and the Linh/Mai handoffs.
+Earlier status paragraphs below are dated evidence, not current activation flags.
+
 ## Instagram activation decision — 4 October 2026
 
 The user requests automatic IG qualification feedback and enabled future

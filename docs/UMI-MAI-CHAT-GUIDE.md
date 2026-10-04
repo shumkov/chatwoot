@@ -1,6 +1,6 @@
 # UMI chat guide for Mai
 
-2 October 2026. Use this with the current product, delivery and returns information.
+5 October 2026. Use this with the current product, delivery and returns information.
 Examples below show how to structure a reply; they are not promises about stock,
 fit, prices, delivery dates or policy.
 
@@ -18,6 +18,25 @@ check something, acknowledge the exact question and give a time you can meet.
 Acknowledge, then do the check: an acknowledgement does not finish the task.
 Chatwoot is the first notification. Telegram adds a reminder after ten working
 minutes when a reply may still be needed; there is no extra three-minute alert.
+
+## What you see in Chatwoot
+
+| Visible fact | Meaning / action |
+| --- | --- |
+| `client` | One verified paid purchase. |
+| `repeat` | At least two verified paid purchases; this person can still be asking about support now. |
+| `chooser` / `seeker` | Recent browsing/product interest, or cart/checkout intent, for a verified non-buyer. These are website behavior, not a payment. |
+| `vip`, `influencer`, `model`, `wholesale`, `high-value` | Independent customer roles. Several may apply at once. Correct the contact attribute, not its display label. |
+| `barter` | Confirmed barter history, kept separate from paid purchase history. A free collaboration order is not a paid sale. |
+| `lead-qualified` / `lead-converted` | Display of the conversation's qualified / purchased state. Read Sales status and the linked evidence for detail. |
+| `source-paid-ads` | Recorded advertising referral evidence. This is not proof that a sale was attributed to an ad. |
+| `intent-*` / `support-*` | Conversation topics. Size, colour and refund topics can coexist; correct ordinary topic labels when needed. |
+
+The contact attributes are the facts; managed labels are their visible display.
+You do not maintain two independent copies. Private notes explain changes and
+customer matches. The compact mobile list may omit some labels, so open the
+conversation and latest summary before making assumptions. No label is not the
+same as an explicit "no" or "new customer".
 
 ## Six habits to use in every relevant conversation
 
@@ -78,9 +97,13 @@ invent a discount, product benefit, delivery promise or returns exception.
    If the purchase was actually settled in this chat, send the following as a
    **private note**, replacing the example with the visible Shopify order number:
    `/paid-in-chat #1234`.
-5. Wait for the private result. The command records where settlement happened;
+5. The private acknowledgement says the command is queued. Wait for that same
+   note to change to its result; queued does not mean applied. The command records where settlement happened;
    it does not create an order, mark it paid, link it, message the customer or prove
-   Meta accepted an event. Do not use it for payment completed at the shop.
+   Meta accepted an event. Do not use it for payment completed at the shop or
+   through a customer checkout link; checkout tracking belongs to Shopify.
+   If it stays queued, check the original command was not deleted and ask Ivan
+   before retrying. Deleting a note is not a payment reversal.
 6. To reverse a mistaken settlement confirmation, use
    `/paid-in-chat cancel #1234` and read the private result. A submitted Meta
    attempt may already be irreversible. Until the private result arrives, a
@@ -94,11 +117,15 @@ the actual payment record. A status label alone does not resolve that mismatch.
 
 ## Public comments on advertisements
 
-Current advertising is Instagram-only. The proposed shift routine is to check
-public comments under Instagram ads in Meta Business Suite; before adopting it,
-Ivan and Mai need to confirm access and review this instruction together. This
-routine has not yet been confirmed in use. Comments are separate from the Chatwoot DM queue and
-its Telegram reminders. Answer product questions using the same service rules;
+Current advertising is Instagram-only. Mai owns the manual comment check in
+Meta Business Suite: at the start of the shift and during regular queue checks,
+inspect comments on active Instagram ads. On the first shift using this guide,
+confirm with Ivan that the advertising comments are visible in your account;
+report missing access rather than assuming there are no comments. Adoption of
+this routine has not yet been verified.
+
+Comments are separate from the Chatwoot DM queue and its Telegram reminders.
+Answer product questions using the same service rules;
 move personal order or payment details into a private conversation. The Friday
 report does not yet measure public-comment response coverage or timing.
 
@@ -110,7 +137,8 @@ a concrete purchase discussion or meaningful product consultation. `not_sales`
 includes support, social and collaboration conversations; it does not mean spam.
 `order_placed` and `purchased` come from linked Shopify facts, not manual labels.
 
-Correct an ordinary topic label if needed. To change VIP, Influencer or Wholesale,
+Correct an ordinary topic label if needed. To change VIP, Influencer, Model,
+Wholesale or High value,
 edit the corresponding contact attribute; the visible managed labels follow it.
 Do not edit a managed label as a substitute for changing the underlying fact.
 Use `no` for an explicit correction, and `unknown` when the role is not established.
@@ -137,6 +165,15 @@ You do not need to approve every classification. When a judgment is wrong, tell
 Ivan the conversation number, which conclusion is wrong and why; point to the
 message or missing fact. The team uses those corrections to improve the rubric.
 Historical examples are for learning; they are not a new outreach list.
+
+## Start and end of shift
+
+At the start, check unanswered conversations, promised updates, linked order
+issues and public Instagram ad comments. Read Telegram's action summary, then
+open each relevant chat before acting. At the end, record outstanding promises
+and the next action clearly in a private note. Resolve or snooze a conversation
+only when that matches the work; changing its open/resolved state does not
+rewrite its customer or purchase history.
 
 ## Internal sources
 
