@@ -45,14 +45,15 @@ RSpec.describe Umi::Funnel::ReconcileJob do
   end
 
   it 'exhausts discovery pagination with a fixed updated-at window' do
+    since = 2.days.ago.utc.iso8601
     client = instance_double(ShopifyAPI::Clients::Rest::Admin)
     allow(Umi::Shopify::ClientFactory).to receive(:client_for).with(hook).and_return(client)
     first = instance_double(ShopifyAPI::Clients::HttpResponse, body: { 'orders' => [{ 'id' => 10 }] }, next_page_info: 'page-two')
     second = instance_double(ShopifyAPI::Clients::HttpResponse, body: { 'orders' => [{ 'id' => 20 }] }, next_page_info: nil)
-    allow(client).to receive(:get).with(path: 'orders', query: hash_including(status: 'any', fields: 'id', updated_at_min: 2.days.ago.utc.iso8601))
+    allow(client).to receive(:get).with(path: 'orders', query: hash_including(status: 'any', fields: 'id', updated_at_min: since))
                                   .and_return(first)
     allow(client).to receive(:get).with(path: 'orders', query: { page_info: 'page-two', limit: 250, fields: 'id' }).and_return(second)
-    result = Umi::Funnel::OrderRecovery.perform(account_id: account.id, since: 2.days.ago.utc.iso8601)
+    result = Umi::Funnel::OrderRecovery.perform(account_id: account.id, since: since)
     expect(result).to eq(requested: 2, completed_discovery: true)
     expect(Umi::ShopifyOrderFinancialState.pluck(:shopify_order_id)).to contain_exactly('10', '20')
   end

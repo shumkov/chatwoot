@@ -25,6 +25,75 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
 
   before { allow(client).to receive(:profile).with('P1', properties: true).and_return(profile) }
 
+  it 'imports a model role alongside influencer and keeps explicit operator corrections two-way' do
+    properties.merge!('umi_model' => true, 'umi_influencer' => true)
+    conversation
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(contact.reload.custom_attributes).to include('umi_model' => 'yes', 'umi_influencer' => 'yes')
+    expect(conversation.reload.label_list).to include('model', 'influencer')
+    { 'no' => false, 'unknown' => nil, 'yes' => true }.each do |value, remote|
+      Umi::Funnel::CustomerMutation.new(contact.reload, source: 'operator').perform(roles: { umi_model: value })
+      expect(client).to receive(:update_roles).with('P1', { 'umi_model' => value }) do
+        remote.nil? ? properties.delete('umi_model') : properties['umi_model'] = remote
+      end
+      sync.perform
+      expect(contact.reload.custom_attributes['umi_model']).to eq(value)
+      expect(contact.additional_attributes.dig('umi_klaviyo_sync', 'roles', 'umi_model', 'pending')).to be_nil
+    end
+  end
+
+  it 'shows barter history without adding paid orders and avoids notes for timestamp-only refreshes' do
+    conversation
+    properties['umi_barter_history'] = true
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(contact.reload.custom_attributes).to include('umi_barter_history' => true, 'umi_paid_order_count' => 0)
+    expect(conversation.reload.label_list).to include('barter')
+    expect(conversation.messages.where(private: true).last.content).to include('Barter history: yes (order marked barter).')
+    count = conversation.messages.where(private: true).count
+    properties['umi_payment_snapshot_at'] = 1.minute.ago.utc.iso8601
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count)
+  end
+
+  [false, nil, :absent].each do |value|
+    it "removes the barter label when a fresh provider snapshot has #{value.inspect} barter history" do
+      conversation
+      properties.merge!('umi_barter_history' => true, 'umi_payment_snapshot_at' => 5.minutes.ago.utc.iso8601)
+      sync.perform
+      Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+      expect(conversation.reload.label_list).to include('barter')
+      value == :absent ? properties.delete('umi_barter_history') : properties['umi_barter_history'] = value
+      properties['umi_payment_snapshot_at'] = Time.current.utc.iso8601
+      sync.perform
+      Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+      expect(contact.reload.custom_attributes['umi_barter_history']).to eq(value == false ? false : nil)
+      expect(conversation.reload.label_list).not_to include('barter')
+      summary = value == false ? 'Barter history: no tagged orders.' : 'Barter history: unknown.'
+      expect(conversation.messages.where(private: true).last.content).to include(summary)
+    end
+  end
+
+  it 'retains verified barter history when the shared source snapshot expires' do
+    conversation
+    properties['umi_barter_history'] = true
+    sync.perform
+    properties.merge!('umi_barter_history' => false, 'umi_payment_snapshot_at' => 3.hours.ago.utc.iso8601)
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(contact.reload.custom_attributes['umi_barter_history']).to be(true)
+    expect(conversation.reload.label_list).to include('barter')
+    expect(conversation.messages.where(private: true).last.content).to include('Customer data is stale; last verified facts retained.')
+  end
+
+  it 'rejects a non-boolean barter fact instead of treating text as a positive' do
+    properties['umi_barter_history'] = 'true'
+    expect { sync.perform }.to raise_error(Umi::Funnel::KlaviyoClient::Error, 'Invalid barter history')
+    expect(contact.reload.custom_attributes['umi_barter_history']).to be_nil
+  end
+
   %w[client repeat].product([false, true]).each do |previous_stage, count_present|
     it "clears a previous #{previous_stage} when Klaviyo returns unknown history with #{count_present ? 'null' : 'omitted'} count" do
       properties.merge!('umi_buyer_lifecycle' => previous_stage, 'umi_paid_order_count' => previous_stage == 'repeat' ? 2 : 1)

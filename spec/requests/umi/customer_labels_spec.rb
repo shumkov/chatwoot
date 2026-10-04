@@ -47,8 +47,10 @@ RSpec.describe 'Managed customer labels', type: :request do
 
   it 'provisions compatible definitions idempotently and prevents generic deletion' do
     2.times { Umi::Funnel::Configuration.provision!(account) }
-    expect(account.labels.count).to eq(22)
-    expect(account.custom_attribute_definitions.where(attribute_model: :contact_attribute).count).to eq(8)
+    expect(account.labels.count).to eq(24)
+    expect(account.custom_attribute_definitions.where(attribute_model: :contact_attribute).count).to eq(10)
+    expect(account.custom_attribute_definitions.find_by!(attribute_key: 'umi_model').attribute_values).to eq(%w[unknown yes no])
+    expect(account.custom_attribute_definitions.find_by!(attribute_key: 'umi_barter_history').attribute_display_type).to eq('checkbox')
     label = account.labels.find_by!(title: 'vip')
     delete "/api/v1/accounts/#{account.id}/labels/#{label.id}", headers: agent.create_new_auth_token
     expect(response).to have_http_status(:unprocessable_entity)

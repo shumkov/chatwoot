@@ -115,7 +115,7 @@ class Umi::Funnel::CustomerMutation
     membership = state['segments']
     state['status'] = state['buyer_lifecycle'] == 'non_buyer' && !fresh_membership?(membership) ? 'stale' : 'fresh'
     values = { 'umi_funnel_stage' => stage_for(state['buyer_lifecycle'], membership) }
-    %w[paid_order_count paid_history_complete payment_snapshot_at].each do |key|
+    %w[paid_order_count paid_history_complete payment_snapshot_at barter_history].each do |key|
       values["umi_#{key}"] = snapshot[key] if snapshot.key?(key)
     end
     @contact.custom_attributes = @contact.custom_attributes.merge(values)

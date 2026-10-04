@@ -3,12 +3,13 @@
 class Umi::Funnel::Configuration
   STATUSES = %w[unevaluated engaged qualified inactive not_sales order_placed purchased].freeze
 
-  ROLES = { 'umi_vip' => 'vip', 'umi_influencer' => 'influencer', 'umi_wholesale' => 'wholesale', 'umi_high_value' => 'high-value' }.freeze
+  ROLES = { 'umi_vip' => 'vip', 'umi_influencer' => 'influencer', 'umi_model' => 'model',
+            'umi_wholesale' => 'wholesale', 'umi_high_value' => 'high-value' }.freeze
   ROLE_VALUES = %w[unknown yes no].freeze
   STAGES = %w[unclassified non_buyer chooser seeker client repeat].freeze
-  CUSTOMER_LABELS = (%w[chooser seeker client repeat] + ROLES.values).freeze
+  CUSTOMER_LABELS = (%w[chooser seeker client repeat barter] + ROLES.values).freeze
   PROTECTED_LABELS = (CUSTOMER_LABELS + %w[lead-qualified lead-converted source-paid-ads]).freeze
-  DERIVED_FIELDS = %w[umi_funnel_stage umi_paid_order_count umi_paid_history_complete umi_payment_snapshot_at].freeze
+  DERIVED_FIELDS = %w[umi_funnel_stage umi_paid_order_count umi_paid_history_complete umi_payment_snapshot_at umi_barter_history].freeze
   CONTACT_FIELDS = (ROLES.keys + DERIVED_FIELDS).freeze
   TECHNICAL_KEYS = %w[umi_klaviyo_sync umi_customer_projection umi_klaviyo_profile_id umi_klaviyo_binding umi_profile_redacted].freeze
 
@@ -25,7 +26,8 @@ class Umi::Funnel::Configuration
   def self.provision_customer_context!(account)
     definitions = ROLES.keys.index_with { |_key| ['list', ROLE_VALUES] }.merge(
       'umi_funnel_stage' => ['list', STAGES], 'umi_paid_order_count' => ['number', []],
-      'umi_paid_history_complete' => ['checkbox', []], 'umi_payment_snapshot_at' => ['date', []]
+      'umi_paid_history_complete' => ['checkbox', []], 'umi_payment_snapshot_at' => ['date', []],
+      'umi_barter_history' => ['checkbox', []]
     )
     account.with_lock do
       definitions.each { |key, (type, values)| provision_customer_definition!(account, key, type, values) }

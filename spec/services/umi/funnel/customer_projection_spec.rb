@@ -108,15 +108,16 @@ RSpec.describe 'Customer projection', type: :model do
     expect(conversation.messages.where(private: true).count).to eq(count)
   end
 
-  it 'allows AI positive roles only from unknown and never assigns VIP or high value' do
+  it 'allows AI positive roles only from unknown and never assigns VIP, high value or model' do
     conversation
     Umi::Funnel::CustomerMutation.new(contact, source: 'operator').perform(roles: { umi_influencer: 'no' })
     Umi::Funnel::CustomerMutation.new(contact, source: 'ai', conversation: conversation).perform(
-      roles: { umi_influencer: 'yes', umi_wholesale: 'yes', umi_vip: 'yes', umi_high_value: 'yes' }
+      roles: { umi_influencer: 'yes', umi_wholesale: 'yes', umi_vip: 'yes', umi_high_value: 'yes', umi_model: 'yes' }
     )
     expect(contact.reload.custom_attributes).to include('umi_influencer' => 'no', 'umi_wholesale' => 'yes')
     expect(contact.custom_attributes).not_to have_key('umi_vip')
     expect(contact.custom_attributes).not_to have_key('umi_high_value')
+    expect(contact.custom_attributes).not_to have_key('umi_model')
   end
 
   it 'keeps the closed snapshot when an initial summary runs after a newer customer update' do

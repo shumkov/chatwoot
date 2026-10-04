@@ -64,7 +64,8 @@ RSpec.describe 'Customer projection identity', type: :model do
     source.update!(email: 'buyer@example.com', custom_attributes: { size: 'M' })
     actor = create(:user, account: account)
     Umi::Funnel::CustomerMutation.new(source, source: 'operator', actor: actor).perform(
-      roles: { umi_vip: 'yes' }, snapshot: { 'buyer_lifecycle' => 'repeat', 'paid_order_count' => 2 }
+      roles: { umi_vip: 'yes', umi_model: 'yes' },
+      snapshot: { 'buyer_lifecycle' => 'repeat', 'paid_order_count' => 2, 'barter_history' => true }
     )
     conversation = create(:conversation, account: account, contact: source)
     client = instance_double(Umi::Funnel::KlaviyoClient)
