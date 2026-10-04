@@ -89,6 +89,16 @@ invent a discount, product benefit, delivery promise or returns exception.
 
 Try-before-you-buy and unpaid store pickup remain unpaid until payment is
 confirmed. Do not manually set a buyer/payment field to make a label appear.
+If Shopify says paid but the CRM reports a payment mismatch, ask Ivan to check
+the actual payment record. A status label alone does not resolve that mismatch.
+
+## Public comments on advertisements
+
+Mai checks Facebook and Instagram ad comments in Meta Business Suite as part of
+the operator shift. These comments are separate from the Chatwoot DM queue and
+its Telegram reminders. Answer product questions using the same service rules;
+move personal order or payment details into a private conversation. The Friday
+report does not yet measure public-comment response coverage or timing.
 
 ## Correcting the system and getting help
 
