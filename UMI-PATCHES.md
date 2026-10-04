@@ -65,6 +65,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 53 | Instagram CAPI account field | `umi/app/services/funnel/delivery_service.rb`, `spec/services/umi/funnel/settlement_command_spec.rb` | Sends `ig_account_id`, required by live Graph v23, instead of the rejected `instagram_business_account_id`; preserves the configured account ID and existing Purchase eligibility gates. | The custom messaging conversion sender is replaced by an equivalent native sender or the supported Meta wire contract changes. |
 
+| 54 | Collaboration customer context | `umi/app/services/funnel/{configuration,customer_context_sync,customer_mutation,customer_projection}.rb`; focused customer sync/projection/identity/request specs; CRM data contract | Adds the operator-correctable Model role and derived barter-history fact from Klaviyo to managed labels and private summaries. Reuses existing freshness, two-way role reconciliation, identity erasure and protected-field rules; missing barter evidence clears a prior label to unknown. Does not expand AI roles or payment/conversion rules. | Native customer context provides equivalent typed collaboration roles and independently derived barter history with identity and freshness semantics. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)

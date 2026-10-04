@@ -28,6 +28,15 @@ RSpec.describe 'Customer context writes', type: :request do
     expect(contact.reload.name).not_to eq('Wrong')
   end
 
+  it 'rejects operator edits and deletion of derived barter history' do
+    patch path, headers: agent.create_new_auth_token, params: { custom_attributes: { umi_barter_history: true } }, as: :json
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(contact.reload.custom_attributes).not_to have_key('umi_barter_history')
+    post "#{path}/destroy_custom_attributes", headers: agent.create_new_auth_token,
+                                              params: { custom_attributes: ['umi_barter_history'] }, as: :json
+    expect(response).to have_http_status(:unprocessable_entity)
+  end
+
   it 'records no and unknown as distinct operator choices and rejects deleting payment history' do
     %w[yes no unknown].each do |value|
       patch path, headers: agent.create_new_auth_token, params: { custom_attributes: { umi_vip: value } }, as: :json

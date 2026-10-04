@@ -173,7 +173,7 @@ class Umi::Funnel::CustomerContextSync
     { 'state' => 'unknown' }
   end
 
-  # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+  # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/AbcSize
   def paid_snapshot(properties)
     at = Time.iso8601(properties.fetch('umi_payment_snapshot_at').to_s)
     return { 'status' => 'stale' } unless at > 2.hours.ago && at <= Time.current
@@ -185,12 +185,15 @@ class Umi::Funnel::CustomerContextSync
             (count.nil? || (count.is_a?(Integer) && count >= 0))
     raise Umi::Funnel::KlaviyoClient::Error, 'Invalid paid snapshot' unless valid
 
+    barter = properties['umi_barter_history']
+    raise Umi::Funnel::KlaviyoClient::Error, 'Invalid barter history' unless [true, false, nil].include?(barter)
+
     { 'buyer_lifecycle' => lifecycle, 'paid_order_count' => count, 'paid_history_complete' => complete,
-      'payment_snapshot_at' => at.utc.iso8601 }
+      'payment_snapshot_at' => at.utc.iso8601, 'barter_history' => barter }
   rescue KeyError, ArgumentError
     { 'status' => 'stale' }
   end
-  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+  # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/AbcSize
 
   def record_error(error)
     return unless @expected

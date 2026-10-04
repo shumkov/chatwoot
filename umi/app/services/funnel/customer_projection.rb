@@ -9,6 +9,7 @@ class Umi::Funnel::CustomerProjection
     labels = []
     stage = attributes['umi_funnel_stage']
     labels << stage if %w[chooser seeker client repeat].include?(stage)
+    labels << 'barter' if attributes['umi_barter_history'] == true
     Umi::Funnel::Configuration::ROLES.each { |key, label| labels << label if attributes[key] == 'yes' }
     { 'contact_id' => contact.id, 'binding' => contact.additional_attributes['umi_klaviyo_profile_id'],
       'revision' => contact.additional_attributes.dig('umi_klaviyo_sync', 'revision') || 0, 'labels' => labels,
@@ -73,7 +74,7 @@ class Umi::Funnel::CustomerProjection
     end
   end
 
-  def self.write_note!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/AbcSize
+  def self.write_note!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/AbcSize, Metrics/MethodLength
     projection = conversation.additional_attributes.fetch(KEY)
     attributes = projection.fetch('facts')
     count = attributes['umi_paid_order_count']
@@ -84,7 +85,8 @@ class Umi::Funnel::CustomerProjection
                   "history #{attributes['umi_paid_history_complete'] ? 'complete' : 'incomplete'}."
               end
     roles = Umi::Funnel::Configuration::ROLES.map { |key, label| "#{label}: #{attributes.fetch(key, 'unknown')}" }.join('; ')
-    content = "Customer: #{attributes.fetch('umi_funnel_stage', 'unclassified')}. #{history}\n#{roles}"
+    barter = { true => 'yes (order marked barter)', false => 'no tagged orders', nil => 'unknown' }.fetch(attributes['umi_barter_history'])
+    content = "Customer: #{attributes.fetch('umi_funnel_stage', 'unclassified')}. #{history}\n#{roles}\nBarter history: #{barter}."
     service = projection.fetch('service', { 'state' => 'unknown', 'freshness' => 'unknown' })
     content += "\nService reservation: #{service.fetch('state')} (#{service.fetch('freshness')})."
     content += "\nCustomer data is stale; last verified facts retained." if projection['freshness'] == 'stale'
