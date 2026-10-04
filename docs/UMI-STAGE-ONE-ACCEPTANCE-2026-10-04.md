@@ -1,5 +1,10 @@
 # Stage-one acceptance checkpoint — 4 October 2026
 
+Later on 4 October, the user authorized enabling Instagram outcome delivery
+before the first real purchase. Follow the
+[activation specification](UMI-INSTAGRAM-OUTCOME-ACTIVATION-SPEC.md) for that
+change; the disabled-channel observations below retain their historical meaning.
+
 This is a production evidence checkpoint, not a new implementation plan or a
 declaration that messaging Purchase optimization is ready. The contract remains
 [the stage-one spec](UMI-FUNNEL-STAGE-ONE-SPEC.md). Release 26 is the deployed
@@ -78,7 +83,9 @@ account-wide census, a test of real replies, or a recurring comment collector.
 No public comment or message was sent. Absence on these edges does not prove
 absence across dynamic variants, missing media, deleted comments or other posts.
 
-Mai remains the operator responsible for public comments in Meta Business Suite.
+The proposed operator workflow assigns public Instagram ad comments to Mai in
+Meta Business Suite. The user clarified that she is not known to be doing this;
+instruction delivery, access and adoption remain unverified. Current ads are IG-only.
 The existing Friday renderer explicitly says ad comments are incomplete; the
 Chatwoot operational source reports `ad_comments_not_verified`. Keep both limits.
 Do not count DM response measurements as comment SLA. A future collector still

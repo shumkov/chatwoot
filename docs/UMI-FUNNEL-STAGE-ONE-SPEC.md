@@ -12,6 +12,14 @@ origin: UMI-CRM-DATA-CONTRACT.md
 
 # Первый этап: подготовить систему к messaging campaigns
 
+## Instagram activation decision — 4 October 2026
+
+The user requests automatic IG qualification feedback and enabled future
+paid-in-chat delivery now, followed by verification on genuine events. The
+[narrow activation specification](UMI-INSTAGRAM-OUTCOME-ACTIVATION-SPEC.md)
+supersedes the earlier first-purchase-before-activation gate. It does not claim
+Meta advertising optimization is proven. Current advertising scope is Instagram.
+
 ## Meta access checkpoint — 3 October 2026 Bangkok
 
 Advanced access and production token authorization are complete. Graph v23

@@ -1,7 +1,10 @@
 # Meta access and release 25 acceptance
 
 Updated 3 October 2026 Bangkok. Release 25 is deployed and verified.
-Messaging Purchase export remains disabled pending the evidence below.
+This records release 25's original acceptance state. The 4 October
+[activation decision](UMI-INSTAGRAM-OUTCOME-ACTIVATION-SPEC.md) supersedes waiting
+for a first purchase before enabling Instagram delivery. The first genuine
+purchase remains a processing/attribution check after activation.
 
 ## Confirmed
 

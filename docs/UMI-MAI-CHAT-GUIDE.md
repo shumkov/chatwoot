@@ -94,8 +94,10 @@ the actual payment record. A status label alone does not resolve that mismatch.
 
 ## Public comments on advertisements
 
-Mai checks Facebook and Instagram ad comments in Meta Business Suite as part of
-the operator shift. These comments are separate from the Chatwoot DM queue and
+Current advertising is Instagram-only. The proposed shift routine is to check
+public comments under Instagram ads in Meta Business Suite; before adopting it,
+Ivan and Mai need to confirm access and review this instruction together. This
+routine has not yet been confirmed in use. Comments are separate from the Chatwoot DM queue and
 its Telegram reminders. Answer product questions using the same service rules;
 move personal order or payment details into a private conversation. The Friday
 report does not yet measure public-comment response coverage or timing.
