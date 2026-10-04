@@ -79,6 +79,26 @@ class Umi::Funnel::KlaviyoClient
     get("segments/#{id}", { 'fields[segment]' => 'name,definition' }).fetch('data')
   end
 
+  def segments(name:)
+    collection('segments', { 'filter' => "equals(name,#{JSON.generate(name)})", 'fields[segment]' => 'name,definition' })
+  end
+
+  def create_segment(name:, definition:)
+    payload = { data: { type: 'segment', attributes: { name: name, definition: definition } } }
+    response = self.class.post("#{BASE_URI}/segments", headers: @headers.merge('revision' => PROFILE_REVISION),
+                                                       body: JSON.generate(payload), open_timeout: 3, read_timeout: 10, no_follow: true)
+    raise RateLimited, response.headers['retry-after'] if response.code == 429
+    raise Error, "Klaviyo HTTP_#{response.code}" unless response.code == 201
+
+    segment = JSON.parse(response.body.to_s)['data']
+    raise Error, 'Missing created segment ID' unless segment.is_a?(Hash) && segment['id'].to_s.match?(/\A[A-Za-z0-9_-]+\z/)
+
+    segment
+  rescue JSON::ParserError, Timeout::Error, SocketError, SystemCallError, OpenSSL::SSL::SSLError, EOFError,
+         HTTParty::RedirectionTooDeep => e
+    raise Error, "Klaviyo #{e.class.name}"
+  end
+
   def metrics
     collection('metrics', {})
   end

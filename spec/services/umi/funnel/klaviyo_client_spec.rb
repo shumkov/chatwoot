@@ -79,4 +79,51 @@ RSpec.describe Umi::Funnel::KlaviyoClient do
     stub_request(:get, %r{#{base}/events}).with(headers: { 'revision' => '2025-10-15' }).to_return(body: { data: [] }.to_json)
     expect(client.events(profile_id: 'P1', since: '2026-01-01', until_time: '2026-01-02')).to eq('data' => [])
   end
+
+  it 'fully paginates exact-name segment lookup rather than overlooking a second matching name' do
+    query = { 'filter' => 'equals(name,"UMI - Recent conversation intent")', 'fields[segment]' => 'name,definition' }
+    stub_request(:get, "#{base}/segments").with(query: query, headers: { 'revision' => '2026-07-15' }).to_return(body: {
+      data: [{ id: 'S1' }], links: { next: "#{base}/segments?page%5Bcursor%5D=next" }
+    }.to_json)
+    stub_request(:get, "#{base}/segments").with(query: query.merge('page[cursor]' => 'next')).to_return(body: {
+      data: [{ id: 'S2' }], links: { next: nil }
+    }.to_json)
+    expect(client.segments(name: 'UMI - Recent conversation intent').pluck('id')).to eq(%w[S1 S2])
+  end
+
+  it 'creates a native segment once on the profile revision and requires its created ID' do
+    payload = { data: { type: 'segment', attributes: { name: 'UMI - Recent conversation intent', definition: { condition_groups: [] } } } }
+    request = stub_request(:post, "#{base}/segments").with(headers: { 'revision' => '2026-07-15' }, body: payload)
+                                                     .to_return(status: 201, body: { data: { id: 'S1' } }.to_json)
+    expect(client.create_segment(name: 'UMI - Recent conversation intent', definition: { condition_groups: [] })).to eq('id' => 'S1')
+    expect(request).to have_been_requested.once
+  end
+
+  [200, 202, 400, 403, 503].each do |status|
+    it "does not treat HTTP#{status} as a confirmed segment creation or repeat its POST" do
+      request = stub_request(:post, "#{base}/segments").to_return(status: status, body: { data: { id: 'S1' } }.to_json)
+      expect { client.create_segment(name: 'UMI - Recent conversation intent', definition: {}) }
+        .to raise_error(described_class::Error, "Klaviyo HTTP_#{status}")
+      expect(request).to have_been_requested.once
+    end
+  end
+
+  it 'reports ambiguous creation without retrying a timed-out POST' do
+    request = stub_request(:post, "#{base}/segments").to_timeout
+    expect { client.create_segment(name: 'UMI - Recent conversation intent', definition: {}) }.to raise_error(described_class::Error)
+    expect(request).to have_been_requested.once
+  end
+
+  it 'carries an explicit creation rate limit to the scheduler' do
+    request = stub_request(:post, "#{base}/segments").to_return(status: 429, headers: { 'Retry-After' => '600' })
+    expect { client.create_segment(name: 'UMI - Recent conversation intent', definition: {}) }
+      .to raise_error(described_class::RateLimited) { |error| expect(error.retry_after).to eq(600) }
+    expect(request).to have_been_requested.once
+  end
+
+  it 'does not lose the creation uncertainty when the provider omits its segment ID' do
+    stub_request(:post, "#{base}/segments").to_return(status: 201, body: { data: { type: 'segment' } }.to_json)
+    expect { client.create_segment(name: 'UMI - Recent conversation intent', definition: {}) }
+      .to raise_error(described_class::Error, 'Missing created segment ID')
+  end
 end
