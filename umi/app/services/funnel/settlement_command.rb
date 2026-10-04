@@ -35,6 +35,14 @@ class Umi::Funnel::SettlementCommand
     else
       data['error'] = 'invalid_command'
     end
+    response = message.conversation.messages.create!(account_id: message.account_id, inbox_id: message.inbox_id,
+                                                     message_type: :outgoing, private: true, content_type: :text,
+                                                     content: 'Command queued for checking; it has not taken effect. ' \
+                                                              'Wait for a final result before relying on it. If this note stays queued, ' \
+                                                              'check the command still exists and ask Ivan before retrying. ' \
+                                                              'A pending cancellation has not stopped submission.',
+                                                     content_attributes: { RESPONSE_KEY => true })
+    data['response_message_id'] = response.id
     message.update!(content_attributes: message.content_attributes.merge(KEY => data))
   end
 
@@ -116,9 +124,18 @@ class Umi::Funnel::SettlementCommand
 
   def finish!(status, reason, evidence_event_id: nil)
     data = @message.content_attributes.fetch(KEY)
-    response = @message.conversation.messages.create!(account_id: @message.account_id, inbox_id: @message.inbox_id,
-                                                      message_type: :outgoing, private: true, content_type: :text,
-                                                      content: response_text(reason), content_attributes: { RESPONSE_KEY => true })
+    response = @message.conversation.messages.find_by(id: data['response_message_id'])
+    response&.with_lock do
+      if response.private? && response.outgoing? && response.text? && response.content_attributes[RESPONSE_KEY] &&
+         !response.content_attributes['deleted'] && response.sender_id.nil?
+        response.update!(content: response_text(reason))
+      else
+        response = nil
+      end
+    end
+    response ||= @message.conversation.messages.create!(account_id: @message.account_id, inbox_id: @message.inbox_id,
+                                                        message_type: :outgoing, private: true, content_type: :text,
+                                                        content: response_text(reason), content_attributes: { RESPONSE_KEY => true })
     @message.update!(content_attributes: @message.content_attributes.merge(KEY => data.merge('status' => status, 'reason' => reason,
                                                                                              'evidence_event_id' => evidence_event_id,
                                                                                              'response_message_id' => response.id)))
