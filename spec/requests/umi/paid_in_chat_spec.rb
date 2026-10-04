@@ -29,6 +29,29 @@ RSpec.describe 'Paid-in-chat private commands', type: :request do
     expect(enqueued_jobs.pluck(:job)).to include(Umi::Funnel::SettlementCommandJob)
   end
 
+  it 'acknowledges a queued payment command privately before the worker starts' do
+    post url, params: { content: '/paid-in-chat #1234', private: true }, headers: user.create_new_auth_token, as: :json
+    expect(response).to have_http_status(:ok)
+    note = conversation.messages.find(response.parsed_body.fetch('id'))
+    result = note.content_attributes.fetch('umi_paid_in_chat')
+    acknowledgment = conversation.messages.find(result.fetch('response_message_id'))
+    expect(acknowledgment).to have_attributes(private: true, sender_id: nil, message_type: 'outgoing', content_type: 'text')
+    expect(acknowledgment.content).to include('queued', 'has not taken effect')
+    expect(acknowledgment.content_attributes).to include('umi_paid_in_chat_response' => true)
+    expect(link.reload.settlement_command_message_id).to be_nil
+  end
+
+  it 'keeps an unapplied deleted command acknowledgement actionable instead of promising a result' do
+    post url, params: { content: '/paid-in-chat #1234', private: true }, headers: user.create_new_auth_token, as: :json
+    note = conversation.messages.find(response.parsed_body.fetch('id'))
+    acknowledgment = Message.find(note.content_attributes.fetch('umi_paid_in_chat').fetch('response_message_id'))
+    delete "#{url}/#{note.id}", headers: user.create_new_auth_token, as: :json
+    expect(response).to have_http_status(:ok)
+    Umi::Funnel::SettlementCommand.new(note).perform
+    expect(link.reload.settlement_command_message_id).to be_nil
+    expect(acknowledgment.reload.content).to include('check the command still exists', 'before retrying')
+  end
+
   [false, true].each do |private_note|
     it "strips fabricated command success from #{private_note ? 'assistant' : 'public'} output" do
       post url, params: { content: '/paid-in-chat #1234', private: private_note,

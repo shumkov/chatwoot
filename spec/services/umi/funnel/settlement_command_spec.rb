@@ -60,18 +60,62 @@ RSpec.describe Umi::Funnel::SettlementCommand do # rubocop:disable RSpec/Multipl
   end
 
   it 'records genuine paid settlement once while Purchase remains explicitly disabled' do
+    response_id = note.content_attributes.fetch(described_class::KEY).fetch('response_message_id')
     2.times { described_class.new(note).perform }
     expect(link.reload.settlement_command_message_id).to eq(note.id)
     result = note.reload.content_attributes.fetch(described_class::KEY)
     expect(result).to include('status' => 'accepted', 'reason' => 'purchase_channel_disabled')
     response = Message.find(result.fetch('response_message_id'))
-    expect(response).to have_attributes(private: true, sender_id: nil)
+    expect(response).to have_attributes(id: response_id, private: true, sender_id: nil)
     expect(response.content_attributes).to include('umi_paid_in_chat_response' => true)
     expect(conversation.messages.where("(content_attributes #>> '{}')::jsonb ->> 'umi_paid_in_chat_response' = 'true'").count).to eq(1)
     expect(state.paid_event.payload).to include('value' => '4000.0', 'order_origin' => 'unknown')
     Umi::Funnel::DeliveryService.new(delivery).prepare
     Umi::Funnel::DeliveryService.new(delivery).dispatch
     expect(delivery.reload).to have_attributes(reason: 'purchase_channel_disabled', attempt_count: 0)
+  end
+
+  it 'replaces a pending note deleted by the operator before completion without restoring its content' do
+    response_id = note.content_attributes.fetch(described_class::KEY).fetch('response_message_id')
+    response = Message.find(response_id)
+    response.update!(content: 'This message was deleted', content_attributes: { deleted: true })
+    described_class.new(note).perform
+    result_id = note.reload.content_attributes.fetch(described_class::KEY).fetch('response_message_id')
+    expect(result_id).not_to eq(response_id)
+    expect(response.reload.content_attributes).to eq('deleted' => true)
+    expect(response.content).to eq('This message was deleted')
+    expect(Message.find(result_id)).to have_attributes(private: true, sender_id: nil)
+  end
+
+  it 'rechecks an acknowledgement deleted between lookup and its update lock' do
+    response_id = note.content_attributes.fetch(described_class::KEY).fetch('response_message_id')
+    response = Message.find(response_id)
+    data = note.content_attributes.fetch(described_class::KEY).merge('error' => 'invalid_command')
+    note.update!(content_attributes: note.content_attributes.merge(described_class::KEY => data))
+    allow(note).to receive(:conversation).and_return(conversation)
+    allow(conversation.messages).to receive(:find_by).with(id: response_id).and_return(response)
+    allow(response).to receive(:with_lock).and_wrap_original do |original, *args, &block|
+      Message.find(response_id).update!(content: 'This message was deleted', content_attributes: { deleted: true })
+      original.call(*args, &block)
+    end
+    described_class.new(note).perform
+    expect(Message.find(response_id)).to have_attributes(content: 'This message was deleted', content_attributes: { 'deleted' => true })
+    expect(note.reload.content_attributes.dig(described_class::KEY, 'response_message_id')).not_to eq(response_id)
+  end
+
+  it 'finishes legacy queued commands without an acknowledgement' do
+    data = note.content_attributes.fetch(described_class::KEY)
+    Message.find(data.fetch('response_message_id')).destroy!
+    note.update!(content_attributes: note.content_attributes.merge(described_class::KEY => data.except('response_message_id')))
+    described_class.new(note).perform
+    expect(note.reload.content_attributes.dig(described_class::KEY, 'status')).to eq('accepted')
+    expect(Message.find(note.content_attributes.dig(described_class::KEY, 'response_message_id'))).to have_attributes(private: true)
+  end
+
+  it 'erases the queued acknowledgement with its customer before the command runs' do
+    ids = [note.id, note.content_attributes.fetch(described_class::KEY).fetch('response_message_id')]
+    Umi::Shopify::CustomerRedactionService.new(contact).perform
+    expect(Message.where(id: ids)).to be_empty
   end
 
   it 'uses the original paid occurrence and selected pre-payment message for a Purchase' do

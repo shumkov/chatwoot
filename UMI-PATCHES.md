@@ -67,6 +67,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 54 | Collaboration customer context | `umi/app/services/funnel/{configuration,customer_context_sync,customer_mutation,customer_projection}.rb`; focused customer sync/projection/identity/request specs; CRM data contract | Adds the operator-correctable Model role and derived barter-history fact from Klaviyo to managed labels and private summaries. Reuses existing freshness, two-way role reconciliation, identity erasure and protected-field rules; missing barter evidence clears a prior label to unknown. Does not expand AI roles or payment/conversion rules. | Native customer context provides equivalent typed collaboration roles and independently derived barter history with identity and freshness semantics. |
 
+| 55 | Private settlement command progress | `umi/app/services/funnel/settlement_command.rb`, focused settlement/request/race specs; command feedback specification | A private payment command immediately acknowledges queueing and edits the same note with its result. Preserves deleted messages, privacy erasure and existing payment/Meta eligibility. | Native conversation commerce provides equivalent private asynchronous command feedback. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
