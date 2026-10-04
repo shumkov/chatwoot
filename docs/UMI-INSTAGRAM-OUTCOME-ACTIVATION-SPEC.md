@@ -2,6 +2,27 @@
 
 4 October 2026. Narrow correction to the stage-one delivery contract.
 
+## Live activation
+
+Release `umi-v4.16.0-27` was installed at 15:19 UTC on 4 October. Both Rails and
+Sidekiq run source `e1f7d076840e4f2d17e3fa34ce7c88d97fb450bb` with immutable image
+digest `sha256:ec1021f02c805967c0da0fe13d633130be1c915692d0e632f2f2cb3eb9ce8b1b`.
+[App PR 79](https://github.com/shumkov/chatwoot/pull/79) and
+[infra PR 121](https://github.com/shumkov/umi-vps-infra/pull/121) are merged.
+Meta dispatch is enabled; Purchase channels are `instagram`. Health, active
+provider access and preserved runtime configuration passed production readback.
+The first genuine paid-in-chat purchase remains a follow-up observation.
+
+At 15:25:21 UTC, the normal reconciliation scheduler delivered one existing,
+genuine Instagram `QualifiedLead`; Meta accepted it with one attempt and a
+persisted provider trace. The audited recovery retained the original event,
+identity and occurrence time. No manual provider call, new outcome, synthetic
+purchase or historical batch replay was used. This proves automatic CAPI
+acceptance, not advertising attribution or optimization performance.
+Private deployment and delivery receipts are in
+`Downloads/umi-instagram-release27-2026-10-04` and
+`Downloads/umi-ig-outcomes-2026-10-04` on the operator Mac.
+
 ## Goal and current authority
 
 The user requests automatic lead classification followed by Meta conversion
@@ -10,10 +31,10 @@ occurs. This supersedes the earlier requirement to wait for a paid-in-chat
 acceptance candidate before enabling the purchase channel. It does not authorize
 invented purchases, changing campaign settings or replaying historical events.
 
-Production auto-classification and Meta destination dispatch are already enabled.
-The deployed qualification adapter nevertheless rejects every non-Messenger
-event. Instagram Purchase is implemented, but its channel configuration is empty.
-This is a real missing Instagram feedback path, not merely missing launch proof.
+At investigation, production auto-classification and Meta destination dispatch
+were already enabled. The deployed qualification adapter nevertheless rejected
+every non-Messenger event. Instagram Purchase was implemented, but its channel
+configuration was empty. Release 27 closes that missing Instagram feedback path.
 
 ## Research and choice
 

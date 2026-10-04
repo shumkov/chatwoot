@@ -4,6 +4,9 @@ Later on 4 October, the user authorized enabling Instagram outcome delivery
 before the first real purchase. Follow the
 [activation specification](UMI-INSTAGRAM-OUTCOME-ACTIVATION-SPEC.md) for that
 change; the disabled-channel observations below retain their historical meaning.
+Release 27 completed that activation at 15:19 UTC: Instagram qualification
+delivery and future eligible Instagram purchases are enabled. See the linked
+specification for the exact release and subsequent live delivery evidence.
 
 This is a production evidence checkpoint, not a new implementation plan or a
 declaration that messaging Purchase optimization is ready. The contract remains
