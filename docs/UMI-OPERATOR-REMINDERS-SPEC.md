@@ -3,8 +3,39 @@
 ## Reminder completion and repetition correction 6 October 2026
 
 This section supersedes contradictory closure, snooze and task-identity rules
-below. Independent design review is complete; implementation and release
-verification remain separate and this is not a claim of deployment.
+below. Independent design and code reviews are complete. The correction was
+deployed and verified on 6 October 2026; the acceptance record follows.
+
+### Deployment acceptance
+
+Chatwoot [PR 83](https://github.com/shumkov/chatwoot/pull/83) is live as
+`umi-v4.16.0-29`, source `ccca99c70bc32d7173a1293d9e3fdc9395c56906`, image
+`sha256:33782ab0af7d7685e8551dffaaef76eab2d0bc4e0534a7cdf0b5d2c73bd6a9e7`.
+The canonical infra pin was merged in
+[PR 123](https://github.com/shumkov/umi-vps-infra/pull/123).
+Shumabit [PR 30](https://github.com/shumkov/shumabit-claude/pull/30) supplies
+the installed consumer and prompt. Runtime source hashes match the reviewed
+artifacts. No database schema, credential, activation timestamp or schedule changed.
+
+Regression checks demonstrated failure before repair and success afterwards:
+58 focused Rails examples and 97 consumer/report/locking tests passed. The
+installed reminder subset passed all 55 tests. Read-only model checks covered
+the reported conversations, resolved future follow-up and explicit rescheduling.
+The migration retained all 24 delivery receipts present at installation and
+fixed its cutoff at `2026-10-06T12:39:35.706Z`, without a catch-up notification.
+
+The installed analysis processed all 20 eligible conversations; its no-send
+preview contained zero items. A natural analysis at 12:45 UTC held conversation
+1116 after its source revision changed. The next scheduled run at 12:50:20 UTC
+recovered without intervention: 20 candidates, one refreshed, zero unavailable
+and zero remaining. Natural delivery also reported zero items and zero sends.
+This verifies immediate rollout health, not long-term model accuracy.
+
+The [editable Mai guide](https://docs.google.com/document/d/1F2DG54uY7P6a8r-_Ms2vYbqUBL_JcGfCuJ_sNI9-qHw/edit)
+is in UMI Team → Docs → Processes, with Mai's inherited editor access verified.
+Existing historical research documents are unchanged. Future edits must read the
+living document first and preserve team changes. Private release evidence is in
+`~/Downloads/umi-reminder-clarity-release29-2026-10-06/` on Ivan's Mac.
 
 ### Problem and decisions
 

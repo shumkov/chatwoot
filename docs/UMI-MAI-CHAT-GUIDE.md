@@ -1,11 +1,15 @@
 # UMI chat guide for Mai
 
+Editable team guide: [UMI chat guide for Mai](https://docs.google.com/document/d/1F2DG54uY7P6a8r-_Ms2vYbqUBL_JcGfCuJ_sNI9-qHw/edit),
+in UMI Team → Docs → Processes. Mai has inherited editor access.
+This file is the 6 October publication snapshot. Read the living Google Doc before
+future edits and preserve changes made there; do not overwrite it from this snapshot.
+
 6 October 2026. Use this with the current product, delivery and returns information.
 Examples below show how to structure a reply; they are not promises about stock,
 fit, prices, delivery dates or policy.
 
-Rollout status: the reminder changes described below are being implemented and
-verified; their deployment has not yet been confirmed.
+The reminder workflow below is live as of 6 October 2026.
 
 ## At the start of a conversation
 
