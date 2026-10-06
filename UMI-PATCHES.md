@@ -71,6 +71,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 56 | Automatic recent conversation audience | `umi/app/jobs/funnel/segment_refresh_job.rb`, `umi/app/services/funnel/klaviyo_client.rb`, focused job/client specs; recent-intent specification | Provisions the native 30-day Klaviyo audience after a genuine confirmed qualification, with provider readback and one durable create claim. Reuses existing scheduler and keeps Chooser/Seeker refresh independent. | Native integration automatically provisions the equivalent audience from confirmed conversation outcomes. |
 
+| 57 | Operator reminder completion boundary | `umi/app/models/funnel/operator_resolution.rb`, `umi/app/models/funnel/customer_conversation.rb`, `umi/app/services/funnel/operator_queue.rb`, `config/initializers/zz_umi_operator_queue.rb`, focused queue service/request specs | Commits a resolution time and message boundary with the native status, preserves it across stale customer projection updates, and clears resolved/pre-resolution reply waits without truncating history. Supplies a stable incoming-burst evidence digest so sync-only changes cannot revive dismissed no-reply alerts. Historical resolutions use scoped reporting events bounded by the snapshot. | Native operator reminder facts provide equivalent synchronous closure, reopen boundaries and stable waiting evidence. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
