@@ -6,3 +6,7 @@ Rails.application.routes.append do
     get '/:conversation_id', action: :show
   end
 end
+
+Rails.application.reloader.to_prepare do
+  Conversation.include(Umi::Funnel::OperatorResolution) unless Conversation.include?(Umi::Funnel::OperatorResolution)
+end

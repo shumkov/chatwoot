@@ -33,8 +33,23 @@ RSpec.describe 'UMI operator queue', type: :request do
     get "#{url}/#{conversation.reload.display_id}", params: { since: since }, headers: user.create_new_auth_token
     expect(response).to have_http_status(:ok)
     expect(response.parsed_body).to include('schema_version' => 1, 'account_id' => account.id)
-    expect(response.parsed_body['conversation']).to include('id' => conversation.id, 'display_id' => 123_456)
+    expect(response.parsed_body['conversation']).to include('id' => conversation.id, 'display_id' => 123_456,
+                                                            'resolved_at' => nil, 'resolved_message_id' => nil)
     expect(conversation.reload.attributes).to eq(before_attributes)
+  end
+
+  it 'exposes the committed resolution boundary without reviving an old reply reminder' do
+    incoming = create(:message, conversation: conversation, message_type: :incoming)
+    conversation.update!(status: :resolved)
+    boundary = conversation.reload.additional_attributes.slice('umi_operator_resolved_at', 'umi_operator_resolved_message_id')
+    conversation.update!(status: :open)
+
+    get "#{url}/#{conversation.display_id}", params: { since: since }, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body['conversation']).to include(
+      'waiting' => nil, 'resolved_at' => boundary['umi_operator_resolved_at'], 'resolved_message_id' => incoming.id
+    )
+    expect(conversation.reload.additional_attributes).to include(boundary)
   end
 
   it 'forbids agents even when they belong to the account' do

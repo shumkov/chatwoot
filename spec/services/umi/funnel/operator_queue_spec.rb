@@ -38,6 +38,100 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     expect(result.to_json).not_to include('Private customer text', conversation.contact.email)
   end
 
+  it 'stops resolved reminders before asynchronous reporting arrives and keeps the full history' do
+    incoming = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    travel_to(start + 1.minute) { conversation.update!(status: :resolved) }
+    expect(ReportingEvent.where(conversation_id: conversation.id, name: 'conversation_resolved')).to be_empty
+
+    row = queue.show(conversation.reload.display_id)[:conversation]
+    expect(row).to include(status: 'resolved', waiting: nil, resolved_at: (start + 1.minute).utc.iso8601(6),
+                           resolved_message_id: incoming.id)
+    expect(row[:messages].pluck(:id)).to include(incoming.id)
+  end
+
+  it 'does not restart an old unanswered timer after reopening but accepts a new message in the resolution second' do
+    create(:message, conversation: conversation, message_type: :outgoing, sender: agent, created_at: start - 1.minute)
+    old = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    travel_to(start) { conversation.update!(status: :resolved) }
+    conversation.update!(status: :open)
+    expect(queue.index[:conversations].sole[:waiting]).to be_nil
+
+    fresh = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    row = queue.show(conversation.reload.display_id)[:conversation]
+    expect(row[:waiting]).to include(message_id: fresh.id, first_response: false)
+    expect(row[:resolved_message_id]).to eq(old.id)
+    expect(row[:messages].pluck(:id)).to include(old.id, fresh.id)
+  end
+
+  it 'uses the latest account-scoped historical resolution no later than the snapshot' do
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    ReportingEvent.create!(account_id: account.id, conversation_id: conversation.id, name: 'conversation_resolved', value: 1,
+                           event_end_time: start + 1.minute)
+    baseline = queue.index[:conversations].sole
+    expect(baseline).to include(waiting: nil, resolved_at: (start + 1.minute).utc.iso8601(6), resolved_message_id: nil)
+    ReportingEvent.create!(account_id: account.id, conversation_id: conversation.id, name: 'conversation_resolved', value: 1,
+                           event_end_time: as_of + 1.minute)
+    ReportingEvent.create!(account_id: create(:account).id, conversation_id: conversation.id, name: 'conversation_resolved', value: 1,
+                           event_end_time: start + 3.minutes)
+    fresh = create(:message, conversation: conversation, message_type: :incoming, created_at: start + 2.minutes)
+    expect(queue.index[:conversations].sole[:waiting]).to include(message_id: fresh.id)
+    ReportingEvent.create!(account_id: account.id, conversation_id: conversation.id, name: 'conversation_resolved', value: 1,
+                           event_end_time: start + 4.minutes)
+    closed = queue.index[:conversations].sole
+    expect(closed[:waiting]).to be_nil
+    expect(closed[:revision]).not_to eq(baseline[:revision])
+  end
+
+  it 'keeps the synchronous message boundary when delayed reporting timestamps the next second' do
+    old = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    travel_to(start) { conversation.update!(status: :resolved) }
+    conversation.update!(status: :open)
+    fresh = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    ReportingEvent.create!(account_id: account.id, conversation_id: conversation.id, name: 'conversation_resolved', value: 1,
+                           event_end_time: start + 1.second)
+    row = queue.index[:conversations].sole
+    expect(row[:resolved_message_id]).to eq(old.id)
+    expect(row[:waiting]).to include(message_id: fresh.id)
+  end
+
+  it 'falls back to a historical boundary when the synchronous stamp is later than the snapshot' do
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    ReportingEvent.create!(account_id: account.id, conversation_id: conversation.id, name: 'conversation_resolved', value: 1,
+                           event_end_time: start + 1.minute)
+    travel_to(as_of + 1.minute) { conversation.update!(status: :resolved) }
+    expect(queue.index[:conversations].sole).to include(waiting: nil, resolved_message_id: nil,
+                                                        resolved_at: (start + 1.minute).utc.iso8601(6))
+  end
+
+  it 'preserves the current resolution boundary when a stale customer projection reopens the chat' do
+    with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
+      incoming = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+      travel_to(start) { conversation.update!(status: :resolved) }
+      stale = Conversation.find(conversation.id)
+      conversation.update!(status: :open)
+      travel_to(start + 1.minute) { conversation.update!(status: :resolved) }
+      stale.update!(status: :open, additional_attributes: stale.additional_attributes.merge('operator_setting' => 'retained'))
+      row = queue.index[:conversations].sole
+      expect(row).to include(waiting: nil, resolved_at: (start + 1.minute).utc.iso8601(6), resolved_message_id: incoming.id)
+      expect(conversation.reload.additional_attributes['operator_setting']).to eq('retained')
+    end
+  end
+
+  it 'keeps a no-reply evidence key stable through sync changes but invalidates new or edited incoming content' do
+    incoming = create(:message, conversation: conversation, message_type: :incoming, created_at: start, content: 'Thanks!')
+    first = queue.index[:conversations].sole
+    expect(first[:waiting][:evidence_key]).to match(/\A[0-9a-f]{64}\z/)
+    conversation.contact.update!(additional_attributes: { umi_klaviyo_sync: { payment_snapshot_at: as_of.iso8601 } })
+    synced = queue.index[:conversations].sole
+    expect(synced[:revision]).not_to eq(first[:revision])
+    expect(synced[:waiting][:evidence_key]).to eq(first[:waiting][:evidence_key])
+    incoming.update!(content: 'Thanks! Can you change the address?')
+    edited = queue.index[:conversations].sole
+    expect(edited[:waiting][:evidence_key]).not_to eq(first[:waiting][:evidence_key])
+    create(:message, conversation: conversation, message_type: :incoming, created_at: start + 1.minute, content: 'Please confirm')
+    expect(queue.index[:conversations].sole[:waiting][:evidence_key]).not_to eq(edited[:waiting][:evidence_key])
+  end
+
   it 'starts an overnight message at zero and reaches ten minutes at 09:10 every day' do
     create(:message, conversation: conversation, message_type: :incoming, created_at: Time.iso8601('2026-10-03T16:00:00Z'))
     result = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start, as_of: Time.iso8601('2026-10-04T02:10:00Z')).index

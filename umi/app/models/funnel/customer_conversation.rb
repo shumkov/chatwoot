@@ -108,7 +108,8 @@ module Umi::Funnel::CustomerConversation
       customer = Contact.find(contact_id)
       next yield if customer.additional_attributes['umi_profile_redacted']
 
-      self.additional_attributes = current.additional_attributes.merge(additional_attributes.except(Umi::Funnel::CustomerProjection::KEY))
+      preserved_keys = [Umi::Funnel::CustomerProjection::KEY, *Umi::Funnel::OperatorResolution::KEYS]
+      self.additional_attributes = current.additional_attributes.merge(additional_attributes.except(*preserved_keys))
       labels = label_list_changed? ? label_list : current.label_list
       Umi::Funnel::CustomerProjection.assign(self, customer, current_labels: labels)
       Umi::Funnel::CustomerProjection.summarize!(self, customer) if additional_attributes.dig(Umi::Funnel::CustomerProjection::KEY, 'summary')

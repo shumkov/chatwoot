@@ -1,5 +1,141 @@
 # Operator reminders in UMI Orders
 
+## Reminder completion and repetition correction 6 October 2026
+
+This section supersedes contradictory closure, snooze and task-identity rules
+below. Independent design review is complete; implementation and release
+verification remain separate and this is not a claim of deployment.
+
+### Problem and decisions
+
+Production conversation 1116 received twelve alerts for one fitting because AI
+alternated categories, evidence subsets and inferred deadlines. Conversation 1120
+was listed while waiting for information already requested from the customer.
+Conversation 1109 mixed coaching with outstanding work. Mai needs a predictable
+way to finish or defer work in Chatwoot.
+
+- Resolve closes current work. Suppress ordinary tasks and reply alerts while
+  resolved, including when AI is unavailable. On reopening, a pre-resolution
+  unanswered message must not restart the old timer. Preserve full history.
+- Snooze suppresses reminders until the selected time. A new customer message
+  follows Chatwoot's normal reopening behavior. AI deadlines do not override a
+  deliberate operator snooze.
+- A resolved conversation may still have a separately scheduled follow-up with
+  a specific useful reason and an evidenced date. Show it only when due, once,
+  labelled Follow-up opportunity. It is a suggestion for Mai to review, never
+  permission for an automatic customer message. No recurring generic sales nudge.
+- Waiting for customer information is not current operator work. A separately
+  agreed check-back date may be a follow-up. Retrospective coaching and personal
+  exchanges stay out; genuine support and collaboration remain eligible.
+- Keep the ten-working-minute alert, hourly new/due work and 09:00 daily summary.
+  Morning repetition of genuinely outstanding ordinary work is intentional and
+  must be explained. Resolved follow-up opportunities do not repeat each morning.
+
+These choices follow native Chatwoot status semantics documented in
+[Dashboard Basics](https://www.chatwoot.com/hc/user-guide/articles/1677231493-lesson-2-dashboard-basics).
+The earlier rule that closure cannot finish a promise is explicitly replaced by
+operator control. A private outcome note remains useful context but is not
+mandatory just to close the current queue item.
+
+### Small implementation and data flow
+
+Chatwoot adds `resolved_at` to the existing operator queue row, using the latest
+account/conversation-scoped `conversation_resolved` ReportingEvent ending no
+later than the snapshot as historical fallback. A small idempotent UMI callback
+also stamps `umi_operator_resolved_at` and `umi_operator_resolved_message_id`
+(current maximum message ID, or zero) in additional attributes in the same save
+as a new resolution. Expose `resolved_message_id` alongside `resolved_at`. This
+closes the resolve/reopen race before asynchronous reporting catches up and
+distinguishes a new incoming message within the same database timestamp second.
+For stamped closures use the message-ID boundary; historical events use time.
+A valid synchronous stamp takes precedence over its delayed reporting event.
+Include the selected boundary in revision. Preserve these server-owned fields
+when the existing customer-context lock merges a stale caller's attributes.
+Status resolved gates waiting immediately. Clear old
+waits at the boundary and only start subsequent waits from new public incoming
+messages. Keep the full transcript and existing API envelope. No core or
+Enterprise changes, new database table or new service. Add a waiting-evidence
+digest of the eligible incoming burst (message IDs and content digests). Preserve
+a successful no-reply judgment for that exact digest through metadata-only
+revisions or inference failures; a new or edited incoming message invalidates it.
+This prevents personal/thanks messages from regaining fallback ten-minute alerts.
+
+Shumabit retains task identity in its existing per-conversation analysis JSON.
+The model task adds `id` (previous ID or null) and `schedule_message_id` (human
+message supporting a date, or null). Code allocates IDs. The next inference sees
+the previous successful task list and human evidence watermark. Same obligation
+must reuse its ID, regardless of kind, wording or evidence subset. Unknown or
+duplicate IDs are rejected. New tasks grounded only in already assessed human
+evidence are omitted instead of creating another notification; newly discovered
+old work belongs to the audit. A new task must cite genuinely newer incoming or
+human outgoing/private evidence, excluding automation, recovered and failed
+outgoing messages. Initial analysis can identify existing rollout-eligible work.
+
+An existing task keeps its accepted date and schedule source until newer human
+evidence explicitly reschedules it. Null or changed inferred dates alone cannot
+reschedule. A successful analysis replaces the active task array: omitting a task
+completes or cancels that task without affecting another. Preserve the last
+successful tasks and watermark through unavailable attempts. Prompts must
+distinguish a new obligation from an unrelated later message. Ordinary tasks need
+evidence after the last resolution; a future follow-up can cite an earlier
+explicit agreement but its date must fall after that resolution. Follow-up
+requires a date and human schedule evidence; respect cancellations and opt-outs.
+For an explicit appointment window, an outcome check uses the end of the window.
+To reschedule, add a new private note with the new date and reason. Editing an
+old scheduling note does not create a new schedule notification identity; the
+guide must explain this directly. Retain a digest of accepted schedule evidence;
+editing or deleting its source invalidates the old schedule rather than firing
+an obsolete deadline. A new note is required to establish the replacement date.
+
+Receipt keys use conversation ID, code-owned task ID and notification type.
+The due key includes the accepted schedule source message ID, never the AI's
+category, full evidence array or timestamp. Distinct tasks retain distinct IDs,
+so completing one or reaching one deadline does not hide another. Preserve the
+existing reply-burst receipt and final live revalidation before sending.
+
+Migration preserves all old accepted/unknown/sending receipts and activation.
+Allocate IDs for old cached tasks; baseline already mentioned work as notified,
+and past schedules as already due-notified. Future schedules remain pending.
+Migration must persist before normal dispatch and must not emit a catch-up burst.
+Legacy state with unavailable analysis needs the same baseline on its first
+successful fresh analysis. Persist a fixed migration cutover timestamp before
+analysis or dispatch. Baseline only pre-cutover evidence, never new work that
+arrives while the first successful analysis is pending. The changed prompt
+invalidates old model bindings.
+
+### Alternatives and practical limits
+
+A cooldown only delays duplicates. Evidence overlap fails for disjoint messages
+about the same fitting. A separate task database or command/UI workflow is
+unnecessary: retain IDs in the analysis state already present. Stable IDs still
+require model matching, so the deterministic newer-evidence rule prevents a
+reinterpreted old task from becoming a new alert when matching fails. This may
+hold newly discovered old work for the audit; it must not manufacture urgency.
+Do not change customer classification, commerce exports, Friday report schedules,
+or Meta settings as part of this repair.
+
+### Verification and delivery
+
+Write and run regressions against unfixed code first, then implement and repeat:
+1116 category/evidence/date drift; a real reschedule; two independent tasks and
+deadlines; completion of only one; 1120 waiting for details; 1109 coaching;
+personal versus real collaboration/support; resolved ordinary work and due
+follow-up; reopened old wait versus new incoming; snooze including an overdue
+task; unavailable AI; late resolve before send; legacy accepted/unknown receipts
+without replay; failed inference preserving the successful task context.
+
+Prompt-quality cases need a read-only live-model evaluation as well as unit
+tests; schema tests alone do not prove the judgments. Use anonymized fixtures
+and inspect a no-send preview before activation. Review the spec and actual diff
+independently. Deploy the producer before the consumer, use the existing scoped
+release/deploy routes, preserve state/credentials/schedules, and verify installed
+hashes plus natural job health. Rollback must retain delivery history and avoid
+replaying old receipts: pause these two reminder jobs before reverting the
+consumer; do not reactivate old code against new task receipts without a reviewed
+compatibility migration. Unrelated bot/report jobs remain running. Publish the updated Mai guide in UMI Team / Docs /
+Processes, where Mai already has inherited editor access. Keep historical
+research documents intact and link the living guide from the repository handoff.
+
 1 October 2026. Approved product brief: native Chatwoot notification immediately;
 one internal reminder after ten working minutes without a human reply; hourly
 action digest when needed; 09:00 overnight/day queue. Daily 09:00–21:00 Asia/Bangkok.

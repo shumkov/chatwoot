@@ -1,8 +1,11 @@
 # UMI chat guide for Mai
 
-5 October 2026. Use this with the current product, delivery and returns information.
+6 October 2026. Use this with the current product, delivery and returns information.
 Examples below show how to structure a reply; they are not promises about stock,
 fit, prices, delivery dates or policy.
+
+Rollout status: the reminder changes described below are being implemented and
+verified; their deployment has not yet been confirmed.
 
 ## At the start of a conversation
 
@@ -149,10 +152,53 @@ Read and check the suggestion before sending it yourself. Shumabit's private
 response is not a customer message, and this iteration does not authorize it to
 create orders or reply to customers autonomously.
 
-Telegram's morning/hourly reminders point to work to check, not instructions to
-contact every listed person without reading the chat. Reply or finish the action
-in Chatwoot; do not merely dismiss the Telegram message. If a reminder is wrong,
-record what was already done or which fact is missing in the conversation.
+## Handling Telegram reminders
+
+Telegram points you to work in **Chatwoot**. Open the linked conversation, read
+what has happened since the reminder, and act there. You do not need to answer
+every Telegram reminder or contact every listed customer. Dismissing a Telegram
+message does not finish the work.
+
+| Situation | What to do in Chatwoot |
+| --- | --- |
+| A question or promised action needs your attention now | Answer the actual question or complete the action. An acknowledgement alone does not finish a promised check. |
+| The current work is finished | **Resolve** the conversation. This stops reminders for the current work. A brief private outcome note is helpful, but is not required just to close it. |
+| Work must wait until a particular time | **Snooze** until that time. Record what you are waiting for, such as customer information or an internal stock check. Reminders pause until the selected time; a new customer message follows Chatwoot's normal reopening behavior. |
+| You have already asked the customer for information | Waiting for their answer is not an unanswered operator task. Do not send another request simply because a reminder appeared. Set a check-back only when there is a useful reason. |
+| There is a useful future follow-up | Record the specific reason and date, including the time in Bangkok when relevant, in a private note. An agreed follow-up can remain scheduled even after you **Resolve** the current conversation. |
+| A reminder is wrong, or a planned follow-up is cancelled | Add a private note explaining what was completed, cancelled or misunderstood. Resolve finished current work. Respect a customer's refusal or request not to be contacted. |
+
+Private-note examples, with the actual facts and dates filled in:
+
+- “Fitting completed. Customer kept size S; no further fitting action needed.”
+- “Waiting for the customer's order number. We have already asked; no further
+  action until they reply.”
+- “Customer agreed that we will check back on [date] at [time] Bangkok to discuss
+  the fitting after their trip. Current enquiry is complete.”
+- “Cancel the follow-up planned for [date]. Customer no longer wants a fitting.”
+- “Move the follow-up to [new date] at [time] Bangkok. The customer asked us to
+  contact them after their trip instead.”
+
+These are ordinary private notes, not special commands. Record only what really
+happened or was agreed. Do not invent a follow-up date to clear the queue.
+For a change or cancellation, add a **new private note**. Editing or deleting
+the original scheduling note cancels its old timing but does not establish a
+replacement reminder; write the new date in a new note.
+
+A scheduled **Follow-up opportunity** appears once when due, including for a
+resolved conversation. It means “review whether this contact would still be
+useful,” not “the old work is unfinished.” Check the latest history, customer
+preferences and channel rules before sending anything. Shumabit does not send
+the customer a message automatically. Generic repeated sales nudges, personal
+exchanges and retrospective coaching do not belong in this action queue; real
+support and collaboration work can still belong here.
+
+The ten-working-minute unanswered-message alert remains. The 09:00 Bangkok
+summary may repeat genuinely outstanding current work once a day. Hourly
+summaries contain newly actionable or newly due work, not repeated descriptions
+of the same task. A resolved follow-up opportunity does not repeat every morning.
+If the same completed action keeps returning, give Ivan the conversation number
+and point to the outcome note so the reminder can be corrected.
 
 ## Friday coaching
 

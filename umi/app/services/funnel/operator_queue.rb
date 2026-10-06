@@ -88,6 +88,8 @@ class Umi::Funnel::OperatorQueue
     fields += [:content] if detail
     messages = Message.where(conversation_id: ids, created_at: ..@as_of).select(*fields).reorder(:created_at, :id).preload(:sender, :inbox).to_a
     @messages = messages.group_by(&:conversation_id)
+    @resolved_at = ReportingEvent.where(account_id: @account_id, conversation_id: ids, name: 'conversation_resolved',
+                                        event_end_time: ..@as_of).group(:conversation_id).maximum(:event_end_time)
     @attachments = Attachment.where(message_id: messages.map(&:id)).order(:id).to_a.group_by(&:message_id)
     @orders = Umi::ShopifyOrderAttribution.where(account_id: @account_id, conversation_id: ids, redacted_at: nil)
                                           .order(:id).to_a.group_by(&:conversation_id)
@@ -123,7 +125,7 @@ class Umi::Funnel::OperatorQueue
     { id: conversation.id, display_id: conversation.display_id, inbox_id: conversation.inbox_id, status: conversation.status,
       snoozed_until: conversation.snoozed_until&.utc&.iso8601(6), assignee_name: conversation.assignee&.name,
       sales_status: conversation.custom_attributes['umi_sales_status'], revision: revision(conversation),
-      active_since: active_since(conversation), waiting: waiting, chronology: chronology }
+      active_since: active_since(conversation), waiting: waiting, chronology: chronology }.merge(resolution(conversation))
   end
 
   def active_since(conversation) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
@@ -141,7 +143,7 @@ class Umi::Funnel::OperatorQueue
               conversation.custom_attributes['umi_sales_status'], conversation.contact.additional_attributes['umi_klaviyo_profile_id'],
               conversation.inbox.channel_type, conversation.assignee&.name, @inbox_ids, CHANNELS,
               message_rows(conversation, digest_content: true), messages.map(&:auto_reply_email?),
-              customer(conversation), commerce(conversation), @since.utc.iso8601(6)]
+              customer(conversation), commerce(conversation), resolution(conversation), @since.utc.iso8601(6)]
     Digest::SHA256.hexdigest(inputs.to_json)
   end
 
@@ -149,6 +151,8 @@ class Umi::Funnel::OperatorQueue
     waiting = nil
     first_response = true
     chronology = 'available'
+    evidence = []
+    boundary = resolution(conversation)
     visible_messages(conversation).each do |message|
       next if message.private? || (!message.incoming? && !message.outgoing?)
 
@@ -156,19 +160,42 @@ class Umi::Funnel::OperatorQueue
       if message.incoming? && !message.auto_reply_email?
         if recovered
           chronology = 'unverifiable' unless waiting
-        elsif message.created_at >= @since
+        elsif message.created_at >= @since && after_resolution?(message, boundary)
           # A live incoming establishes a verifiable lower bound even if earlier imports have no reliable timestamp.
           chronology = 'available'
+          evidence << [message.id, message[:content_digest]]
           waiting ||= { message_id: message.id, started_at: message.created_at.utc.iso8601(6),
                         business_seconds: business_seconds(message.created_at), first_response: first_response }
         end
       elsif successful_human?(message)
         waiting = nil
+        evidence = []
         chronology = recovered ? 'unverifiable' : 'available'
         first_response = false
       end
     end
+    waiting = nil if conversation.resolved?
+    waiting[:evidence_key] = Digest::SHA256.hexdigest(evidence.to_json) if waiting
     [waiting, chronology]
+  end
+
+  def resolution(conversation) # rubocop:disable Metrics/CyclomaticComplexity
+    timestamp = conversation.additional_attributes['umi_operator_resolved_at']
+    message_id = conversation.additional_attributes['umi_operator_resolved_message_id']
+    stamped_at = Time.iso8601(timestamp) if timestamp.present?
+    event_at = @resolved_at[conversation.id]
+    # Reporting dispatch can cross a second after the save; the synchronous message boundary stays authoritative.
+    if stamped_at && message_id.is_a?(Integer) && message_id >= 0 && stamped_at <= @as_of
+      return { resolved_at: stamped_at.utc.iso8601(6), resolved_message_id: message_id }
+    end
+
+    { resolved_at: event_at&.utc&.iso8601(6), resolved_message_id: nil }
+  end
+
+  def after_resolution?(message, boundary)
+    return message.id > boundary[:resolved_message_id] if boundary[:resolved_message_id]
+
+    boundary[:resolved_at].nil? || message.created_at > Time.iso8601(boundary[:resolved_at])
   end
 
   def successful_human?(message)
