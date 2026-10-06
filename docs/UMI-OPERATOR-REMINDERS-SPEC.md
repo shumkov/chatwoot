@@ -15,7 +15,7 @@ The canonical infra pin was merged in
 [PR 123](https://github.com/shumkov/umi-vps-infra/pull/123).
 Shumabit [PR 30](https://github.com/shumkov/shumabit-claude/pull/30) supplies
 the installed consumer and prompt. Runtime source hashes match the reviewed
-artifacts. No schema, credential, activation timestamp or schedule changed.
+artifacts. No database schema, credential, activation timestamp or schedule changed.
 
 Regression checks demonstrated failure before repair and success afterwards:
 58 focused Rails examples and 97 consumer/report/locking tests passed. The
