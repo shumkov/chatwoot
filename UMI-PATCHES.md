@@ -73,6 +73,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 
 | 57 | Operator reminder completion boundary | `umi/app/models/funnel/operator_resolution.rb`, `umi/app/models/funnel/customer_conversation.rb`, `umi/app/services/funnel/operator_queue.rb`, `config/initializers/zz_umi_operator_queue.rb`, focused queue service/request specs | Commits a resolution time and message boundary with the native status, preserves it across stale customer projection updates, and clears resolved/pre-resolution reply waits without truncating history. Supplies a stable incoming-burst evidence digest so sync-only changes cannot revive dismissed no-reply alerts. Historical resolutions use scoped reporting events bounded by the snapshot. | Native operator reminder facts provide equivalent synchronous closure, reopen boundaries and stable waiting evidence. |
 
+| 58 | Serialize Instagram conversation creation | `umi/app/builders/instagram_conversation_serialization.rb`, `config/initializers/zz_umi_instagram_conversation_serialization.rb`, concurrent builder specs | Holds the contact row while the existing Instagram builder selects or creates its conversation, preventing overlapping shared-post and ad-question messages from splitting into two open threads. Preserves channel and resolved-thread behavior. | Upstream serializes equivalent Instagram conversation selection/creation across workers. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)
