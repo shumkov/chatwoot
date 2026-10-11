@@ -2,7 +2,8 @@
 
 Editable team guide: [UMI chat guide for Mai](https://docs.google.com/document/d/1F2DG54uY7P6a8r-_Ms2vYbqUBL_JcGfCuJ_sNI9-qHw/edit),
 in UMI Team → Docs → Processes. Mai has inherited editor access.
-This file is the 6 October publication snapshot. Read the living Google Doc before
+This file includes the 12 October reminder-guide update and preserves the living
+Google Doc’s reaction and restock instructions. Read the living Google Doc before
 future edits and preserve changes made there; do not overwrite it from this snapshot.
 
 6 October 2026. Use this with the current product, delivery and returns information.
@@ -163,14 +164,52 @@ what has happened since the reminder, and act there. You do not need to answer
 every Telegram reminder or contact every listed customer. Dismissing a Telegram
 message does not finish the work.
 
+New reminders group actions under one conversation link. Several lines can be
+separate promises or steps for the same customer; read every line and its own
+timing or status. A long group may continue in the next message. Current buyer
+enquiries and explicit order, booking or service tasks appear before
+unclassified and other work. Collaboration tasks remain visible, and an
+influencer label alone does not lower a customer's priority.
+
+Resolve and Snooze apply to the whole conversation, not one line of a reminder.
+Resolve only when all current work is finished. Snooze only when all current
+work can wait; do not hide an urgent reply because another task is for later.
+For an individual future check, add a private note with its date and reason.
+
+Your 👍 on a Telegram reminder means “seen.” It does not resolve or snooze the
+work. Use Resolve, Snooze or a dated private note in Chatwoot to record what
+should happen next.
+
+Shumabit's 👌 on an old reminder means none of the original tasks in that message
+is still pending. It does not mean a purchase was made or that every issue in
+the conversation is resolved. Shumabit's 😴 means all remaining tasks in that
+message are deferred. These are the bot's status reactions, separate from your
+acknowledgement; the bot shows neither status reaction while any item is active
+or its status is unknown.
+
+If a reminder contains tasks with different statuses, read the status beside
+each item. The original conversation links remain the place to check the latest
+facts. An old question being answered does not mean a new question in the same
+conversation is answered. If the status cannot be confirmed, open Chatwoot
+before acting. Status updates appear on the next scheduled check after Chatwoot
+and the analysis have refreshed; they are not immediate and are not triggered by
+your 👍.
+
 | Situation | What to do in Chatwoot |
 | --- | --- |
-| A question or promised action needs your attention now | Answer the actual question or complete the action. An acknowledgement alone does not finish a promised check. |
-| The current work is finished | **Resolve** the conversation. This stops reminders for the current work. A brief private outcome note is helpful, but is not required just to close it. |
-| Work must wait until a particular time | **Snooze** until that time. Record what you are waiting for, such as customer information or an internal stock check. Reminders pause until the selected time; a new customer message follows Chatwoot's normal reopening behavior. |
+| A question or promised action needs your attention now | Answer the actual question or complete the action. An acknowledgement alone does not finish a promised check. If you promised to take a question to the team or help with a restock request, complete the internal check and record its outcome in a private note. Do not send the customer another acknowledgement just to clear a reminder. Automatic restock subscription is not available in this workflow; a promise to notify the customer does not create a subscription. |
+| All current work is finished | **Resolve** the conversation. This stops reminders for the current work. A brief private outcome note is helpful, but is not required just to close it. |
+| All current work must wait until a particular time | **Snooze** until that time. Record what you are waiting for, such as customer information or an internal stock check. Reminders pause until the selected time; a new customer message follows Chatwoot's normal reopening behavior. |
 | You have already asked the customer for information | Waiting for their answer is not an unanswered operator task. Do not send another request simply because a reminder appeared. Set a check-back only when there is a useful reason. |
 | There is a useful future follow-up | Record the specific reason and date, including the time in Bangkok when relevant, in a private note. An agreed follow-up can remain scheduled even after you **Resolve** the current conversation. |
 | A reminder is wrong, or a planned follow-up is cancelled | Add a private note explaining what was completed, cancelled or misunderstood. Resolve finished current work. Respect a customer's refusal or request not to be contacted. |
+
+“By” is a deadline for work that may need attention before that date. A dated
+“Follow-up opportunity” is a future check and appears when due. Record the date
+and reason only when genuinely agreed or chosen for a useful check; do not
+invent a date or send a generic nudge to clear the queue. Undated unfinished
+promises can still appear in the morning queue until completed or genuinely
+deferred.
 
 Private-note examples, with the actual facts and dates filled in:
 
