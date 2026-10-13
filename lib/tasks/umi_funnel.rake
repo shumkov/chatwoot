@@ -46,13 +46,15 @@ namespace :umi do
     task operations: :environment do
       puts JSON.generate(Umi::Funnel::OperationalReport.perform(account_id: ENV.fetch('ACCOUNT_ID'), since: ENV.fetch('SINCE'),
                                                                 until_time: ENV.fetch('UNTIL'), as_of: ENV.fetch('AS_OF') { Time.current },
-                                                                inbox_id: ENV['INBOX_ID'].presence))
+                                                                inbox_id: ENV['INBOX_ID'].presence, include_evidence: ENV['INCLUDE_EVIDENCE'] == '1'))
     end
 
     desc 'Aggregate funnel report (ACCOUNT_ID and SINCE ISO8601 required, optional UNTIL)'
     task report: :environment do
       puts JSON.generate(Umi::Funnel::Report.perform(account_id: ENV.fetch('ACCOUNT_ID'), since: Time.iso8601(ENV.fetch('SINCE')),
-                                                     until_time: ENV['UNTIL'] ? Time.iso8601(ENV.fetch('UNTIL')) : Time.current))
+                                                     until_time: ENV['UNTIL'] ? Time.iso8601(ENV.fetch('UNTIL')) : Time.current,
+                                                     as_of: ENV['AS_OF'] ? Time.iso8601(ENV.fetch('AS_OF')) : Time.current,
+                                                     include_evidence: ENV['INCLUDE_EVIDENCE'] == '1'))
     end
   end
 end

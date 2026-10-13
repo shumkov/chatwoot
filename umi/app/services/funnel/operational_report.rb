@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:disable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity, Metrics/ParameterLists
 
 class Umi::Funnel::OperationalReport
   CLASSIFIED_STATUSES = %w[engaged qualified inactive not_sales order_placed purchased uncertain].freeze
@@ -10,8 +10,9 @@ class Umi::Funnel::OperationalReport
     new(**arguments).perform
   end
 
-  def initialize(account_id:, since:, until_time:, as_of:, inbox_id: nil)
+  def initialize(account_id:, since:, until_time:, as_of:, inbox_id: nil, include_evidence: false)
     @account = Account.find(account_id)
+    @include_evidence = include_evidence
     @from, @until_time, @as_of = [since, until_time, as_of].map { |time| time.is_a?(String) ? Time.iso8601(time).utc : time.utc }
     raise ArgumentError, 'Invalid operational report window' unless @from < @until_time && @until_time <= @as_of
 
@@ -24,7 +25,8 @@ class Umi::Funnel::OperationalReport
   def perform
     @inboxes.each do |inbox|
       row_for(inbox, 'other') unless inbox.channel_type.in?(%w[Channel::FacebookPage Channel::Instagram])
-      candidates = inbox.messages.incoming.where(private: false, created_at: @effective_from...@until_time).select(:conversation_id)
+      candidates = inbox.messages.incoming.where(private: false,
+                                                 created_at: (@include_evidence ? @boundary : @effective_from)...@until_time).select(:conversation_id)
       @account.conversations.where(inbox_id: inbox.id, id: candidates).includes(:contact).find_each do |conversation|
         collect(conversation, row_for(inbox, messaging_channel(conversation, inbox)))
       end
@@ -57,7 +59,7 @@ class Umi::Funnel::OperationalReport
       coverage: { scope: 'conversations_with_incoming_in_collection_period', inspected_conversations: 0,
                   excluded_spam_conversations: 0, excluded_service_notification_messages: 0,
                   redacted_conversations: 0, recovered_chronology_conversations: 0, unknown_source_timestamp_conversations: 0 },
-      first_response: [], subsequent_response: [], inbox: inbox
+      first_response: [], subsequent_response: [], inbox: inbox, **(@include_evidence ? { response_episodes: [] } : {})
     }
   end
 
@@ -86,22 +88,46 @@ class Umi::Funnel::OperationalReport
           coverage[:excluded_service_notification_messages] += 1 if message.created_at >= @effective_from && message.created_at < @until_time
           next
         end
-        waiting ||= { start: message.created_at, finish: nil }
+        waiting ||= { start: message.created_at, finish: nil, start_message_id: message.id, incoming_message_ids: [], incoming_messages: [] }
+        waiting[:incoming_message_ids] << message.id
+        waiting[:incoming_messages] << { id: message.id, created_at: message.created_at }
       elsif waiting && !message.failed? && !message.send(:bot_response?) && message.send(:human_response?)
-        episodes << waiting.merge(finish: message.created_at)
+        episodes << waiting.merge(finish: message.created_at, reply_message_id: message.id)
         waiting = nil
       end
     end
     episodes << waiting if waiting
     episodes.each_with_index do |episode, index|
-      next unless episode[:start] >= @effective_from && episode[:start] < @until_time
+      next unless episode[:start] >= @boundary && episode[:start] < @until_time
 
       # A first message observed after collection began cannot establish acquisition for an older imported thread.
       next if index.zero? && conversation.created_at < @boundary
 
+      if @include_evidence && (episode[:start] >= @effective_from || episode[:finish].nil? ||
+                                episode[:incoming_messages].any? do |message|
+                                  message[:created_at] >= @effective_from && message[:created_at] < @until_time
+                                end)
+        row[:response_episodes] << episode_evidence(conversation, row[:inbox], episode, index)
+      end
+      next if episode[:start] < @effective_from
+
       episode.merge!(classification(conversation, episode[:start])) if index.zero?
       row[index.zero? ? :first_response : :subsequent_response] << episode
     end
+  end
+
+  def episode_evidence(conversation, inbox, episode, index)
+    finish = episode[:finish] || @as_of
+    { conversation_id: conversation.id, display_id: conversation.display_id, kind: index.zero? ? 'first' : 'subsequent',
+      start_message_id: episode[:start_message_id], incoming_message_ids: episode[:incoming_message_ids],
+      incoming_messages: episode[:incoming_messages].map do |message|
+        { id: message[:id], created_at: message[:created_at].iso8601(6), calendar_seconds: finish - message[:created_at],
+          business_seconds: inbox.working_hours_enabled? ? business_seconds(inbox, message[:created_at], finish) : nil }
+      end,
+      reply_message_id: episode[:reply_message_id], started_at: episode[:start].iso8601(6), replied_at: episode[:finish]&.iso8601(6),
+      calendar_seconds: finish - episode[:start],
+      business_seconds: inbox.working_hours_enabled? ? business_seconds(inbox, episode[:start], finish) : nil,
+      period_membership: episode[:start] >= @effective_from ? 'started' : 'carried_over' }
   end
 
   def uncertain_chronology?(messages, coverage)
@@ -221,4 +247,4 @@ class Umi::Funnel::OperationalReport
   end
 end
 
-# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:enable Metrics/AbcSize, Metrics/ClassLength, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity, Metrics/ParameterLists

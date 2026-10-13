@@ -3,7 +3,7 @@
 # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
 
 class Umi::Funnel::Report
-  def self.perform(account_id:, since:, until_time: Time.current)
+  def self.perform(account_id:, since:, until_time: Time.current, as_of: Time.current, include_evidence: false)
     account = Account.find(account_id)
     events = Umi::ConversationEvent.where(account_id: account.id).where(observed_at: since...until_time)
     states = Umi::ShopifyOrderFinancialState.where(account_id: account.id, redacted_at: nil)
@@ -35,7 +35,13 @@ class Umi::Funnel::Report
       financial_errors: states.where.not(last_error: nil).count,
       delivery_states: Umi::ConversionDelivery.where(conversation_event_id: events.select(:id)).group(:destination, :state).count
                                               .map { |(destination, state), count| { destination: destination, state: state, count: count } },
-      erasure_required: Umi::ConversionDelivery.where(conversation_event_id: events.select(:id), reason: 'erasure_required').count }
+      erasure_required: Umi::ConversionDelivery.where(conversation_event_id: events.select(:id), reason: 'erasure_required').count,
+      **(if include_evidence
+           { weekly_activity: Umi::Funnel::WeeklyActivityReport.new(account: account, since: since,
+                                                                    until_time: until_time, as_of: as_of).perform }
+         else
+           {}
+         end) }
   end
 end
 

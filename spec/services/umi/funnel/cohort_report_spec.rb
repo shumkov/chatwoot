@@ -73,6 +73,15 @@ RSpec.describe Umi::Funnel::CohortReport do
     expect(JSON.generate(report)).not_to include('private customer details', 'scoped_user_id', 'shopify_order_id', 'contact_id', 'conversation_id')
   end
 
+  it 'exposes the exact entry message for private sales-membership audit without changing aggregate exports' do
+    result = described_class.perform(**params, include_evidence: true)
+    expect(result[:member_evidence]).to contain_exactly(
+      include(conversation_id: conversation.id, display_id: conversation.display_id, start_message_id: 101,
+              started_at: start.iso8601(6), maturity: 'mature')
+    )
+    expect(described_class.perform(**params)).not_to have_key(:member_evidence)
+  end
+
   it 'chooses the first message before filtering acquisition dates, not a new ad touch in the window' do
     Umi::ConversationEvent.record!(account_id: account.id, conversation_id: conversation.id, contact_id: conversation.contact_id,
                                    event_type: 'message_received', occurrence_key: 'message:99', occurred_at: start - 2.days,
