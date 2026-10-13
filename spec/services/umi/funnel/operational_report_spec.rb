@@ -40,6 +40,44 @@ RSpec.describe 'Umi::Funnel::OperationalReport' do
     expect(JSON.generate(report)).not_to include('Secret customer content', 'contact_id', 'conversation_id', 'message_id')
   end
 
+  it 'exports private episode evidence only on request so a thanks or mention can be audited before judging Mai' do
+    first = message(start, content: 'Private customer text')
+    second = message(start + 30.seconds)
+    reply = message(start + 2.minutes, type: :outgoing)
+
+    private_report = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+    expect(private_report[:rows].sole[:response_episodes]).to contain_exactly(
+      include(conversation_id: conversation.id, display_id: conversation.display_id, kind: 'first',
+              start_message_id: first.id, incoming_message_ids: [first.id, second.id], reply_message_id: reply.id,
+              started_at: start.iso8601(6), replied_at: (start + 2.minutes).iso8601(6),
+              calendar_seconds: 120.0, business_seconds: nil, period_membership: 'started')
+    )
+    expect(row).not_to have_key(:response_episodes)
+    expect(JSON.generate(private_report)).not_to include('Private customer text')
+  end
+
+  it 'exports per-incoming durations when an old mention precedes this weeks actionable question' do
+    message(start - 1.day)
+    question = message(start + 1.minute)
+    reply = message(start + 3.minutes, type: :outgoing)
+    result = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+    episode = result[:rows].sole[:response_episodes].sole
+    expect(episode[:incoming_messages]).to include(id: question.id, created_at: (start + 1.minute).iso8601(6),
+                                                   calendar_seconds: 120.0, business_seconds: nil)
+    expect(episode[:reply_message_id]).to eq(reply.id)
+  end
+
+  it 'exposes carried-over open waits even without a new message this week without changing weekly aggregates' do
+    incoming = message(start - 1.day)
+    message(start + 3.days, type: :outgoing)
+
+    private_report = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+    expect(private_report[:rows].sole[:response_episodes]).to contain_exactly(
+      include(start_message_id: incoming.id, reply_message_id: nil, period_membership: 'carried_over', calendar_seconds: 259_200.0)
+    )
+    expect(private_report[:rows].sole[:first_response][:eligible]).to eq(0)
+  end
+
   it 'keeps unanswered not_sales conversations in the denominator and reports age' do
     conversation.project_umi_sales_status!('not_sales')
     message(start)
@@ -104,6 +142,35 @@ RSpec.describe 'Umi::Funnel::OperationalReport' do
 
     expect(row[:coverage]).to include(recovered_chronology_conversations: 1, unknown_source_timestamp_conversations: 1)
     expect(row[:first_response][:eligible]).to eq(0)
+  end
+
+  it 'does not let an old answered recovered thread poison later weekly evidence coverage' do
+    message(start - 2.days, content_attributes: { umi_recovered: true, external_created_at: 'unknown' })
+    message(start - 1.day, type: :outgoing)
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(inspected_conversations: 0, recovered_chronology_conversations: 0,
+                                              unknown_source_timestamp_conversations: 0)
+    expect(private_row[:response_episodes]).to be_empty
+  end
+
+  it 'does not let an old answered erased thread poison later weekly evidence coverage' do
+    message(start - 2.days)
+    message(start - 1.day, type: :outgoing)
+    conversation.contact.update!(additional_attributes: { umi_profile_redacted: true })
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(inspected_conversations: 0, redacted_conversations: 0)
+  end
+
+  it 'retains uncertain recovered carry and reopened activity as incomplete weekly response coverage' do
+    message(start - 2.days, content_attributes: { umi_recovered: true, external_created_at: 'unknown' })
+    message(start - 1.day, type: :outgoing, private: true)
+    message(start - 1.day, type: :outgoing, content_attributes: { automation_rule_id: 1 })
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(recovered_chronology_conversations: 1, unknown_source_timestamp_conversations: 1)
+    message(start - 1.hour, type: :outgoing)
+    message(start)
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(recovered_chronology_conversations: 1, unknown_source_timestamp_conversations: 1)
   end
 
   it 'marks a partial collection period instead of fabricating a full zero week' do

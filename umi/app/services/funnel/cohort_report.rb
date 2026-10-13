@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# rubocop:disable Metrics/ClassLength, Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:disable Metrics/ClassLength, Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity, Metrics/ParameterLists
 
 class Umi::Funnel::CohortReport
   QUALIFICATION_STATUSES = %w[qualified not_sales unevaluated].freeze
@@ -12,8 +12,9 @@ class Umi::Funnel::CohortReport
     new(**arguments).perform
   end
 
-  def initialize(account_id:, from:, until_time:, as_of:, horizon_days:)
+  def initialize(account_id:, from:, until_time:, as_of:, horizon_days:, include_evidence: false)
     @generated_at = Time.current
+    @include_evidence = include_evidence
     raise ArgumentError, 'Account ID must be positive' unless account_id.to_s.match?(/\A[1-9]\d*\z/)
     raise ArgumentError, 'Horizon must be 1–90 integer days' unless horizon_days.to_s.match?(/\A\d+\z/) && horizon_days.to_i.between?(1, 90)
 
@@ -44,7 +45,17 @@ class Umi::Funnel::CohortReport
       cash_time_basis: 'latest_observed_not_historical', refunds_within_outcome_window: nil, net_paid_within_outcome_window: nil,
       rows: @rows.sort_by { |key, _| key.map(&:to_s) }.map { |_, row| finish_row(row) },
       coverage: @coverage.merge(scope: 'current_account_paid_occurrences_from_through_as_of',
-                                cohort_membership_independent_of_outcome_horizon: true), limitations: LIMITATIONS }
+                                cohort_membership_independent_of_outcome_horizon: true), limitations: LIMITATIONS,
+      **(if @include_evidence
+           { member_evidence: @members.map do |id, member|
+             { conversation_id: id, display_id: member[:display_id], start_message_id: member[:start_message_id],
+               started_at: member[:start].iso8601(6), maturity: member[:maturity], qualified_at: member[:qualified_at]&.iso8601(6),
+               paid_orders: member[:paid_orders] || [], incomplete_paid_evidence: member[:incomplete_paid_evidence] || [],
+               dimensions: member[:dimensions] }
+           end }
+         else
+           {}
+         end) }
   end
 
   private
@@ -76,7 +87,9 @@ class Umi::Funnel::CohortReport
         maturity = event.occurred_at + @horizon_days.days <= @as_of ? :mature : :immature
         row[maturity][:conversations] += 1
         @members[event.conversation_id] = { contact_id: event.contact_id, start: event.occurred_at,
-                                            deadline: [event.occurred_at + @horizon_days.days, @as_of].min, metrics: row[maturity] }
+                                            deadline: [event.occurred_at + @horizon_days.days, @as_of].min, metrics: row[maturity],
+                                            display_id: conversation.display_id, start_message_id: event.payload['message_id'],
+                                            maturity: maturity.to_s, dimensions: dimensions }
       end
     end
   end
@@ -173,6 +186,7 @@ class Umi::Funnel::CohortReport
                'missing_first_paid_snapshot'
              end
     if reason
+      (member[:incomplete_paid_evidence] ||= []) << reason if @include_evidence
       incomplete = member[:metrics][:incomplete_paid_evidence]
       incomplete[:total] += 1
       incomplete[:reasons][reason] = incomplete[:reasons].fetch(reason, 0) + 1
@@ -181,6 +195,10 @@ class Umi::Funnel::CohortReport
 
     validate_first_paid!(event, state, amount, currency)
     metrics = member[:metrics]
+    if @include_evidence
+      (member[:paid_orders] ||= []) << { shop_domain: key[0], shopify_order_id: key[1],
+                                         occurred_at: event.occurred_at.iso8601(6), value: amount.to_s('F'), currency: currency }
+    end
     metrics[:paid_orders] += 1
     metrics[:paid_value_by_currency][currency] = metrics[:paid_value_by_currency].fetch(currency, BigDecimal(0)) + amount
     metrics[:paid_conversations] += 1 unless member[:paid]
@@ -315,4 +333,4 @@ class Umi::Funnel::CohortReport
   end
 end
 
-# rubocop:enable Metrics/ClassLength, Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity
+# rubocop:enable Metrics/ClassLength, Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/MethodLength, Metrics/PerceivedComplexity, Metrics/ParameterLists
