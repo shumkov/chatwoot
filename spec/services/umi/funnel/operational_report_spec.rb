@@ -144,6 +144,35 @@ RSpec.describe 'Umi::Funnel::OperationalReport' do
     expect(row[:first_response][:eligible]).to eq(0)
   end
 
+  it 'does not let an old answered recovered thread poison later weekly evidence coverage' do
+    message(start - 2.days, content_attributes: { umi_recovered: true, external_created_at: 'unknown' })
+    message(start - 1.day, type: :outgoing)
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(inspected_conversations: 0, recovered_chronology_conversations: 0,
+                                              unknown_source_timestamp_conversations: 0)
+    expect(private_row[:response_episodes]).to be_empty
+  end
+
+  it 'does not let an old answered erased thread poison later weekly evidence coverage' do
+    message(start - 2.days)
+    message(start - 1.day, type: :outgoing)
+    conversation.contact.update!(additional_attributes: { umi_profile_redacted: true })
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(inspected_conversations: 0, redacted_conversations: 0)
+  end
+
+  it 'retains uncertain recovered carry and reopened activity as incomplete weekly response coverage' do
+    message(start - 2.days, content_attributes: { umi_recovered: true, external_created_at: 'unknown' })
+    message(start - 1.day, type: :outgoing, private: true)
+    message(start - 1.day, type: :outgoing, content_attributes: { automation_rule_id: 1 })
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(recovered_chronology_conversations: 1, unknown_source_timestamp_conversations: 1)
+    message(start - 1.hour, type: :outgoing)
+    message(start)
+    private_row = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)[:rows].sole
+    expect(private_row[:coverage]).to include(recovered_chronology_conversations: 1, unknown_source_timestamp_conversations: 1)
+  end
+
   it 'marks a partial collection period instead of fabricating a full zero week' do
     message(start)
     with_modified_env UMI_FUNNEL_STARTED_AT: (start + 1.hour).iso8601 do

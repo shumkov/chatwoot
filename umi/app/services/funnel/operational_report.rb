@@ -67,6 +67,7 @@ class Umi::Funnel::OperationalReport
     messages = conversation.messages.where(private: false, message_type: %i[incoming outgoing]).where(created_at: ..@as_of)
                            .reorder(:created_at, :id).includes(:sender).to_a
     return unless messages.any? { |message| message.incoming? && message.created_at < @until_time }
+    return if @include_evidence && !relevant_to_evidence_period?(messages)
 
     coverage = row[:coverage]
     coverage[:inspected_conversations] += 1
@@ -114,6 +115,20 @@ class Umi::Funnel::OperationalReport
       episode.merge!(classification(conversation, episode[:start])) if index.zero?
       row[index.zero? ? :first_response : :subsequent_response] << episode
     end
+  end
+
+  def relevant_to_evidence_period?(messages)
+    return true if messages.any? { |message| message.incoming? && message.created_at >= @effective_from && message.created_at < @until_time }
+
+    # Older threads matter only while a public incoming still waits at the observation cutoff.
+    last_response = messages.reverse_each.find do |message|
+      if message.incoming?
+        message.created_at < @until_time && !message.auto_reply_email?
+      else
+        !message.failed? && !message.send(:bot_response?) && message.send(:human_response?)
+      end
+    end
+    last_response&.incoming? && last_response.created_at >= @boundary
   end
 
   def episode_evidence(conversation, inbox, episode, index)
