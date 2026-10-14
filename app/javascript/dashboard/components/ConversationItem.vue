@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, watch, inject } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import wootConstants from 'dashboard/constants/globals';
 import { useStore, useMapGetter } from 'dashboard/composables/store';
 import { frontendURL, conversationUrl } from 'dashboard/helper/URLHelper';
 import ConversationCard from './widgets/conversation/ConversationCard.vue';
@@ -19,6 +20,7 @@ const props = defineProps({
 });
 
 const router = useRouter();
+const route = useRoute();
 const store = useStore();
 
 const selectConversation = inject('selectConversation');
@@ -96,11 +98,22 @@ const conversationPath = computed(() =>
 const onCardClick = e => {
   const path = conversationPath.value;
   if (!path) return;
+  const target = { path };
+  if (props.label) {
+    const { status, assignee_type: assigneeType } = route.query;
+    target.query = {};
+    if (Object.values(wootConstants.STATUS_TYPE).includes(status)) {
+      target.query.status = status;
+    }
+    if (Object.values(wootConstants.ASSIGNEE_TYPE).includes(assigneeType)) {
+      target.query.assignee_type = assigneeType;
+    }
+  }
 
   if (e.metaKey || e.ctrlKey) {
     e.preventDefault();
     window.open(
-      `${window.chatwootConfig.hostURL}${path}`,
+      `${window.chatwootConfig.hostURL}${router.resolve(target).href}`,
       '_blank',
       'noopener,noreferrer'
     );
@@ -108,7 +121,7 @@ const onCardClick = e => {
   }
 
   if (isActiveChat.value) return;
-  router.push({ path });
+  router.push(target);
 };
 
 const onExpandedSelect = checked => {

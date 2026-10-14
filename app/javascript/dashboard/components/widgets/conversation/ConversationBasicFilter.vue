@@ -21,16 +21,12 @@ const emit = defineEmits(['changeFilter']);
 const store = useStore();
 const { t } = useI18n();
 
-const { updateUISettings } = useUISettings();
+const { updateUISettings, uiSettings } = useUISettings();
 
 const chatStatusFilter = useMapGetter('getChatStatusFilter');
 const chatSortFilter = useMapGetter('getChatSortFilter');
 
 const [showActionsDropdown, toggleDropdown] = useToggle();
-
-const currentStatusFilter = computed(() => {
-  return chatStatusFilter.value || wootConstants.STATUS_TYPE.OPEN;
-});
 
 const currentSortBy = computed(() => {
   return (
@@ -119,7 +115,11 @@ const activeChatSortLabel = computed(
 const saveSelectedFilter = (type, value) => {
   updateUISettings({
     conversations_filter_by: {
-      status: type === 'status' ? value : currentStatusFilter.value,
+      status:
+        type === 'status'
+          ? value
+          : uiSettings.value.conversations_filter_by?.status ||
+            wootConstants.STATUS_TYPE.OPEN,
       order_by: type === 'sort' ? value : currentSortBy.value,
     },
   });
