@@ -73,6 +73,45 @@ RSpec.describe 'UMI operator queue', type: :request do
     expect(response).to have_http_status(:not_found)
   end
 
+  it 'authenticates and authorizes both collaboration projection endpoints' do
+    create(:message, conversation: conversation, message_type: :incoming)
+    endpoint = "#{url}/#{conversation.reload.display_id}/collaboration_projection"
+    get endpoint, params: { since: since }
+    expect(response).to have_http_status(:unauthorized)
+    agent = create(:user, account: account, role: :agent)
+    post endpoint, params: { since: since, expected_revision: 'unknown', member: false }, as: :json, headers: agent.create_new_auth_token
+    expect(response).to have_http_status(:unauthorized)
+    get endpoint, params: { since: since }, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body['projection']).to include('id' => conversation.id, 'member' => false, 'excluded' => false)
+  end
+
+  it 'returns persisted membership and rejects stale or malformed membership writes' do
+    create(:message, conversation: conversation, message_type: :incoming)
+    endpoint = "#{url}/#{conversation.reload.display_id}/collaboration_projection"
+    get "#{url}/#{conversation.display_id}", params: { since: since }, headers: user.create_new_auth_token
+    revision = response.parsed_body['conversation']['revision']
+    post endpoint, params: { since: since, expected_revision: revision, member: true }, as: :json, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body['projection']).to include('member' => true, 'status' => 'open')
+    expect(response.parsed_body['revision']).to eq(revision)
+    post endpoint, params: { since: since, expected_revision: 'stale', member: false }, as: :json, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:conflict)
+    post endpoint, params: { since: since, expected_revision: revision, member: 'false' }, as: :json, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:bad_request)
+    expect(conversation.reload.label_list).to eq(['collaboration-pending'])
+  end
+
+  it 'never reads or writes projection state through another account' do
+    other = create(:account)
+    foreign = create(:conversation, account: other)
+    endpoint = "/api/v1/accounts/#{other.id}/umi/operator_queue/#{foreign.reload.display_id}/collaboration_projection"
+    get endpoint, params: { since: since }, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:unauthorized)
+    post endpoint, params: { since: since, expected_revision: 'unknown', member: false }, as: :json, headers: user.create_new_auth_token
+    expect(response).to have_http_status(:unauthorized)
+  end
+
   it 'requires a valid activation boundary and valid cursors' do
     [{}, { since: 'invalid' }, { since: since, after_id: '-1' }, { since: since, through_id: '1x' }].each do |parameters|
       get url, params: parameters, headers: user.create_new_auth_token

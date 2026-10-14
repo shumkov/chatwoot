@@ -389,6 +389,45 @@ function setFiltersFromUISettings() {
     : wootConstants.SORT_BY_TYPE.LAST_ACTIVITY_AT_DESC;
 }
 
+// Shared label links can widen the local view without changing saved preferences.
+let filtersBeforeLabelLink = null;
+let appliedLabelLinkKey = null;
+
+function applyLabelLinkFilters() {
+  const { status, assignee_type: assigneeType } = route.query;
+  const validStatus =
+    props.label && Object.values(wootConstants.STATUS_TYPE).includes(status);
+  const validAssignee =
+    props.label &&
+    assigneeTabItems.value.some(item => item.key === assigneeType);
+  const key =
+    validStatus || validAssignee
+      ? JSON.stringify([
+          props.label,
+          validStatus && status,
+          validAssignee && assigneeType,
+        ])
+      : null;
+  if (key === appliedLabelLinkKey) return;
+
+  if (filtersBeforeLabelLink) {
+    activeStatus.value = filtersBeforeLabelLink.status;
+    activeAssigneeTab.value = filtersBeforeLabelLink.assigneeType;
+  }
+  if (key) {
+    filtersBeforeLabelLink ||= {
+      status: activeStatus.value,
+      assigneeType: activeAssigneeTab.value,
+    };
+    if (validStatus) activeStatus.value = status;
+    if (validAssignee) activeAssigneeTab.value = assigneeType;
+  } else {
+    filtersBeforeLabelLink = null;
+  }
+  appliedLabelLinkKey = key;
+  store.dispatch('setChatStatusFilter', activeStatus.value);
+}
+
 function emitConversationLoaded() {
   emit('conversationLoad');
 }
@@ -573,6 +612,7 @@ function fetchConversations() {
 }
 
 function resetAndFetchData() {
+  applyLabelLinkFilters();
   appliedFilter.value = [];
   resetBulkActions();
   store.dispatch('conversationPage/reset');
@@ -806,8 +846,9 @@ useEmitter('fetch_conversation_stats', () => {
 });
 
 onMounted(() => {
-  store.dispatch('setChatListFilters', conversationFilters.value);
   setFiltersFromUISettings();
+  applyLabelLinkFilters();
+  store.dispatch('setChatListFilters', conversationFilters.value);
   store.dispatch('setChatStatusFilter', activeStatus.value);
   store.dispatch('setChatSortFilter', activeSortBy.value);
   resetAndFetchData();
@@ -856,8 +897,14 @@ watch(
   () => resetAndFetchData()
 );
 watch(
-  computed(() => props.label),
-  () => resetAndFetchData()
+  [
+    () => props.label,
+    () => route.query.status,
+    () => route.query.assignee_type,
+  ],
+  ([label], [previousLabel]) => {
+    if (label || previousLabel) resetAndFetchData();
+  }
 );
 watch(
   computed(() => props.conversationType),

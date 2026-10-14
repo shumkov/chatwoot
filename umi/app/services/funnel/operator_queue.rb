@@ -3,6 +3,8 @@
 # rubocop:disable Metrics/AbcSize, Metrics/ClassLength
 class Umi::Funnel::OperatorQueue
   InvalidParameters = Class.new(ArgumentError)
+  StaleRevision = Class.new(StandardError)
+  COLLABORATION_LABEL = 'collaboration-pending'
   TIMEZONE = 'Asia/Bangkok'
   PAGE_SIZE = 50
   CHANNELS = %w[Channel::FacebookPage Channel::Instagram Channel::Line Channel::Whatsapp Channel::Email Channel::WebWidget
@@ -11,10 +13,11 @@ class Umi::Funnel::OperatorQueue
   PAYMENT_FIELDS = %w[classification review_reasons currency original_order_value current_order_value captured refunded net_cash
                       last_payment_at order_created_at order_updated_at paid_basket paid_history_unknown identity_hold].freeze
 
-  def initialize(account_id:, since:, as_of: Time.current)
+  def initialize(account_id:, since:, as_of: nil)
     @account_id = account_id
     @since = activation_time(since)
-    @as_of = as_of
+    @as_of = as_of || Time.current
+    @fixed_as_of = as_of.present?
     raise InvalidParameters, 'Invalid activation boundary' unless @since && @since <= @as_of
 
     @inbox_ids = Umi::Funnel::ConversationClassifier.inbox_ids
@@ -45,7 +48,63 @@ class Umi::Funnel::OperatorQueue
     end
   end
 
+  def collaboration_projection(display_id)
+    snapshot do
+      conversation = Account.find(@account_id).conversations.find_by!(display_id: display_id)
+      envelope.merge(projection: projection(conversation))
+    end
+  end
+
+  def project_collaboration(display_id, expected_revision:, member:) # rubocop:disable Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    raise InvalidParameters, 'Membership must be a boolean' unless [true, false].include?(member)
+
+    account = Account.find(@account_id)
+    # Match account-scoped privacy lock order and read evidence after acquiring the locks.
+    # A repeatable-read snapshot taken before the lock can miss a newly committed message.
+    account.with_lock('FOR NO KEY UPDATE') do
+      conversation = account.conversations.find_by!(display_id: display_id)
+      conversation.with_lock do
+        @as_of = Time.current unless @fixed_as_of
+        state = projection(conversation)
+        if state[:excluded]
+          raise StaleRevision unless member == false && expected_revision == state[:projection_revision]
+        else
+          raise StaleRevision unless expected_revision == revision(conversation)
+        end
+        if member
+          label = account.labels.find_or_initialize_by(title: COLLABORATION_LABEL)
+          label.update!(show_on_sidebar: true, color: label.color.presence || '#64748b')
+          conversation.add_labels([COLLABORATION_LABEL])
+        else
+          conversation.remove_umi_labels!([COLLABORATION_LABEL])
+        end
+        envelope.merge(projection: projection(conversation.reload), revision: state[:excluded] ? nil : revision(conversation))
+      end
+    end
+  end
+
   private
+
+  def projection(conversation) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    labels = conversation.label_list.sort
+    reason = if conversation.contact.additional_attributes['umi_profile_redacted'].to_s == 'true'
+               'redacted'
+             elsif labels.include?('spam')
+               'spam'
+             elsif conversation.snoozed? && (conversation.snoozed_until.nil? || conversation.snoozed_until > @as_of)
+               'snoozed'
+             elsif !candidates.exists?(id: conversation.id)
+               'inactive'
+             else
+               load_context([conversation])
+               'inactive' unless active_since(conversation)
+             end
+    state = { id: conversation.id, display_id: conversation.display_id, status: conversation.status,
+              snoozed_until: conversation.snoozed_until&.utc&.iso8601(6), excluded: reason.present?,
+              exclusion_reason: reason, member: labels.include?(COLLABORATION_LABEL) }
+    inputs = [state, conversation.inbox_id, conversation.contact_id, labels, @inbox_ids, @since.utc.iso8601(6)]
+    state.merge(projection_revision: "projection:#{Digest::SHA256.hexdigest(inputs.to_json)}")
+  end
 
   def activation_time(value)
     return value if value.is_a?(Time) || value.is_a?(ActiveSupport::TimeWithZone)
@@ -124,7 +183,7 @@ class Umi::Funnel::OperatorQueue
     waiting, chronology = waiting(conversation)
     { id: conversation.id, display_id: conversation.display_id, inbox_id: conversation.inbox_id, status: conversation.status,
       snoozed_until: conversation.snoozed_until&.utc&.iso8601(6), assignee_name: conversation.assignee&.name,
-      sales_status: conversation.custom_attributes['umi_sales_status'], revision: revision(conversation),
+      sales_status: conversation.custom_attributes['umi_sales_status'], labels: conversation.label_list.sort, revision: revision(conversation),
       active_since: active_since(conversation), waiting: waiting, chronology: chronology }.merge(resolution(conversation))
   end
 
@@ -142,6 +201,7 @@ class Umi::Funnel::OperatorQueue
     inputs = [conversation.attributes.slice('id', 'display_id', 'inbox_id', 'contact_id', 'status', 'snoozed_until', 'assignee_id'),
               conversation.custom_attributes['umi_sales_status'], conversation.contact.additional_attributes['umi_klaviyo_profile_id'],
               conversation.inbox.channel_type, conversation.assignee&.name, @inbox_ids, CHANNELS,
+              conversation.label_list.reject { |label| label == COLLABORATION_LABEL }.sort,
               message_rows(conversation, digest_content: true), messages.map(&:auto_reply_email?),
               customer(conversation), commerce(conversation), resolution(conversation), @since.utc.iso8601(6)]
     Digest::SHA256.hexdigest(inputs.to_json)
@@ -175,7 +235,10 @@ class Umi::Funnel::OperatorQueue
       end
     end
     waiting = nil if conversation.resolved?
-    waiting[:evidence_key] = Digest::SHA256.hexdigest(evidence.to_json) if waiting
+    if waiting
+      waiting[:message_ids] = evidence.map(&:first)
+      waiting[:evidence_key] = Digest::SHA256.hexdigest(evidence.to_json)
+    end
     [waiting, chronology]
   end
 
