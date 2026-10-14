@@ -98,6 +98,26 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
       end
     end
 
+    it 'preserves a human label committed before projection acquires the conversation lock', :committed do
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      changed = false
+      allow(Account).to receive(:find).and_wrap_original do |original, *args|
+        result = original.call(*args)
+        unless changed
+          changed = true
+          Thread.new do
+            ApplicationRecord.connection_pool.with_connection { Conversation.find(conversation.id).add_labels(['support-refund']) }
+          end.value
+        end
+        result
+      end
+      expect do
+        queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+      end.to(raise_error { |error| expect(error.class.name).to eq('Umi::Funnel::OperatorQueue::StaleRevision') })
+      expect(conversation.reload.label_list).to eq(['support-refund'])
+      expect(conversation.status).to eq('open')
+    end
+
     it 'clears a managed label when the last qualifying activity is deleted' do
       conversation.add_labels(%w[collaboration-pending intent-product-details])
       activity.update!(content_attributes: { deleted: true })
