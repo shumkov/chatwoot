@@ -1,6 +1,6 @@
 # Customer notifications and collaboration queue
 
-Status: reviewed and approved for implementation on 15 October 2026.
+Status: deployed and activated on 15 October 2026; Nastya access and browser acceptance remain open.
 Owner request: close the report task, keep influencer/collaboration work out of Mai's individual reminders, show one aggregate Orders reminder with a count and a label-filter link, and notify about new customer work without waiting ten minutes.
 
 ## Decisions and business behavior
@@ -52,14 +52,19 @@ Independent business review approved the direction and requires explicit user sy
 
 Read-only production diagnosis at 15 October 01:35 Bangkok: current analysis binding has 48 available and four unavailable cached results; three failed rows have prior successful evidence. Pinned CLI/version, required config metadata and authenticated model catalog checks passed. Generic exception handling hides the underlying model/execution/schema error, so no claim about proxy quota or cache cause is justified. No inference, restart, runtime write or message send was performed for this diagnosis. Before activation, obtain a bounded concrete diagnostic or natural successful recovery, then verify the actionable queue under the deployment locks. Do not claim prompt/schema test coverage is live inference proof.
 
-The amended correctness review approved the pre-code plan; no further design blockers were found. Ivan approved implementation after clarifying that unanswered collaborations remain Open or are deliberately snoozed, never automatically resolved. Implementation is complete locally; production activation and browser acceptance remain pending.
+The amended correctness review approved the pre-code plan; no further design blockers were found. Ivan approved implementation after clarifying that unanswered collaborations remain Open or are deliberately snoozed, never automatically resolved. Implementation and production activation are complete; browser acceptance and Nastya access remain pending.
 
 ### Implementation and review — 15 October 2026
 
 - Chatwoot producer and shared label navigation implemented. Full code review completed (`20261015-021606-195acf1a`); all four validated findings were corrected: card/new-tab filter loss, sort preference persistence, a message-commit snapshot race, and reversed privacy/projection lock order. The caller-raised inactive cleanup gap is corrected as well.
 - Writes use account-before-conversation locks and read current evidence after lock acquisition; read-only queue snapshots retain repeatable-read. The message race and lock-order defect were reproduced with independent PostgreSQL connections before fixing them. Removed qualifying activity now permits authoritative derived-label removal. No conversation status is changed.
 - Focused verification: 65 Rails examples passed before the additional concurrent human-label case; 18 component tests passed, including real-router card/new-tab navigation and the actual basic-filter handler. Normal Vitest global setup is unavailable because the shared dependency tree lacks `fake-indexeddb/auto`; the focused run used the repository config with that unrelated setup file omitted.
-- Shumabit consumer implemented and undergoing independent review in its own repository. The 118-test suite passes; final consumer review and any resulting corrections are still in progress. Six synthetic full-history cases passed live inference: collaboration, influencer purchase, mixed work, social-only, partial support, and an internal collaboration promise.
+- Shumabit consumer implemented and independently reviewed. The same-message mixed-purpose collision was reproduced and fixed; resolved collaboration follow-up coverage was added. All 121 tests pass locally and on the VPS, with none skipped. A presentation-loop consolidation suggestion was deferred because no behavioral defect was demonstrated. Six synthetic full-history cases passed live inference: collaboration, influencer purchase, mixed work, social-only, partial support, and an internal collaboration promise.
 - The analyzer incident was a stale primary CLIProxy cooldown despite available quota. The primary cooldown was preserved outside the watched directory and only the proxy restarted after verifying idle clients. Credentials remained unchanged; all four unavailable production assessments then succeeded.
 - Nastya does not yet have a Chatwoot account. An explicit invitation decision is pending; no account or inbox permission was added.
-- Deployment, verified label/list parity, live guide update, and final Notion completion remain open.
+- Deployed Chatwoot PR #90 at `780bb49d02e09290a2110016e03c7d8a48ef7d5e` (`umi-v4.16.0-31`) and Shumabit PR #40 at tree-equivalent signed source `7d7467896124dca345379bb191bbdcb72deebbe4`. Infrastructure pin is PR #132. Full Chatwoot backend/frontend CI passed.
+- Installed analysis processed 50 eligible conversations with zero unavailable or remaining. Projection verified nine collaboration conversations against the native label list, all still Open; a second reconciliation made no writes. Statuses, unrelated labels and historical receipts were preserved. Stale revisions return HTTP 409.
+- No-send morning preview contains two customer tasks and nine collaboration conversations. The real-time tick correctly reported closed hours. No artificial Telegram/customer message was sent; the first natural working-hours delivery is not yet observed.
+- Analyzer now runs every minute; delivery remains 09:00–21:00 Bangkok. Both deployment locks were released. The additive first-notice cutover is `2026-10-14T20:15:56.055Z`.
+- [Mai's editable guide](https://docs.google.com/document/d/1F2DG54uY7P6a8r-_Ms2vYbqUBL_JcGfCuJ_sNI9-qHw/edit) is updated and visually checked. Notion early-notice task is Done; collaboration task is In review pending Nastya access and browser verification. No staff invitation was sent.
+- Exact artifact and acceptance record: `umi-vps-infra/docs/CRM_REMINDER_QUEUES_RELEASE_20261015.md`.
