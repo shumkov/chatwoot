@@ -58,22 +58,22 @@ class Umi::Funnel::OperatorQueue
   def project_collaboration(display_id, expected_revision:, member:) # rubocop:disable Metrics/MethodLength, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     raise InvalidParameters, 'Membership must be a boolean' unless [true, false].include?(member)
 
-    snapshot do
-      conversation = Account.find(@account_id).conversations.find_by!(display_id: display_id)
+    account = Account.find(@account_id)
+    # Match account-scoped privacy lock order and read evidence after acquiring the locks.
+    # A repeatable-read snapshot taken before the lock can miss a newly committed message.
+    account.with_lock('FOR NO KEY UPDATE') do
+      conversation = account.conversations.find_by!(display_id: display_id)
       conversation.with_lock do
         @as_of = Time.current unless @fixed_as_of
         state = projection(conversation)
         if state[:excluded]
           raise StaleRevision unless member == false && expected_revision == state[:projection_revision]
         else
-          load_context([conversation])
           raise StaleRevision unless expected_revision == revision(conversation)
         end
         if member
-          conversation.account.with_lock do
-            label = conversation.account.labels.find_or_initialize_by(title: COLLABORATION_LABEL)
-            label.update!(show_on_sidebar: true, color: label.color.presence || '#64748b')
-          end
+          label = account.labels.find_or_initialize_by(title: COLLABORATION_LABEL)
+          label.update!(show_on_sidebar: true, color: label.color.presence || '#64748b')
           conversation.add_labels([COLLABORATION_LABEL])
         else
           conversation.remove_umi_labels!([COLLABORATION_LABEL])
@@ -95,6 +95,9 @@ class Umi::Funnel::OperatorQueue
                'snoozed'
              elsif !candidates.exists?(id: conversation.id)
                'inactive'
+             else
+               load_context([conversation])
+               'inactive' unless active_since(conversation)
              end
     state = { id: conversation.id, display_id: conversation.display_id, status: conversation.status,
               snoozed_until: conversation.snoozed_until&.utc&.iso8601(6), excluded: reason.present?,

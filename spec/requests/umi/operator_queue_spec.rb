@@ -74,6 +74,7 @@ RSpec.describe 'UMI operator queue', type: :request do
   end
 
   it 'authenticates and authorizes both collaboration projection endpoints' do
+    create(:message, conversation: conversation, message_type: :incoming)
     endpoint = "#{url}/#{conversation.reload.display_id}/collaboration_projection"
     get endpoint, params: { since: since }
     expect(response).to have_http_status(:unauthorized)
@@ -86,6 +87,7 @@ RSpec.describe 'UMI operator queue', type: :request do
   end
 
   it 'returns persisted membership and rejects stale or malformed membership writes' do
+    create(:message, conversation: conversation, message_type: :incoming)
     endpoint = "#{url}/#{conversation.reload.display_id}/collaboration_projection"
     get "#{url}/#{conversation.display_id}", params: { since: since }, headers: user.create_new_auth_token
     revision = response.parsed_body['conversation']['revision']

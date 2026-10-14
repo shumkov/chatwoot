@@ -16,9 +16,17 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
   around do |example|
     with_modified_env UMI_FUNNEL_ACCOUNT_IDS: account.id.to_s, UMI_FUNNEL_STARTED_AT: '2026-09-01T00:00:00Z',
                       UMI_FUNNEL_CLASSIFIER_MODE: 'off', UMI_FUNNEL_CLASSIFIER_INBOX_IDS: inbox.id.to_s do
-      ApplicationRecord.transaction(isolation: :repeatable_read) do
-        example.run
-        raise ActiveRecord::Rollback
+      if example.metadata[:committed]
+        begin
+          example.run
+        ensure
+          account.destroy!
+        end
+      else
+        ApplicationRecord.transaction(isolation: :repeatable_read) do
+          example.run
+          raise ActiveRecord::Rollback
+        end
       end
     end
   end
@@ -41,6 +49,66 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
   end
 
   describe 'collaboration label projection' do
+    let!(:activity) { create(:message, conversation: conversation, message_type: :incoming, created_at: start) }
+
+    it 'rejects a message committed before the projection lock while its conversation callback is still pending', :committed do
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      inserted = false
+      allow(Account).to receive(:find).and_wrap_original do |original, *args|
+        result = original.call(*args)
+        unless inserted
+          inserted = true
+          attributes = activity.attributes.except('id').merge('content' => 'I also want to buy a dress', 'created_at' => start + 1.minute)
+          Thread.new do
+            # Reproduce the committed row before Message's after_commit callback updates its conversation.
+            ApplicationRecord.connection_pool.with_connection { Message.insert_all!([attributes]) } # rubocop:disable Rails/SkipsModelValidations
+          end.value
+        end
+        result
+      end
+      expect do
+        queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+      end.to(raise_error { |error| expect(error.class.name).to eq('Umi::Funnel::OperatorQueue::StaleRevision') })
+      expect(conversation.reload.label_list).to be_empty
+    end
+
+    it 'does not lock a conversation while waiting behind account-scoped privacy work', :committed do
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      worker = nil
+      backend = Queue.new
+      begin
+        account.with_lock('FOR NO KEY UPDATE') do
+          worker = Thread.new do
+            ApplicationRecord.connection_pool.with_connection do |connection|
+              backend << connection.select_value('SELECT pg_backend_pid()')
+              queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+            end
+          end
+          pid = backend.pop
+          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+          until ApplicationRecord.connection.select_value("SELECT wait_event_type FROM pg_stat_activity WHERE pid = #{pid.to_i}") == 'Lock'
+            raise 'Projection did not reach the account lock' if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+            sleep 0.01
+          end
+          expect(conversation.with_lock('FOR UPDATE NOWAIT') { conversation.id }).to eq(conversation.id)
+        end
+      ensure
+        worker&.value
+      end
+    end
+
+    it 'clears a managed label when the last qualifying activity is deleted' do
+      conversation.add_labels(%w[collaboration-pending intent-product-details])
+      activity.update!(content_attributes: { deleted: true })
+      expect(queue.show(conversation.reload.display_id)[:conversation][:active_since]).to be_nil
+      state = queue.collaboration_projection(conversation.display_id)[:projection]
+      expect(state).to include(excluded: true, exclusion_reason: 'inactive')
+      queue.project_collaboration(conversation.display_id, expected_revision: state[:projection_revision], member: false)
+      expect(conversation.reload.label_list).to eq(['intent-product-details'])
+      expect(conversation.status).to eq('open')
+    end
+
     it 'changes only its label without closing an unanswered collaboration and preserves analysis revision' do
       create(:message, conversation: conversation, message_type: :incoming, created_at: start)
       conversation.update_labels(['intent-product-details'])
@@ -141,6 +209,7 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
 
     it 'does not disclose or change another account through its projection endpoints' do
       other = create(:conversation)
+      other.update!(display_id: 123_456)
       expect { queue.collaboration_projection(other.reload.display_id) }.to raise_error(ActiveRecord::RecordNotFound)
       expect do
         queue.project_collaboration(other.display_id, expected_revision: 'anything', member: false)
