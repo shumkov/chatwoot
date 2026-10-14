@@ -23,6 +23,131 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     end
   end
 
+  it 'exposes every incoming ID so a purchase after a collaboration in the same burst can notify Mai' do
+    first = create(:message, conversation: conversation, message_type: :incoming, created_at: start, content: 'Can we collaborate?')
+    second = create(:message, conversation: conversation, message_type: :incoming, created_at: start + 1.minute,
+                              content: 'Also, can I buy this dress?')
+    expect(queue.show(conversation.reload.display_id)[:conversation][:waiting][:message_ids]).to eq([first.id, second.id])
+  end
+
+  it 'invalidates judgments on human label changes but not its own collaboration projection' do
+    conversation.update_labels(['intent-product-details'])
+    first = queue.show(conversation.reload.display_id)[:conversation]
+    expect(first[:labels]).to eq(['intent-product-details'])
+    conversation.add_labels(['collaboration-pending'])
+    expect(queue.show(conversation.display_id)[:conversation][:revision]).to eq(first[:revision])
+    conversation.add_labels(['support-refund'])
+    expect(queue.show(conversation.display_id)[:conversation][:revision]).not_to eq(first[:revision])
+  end
+
+  describe 'collaboration label projection' do
+    it 'changes only its label without closing an unanswered collaboration and preserves analysis revision' do
+      create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+      conversation.update_labels(['intent-product-details'])
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      result = queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+      expect(result[:projection]).to include(member: true, status: 'open', excluded: false)
+      expect(result[:revision]).to eq(baseline[:revision])
+      expect(conversation.reload.label_list).to contain_exactly('intent-product-details', 'collaboration-pending')
+      expect(conversation.status).to eq('open')
+      expect(conversation.snoozed_until).to be_nil
+      expect(account.labels.find_by!(title: 'collaboration-pending').show_on_sidebar).to be true
+      queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: false)
+      expect(conversation.reload.label_list).to eq(['intent-product-details'])
+    end
+
+    it 'does not touch the conversation when accepted membership is already projected' do
+      conversation.add_labels(['collaboration-pending'])
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      before = conversation.reload.updated_at
+      travel_to(as_of + 1.day) do
+        queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+      end
+      expect(conversation.reload.updated_at).to eq(before)
+    end
+
+    it 'rejects stale full judgments after a new message without changing labels' do
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+      expect do
+        queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+      end.to(raise_error { |error| expect(error.class.name).to eq('Umi::Funnel::OperatorQueue::StaleRevision') })
+      expect(conversation.reload.label_list).to be_empty
+    end
+
+    it 'rechecks messages arriving between request initialization and acquiring the projection lock' do
+      travel_to(as_of) do
+        writer = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start)
+        baseline = writer.show(conversation.reload.display_id)[:conversation]
+        travel 1.second
+        create(:message, conversation: conversation, message_type: :incoming)
+        expect do
+          writer.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+        end.to(raise_error { |error| expect(error.class.name).to eq('Umi::Funnel::OperatorQueue::StaleRevision') })
+      end
+      expect(conversation.reload.label_list).to be_empty
+    end
+
+    it 'never allows a projection-only revision to add or clear an active obligation' do
+      conversation.add_labels(['collaboration-pending'])
+      state = queue.collaboration_projection(conversation.reload.display_id)[:projection]
+      [false, true].each do |membership|
+        expect do
+          queue.project_collaboration(conversation.display_id, expected_revision: state[:projection_revision], member: membership)
+        end.to(raise_error { |error| expect(error.class.name).to eq('Umi::Funnel::OperatorQueue::StaleRevision') })
+      end
+      expect(conversation.reload.label_list).to include('collaboration-pending')
+    end
+
+    it 'retains resolved full-context eligibility for a due accepted follow-up' do
+      create(:message, conversation: conversation, message_type: :outgoing, private: true, content: 'Follow up tomorrow', created_at: start)
+      travel_to(start + 1.minute) { conversation.update!(status: :resolved) }
+      baseline = queue.show(conversation.reload.display_id)[:conversation]
+      result = queue.project_collaboration(conversation.display_id, expected_revision: baseline[:revision], member: true)
+      expect(result[:projection]).to include(member: true, status: 'resolved', excluded: false)
+      expect(conversation.reload.status).to eq('resolved')
+    end
+
+    %w[spam redacted snoozed inactive].each do |reason|
+      it "removes only the owned label on authoritative #{reason} exclusion without an AI judgment" do
+        conversation.add_labels(%w[collaboration-pending intent-product-details])
+        case reason
+        when 'spam' then conversation.reload.add_labels(['spam'])
+        when 'redacted' then conversation.contact.update!(additional_attributes: { umi_profile_redacted: true })
+        when 'snoozed' then conversation.update!(status: :snoozed, snoozed_until: as_of + 1.day)
+        when 'inactive' then conversation.update!(inbox: create(:inbox, account: account))
+        end
+        before = conversation.reload.attributes.slice('status', 'snoozed_until')
+        state = queue.collaboration_projection(conversation.display_id)[:projection]
+        expect(state).to include(excluded: true, exclusion_reason: reason, member: true)
+        expect(state).not_to have_key(:messages)
+        result = queue.project_collaboration(conversation.display_id, expected_revision: state[:projection_revision], member: false)
+        expect(result[:projection][:member]).to be false
+        expect(conversation.reload.label_list).to include('intent-product-details')
+        expect(conversation.attributes.slice('status', 'snoozed_until')).to eq(before)
+      end
+    end
+
+    it 'rejects an excluded-state removal after the conversation becomes active again' do
+      conversation.update!(status: :snoozed, snoozed_until: as_of + 1.day)
+      conversation.add_labels(['collaboration-pending'])
+      state = queue.collaboration_projection(conversation.reload.display_id)[:projection]
+      conversation.update!(status: :open)
+      expect do
+        queue.project_collaboration(conversation.display_id, expected_revision: state[:projection_revision], member: false)
+      end.to(raise_error { |error| expect(error.class.name).to eq('Umi::Funnel::OperatorQueue::StaleRevision') })
+      expect(conversation.reload.label_list).to include('collaboration-pending')
+    end
+
+    it 'does not disclose or change another account through its projection endpoints' do
+      other = create(:conversation)
+      expect { queue.collaboration_projection(other.reload.display_id) }.to raise_error(ActiveRecord::RecordNotFound)
+      expect do
+        queue.project_collaboration(other.display_id, expected_revision: 'anything', member: false)
+      end.to raise_error(ActiveRecord::RecordNotFound)
+    end
+  end
+
   it 'keeps the 20:55 burst timer through snooze, private, automated, failed and bot replies until 09:05' do
     first = create(:message, conversation: conversation, message_type: :incoming, created_at: start, content: 'Private customer text')
     create(:message, conversation: conversation, message_type: :incoming, created_at: start + 1.minute)
