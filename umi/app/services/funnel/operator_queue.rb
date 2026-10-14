@@ -66,7 +66,7 @@ class Umi::Funnel::OperatorQueue
         if state[:excluded]
           raise StaleRevision unless member == false && expected_revision == state[:projection_revision]
         else
-          load_context([conversation], detail: true)
+          load_context([conversation])
           raise StaleRevision unless expected_revision == revision(conversation)
         end
         if member
