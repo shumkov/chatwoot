@@ -1,6 +1,6 @@
 # Customer waiting acknowledgements
 
-Status: implemented and reviewed, 17 October 2026; not activated. User approved night and delayed-day acknowledgements; activation waits for a duplicate check in Meta Business Suite.
+Status: deployed disabled, 17 October 2026; not activated. User approved night and delayed-day acknowledgements; activation waits for a duplicate check in Meta Business Suite.
 
 ## Problem and scope
 
@@ -70,7 +70,11 @@ Inherited transport limitation: native Instagram echo deduplication assumes the 
 - Review regression: recent human reply followed by resolve and fresh incoming incorrectly generated a night reply; test failed before correction and passed after.
 - Native send tests cover Facebook RESPONSE without HUMAN_AGENT, Instagram template delivery, persisted provider message IDs and ordinary echo deduplication. They do not send to real customers.
 - Production readback: inbox 2 is FacebookPage, Asia/Bangkok, working hours enabled, greeting disabled, away text empty, global HUMAN_AGENT unset. New feature configuration is absent.
-- Remaining: Meta Business Suite browser login and duplicate-auto-reply inspection; immutable build/deployment; activate with fresh timestamp; publish the guide addition below and verify an owner-only or first live delivery. No production customer acknowledgement has been sent by this change.
+- PR #92 merged as `82c95d16b03a8de5beb2f443ef00a826b6a5cc00`. All 21 executed CI checks passed; unrelated deployment/MFA workflows were skipped by their conditions. Signed release tag `umi-v4.16.0-32` built successfully (run `39013724172`).
+- Deployed through the canonical infrastructure checkout at 07:56 UTC: `ghcr.io/shumkov/chatwoot:umi-v4.16.0-32@sha256:6628f4a6f55650e98b571ec9e6cd225d1aa2804ec779ee0618bda6d478f793c4`. Infra pin commit `0230fcbd59cb8b56abf1d64eb8389c0dee48c9ab`. Image commit and all five implementation file hashes verified before installation. No migrations; protected database dump and prior configuration retained.
+- Runtime acceptance: HTTPS 200; Rails/Sidekiq on the exact image with zero restart counts; acknowledgement hooks loaded, configuration absent, disabled scheduling is a no-op, zero acknowledgement messages. Unrelated services were not restarted.
+- Under both reminder locks, fresh analysis covered 62 candidates (2 refreshed, zero unavailable or remaining). No-send preview had zero operator items/sends and no pending presentation changes; collaboration queue had 10 entries with zero pending/sends. Delivery receipts and crontab remained unchanged. Both locks released and reacquisition verified.
+- Remaining: Meta Business Suite browser login and duplicate-auto-reply inspection; activate with fresh timestamp; publish the guide addition below and verify an owner-only or first live delivery. No production customer acknowledgement has been sent by this change. The editable Mai guide has not yet been changed to claim these acknowledgements are active.
 
 ## Mai guide addition prepared for activation
 
