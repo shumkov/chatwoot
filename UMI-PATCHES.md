@@ -78,6 +78,8 @@ Each patch below is a commit on top of that tag. Keep this list in sync on every
 | 60 | Revision-bound collaboration queue labels | UMI operator queue service/controller/routes and focused service/request specs | Exposes full waiting-burst IDs and label-aware analysis revisions; projects only `collaboration-pending` under the conversation lock, preserving human labels/status and safely removing lifecycle-excluded work. | Native operator queues provide equivalent purpose routing, incremental labels and revision-bound exclusion cleanup. |
 | 61 | Shared label links respect explicit filters | `app/javascript/dashboard/components/{ChatList,ConversationItem}.vue`, `ConversationBasicFilter.vue`, focused component specs | Applies validated status and owner query parameters before fetching shared label queues and preserves them on card navigation, while sort changes preserve saved status preferences and native inbox permissions. | Upstream label routes support equivalent temporary query filters. |
 
+| 62 | Customer waiting acknowledgements | `umi/app/services/customer_acknowledgement.rb`, UMI job/message/conversation callbacks, `zz_umi_customer_acknowledgements.rb`, focused acknowledgement and queue specs | Configurable Facebook/Instagram acknowledgements: immediate out of hours or once after five unanswered daytime minutes. Uses native template delivery, preserves human SLA, cancels closed/snoozed waits and deduplicates both modes. Disabled until configured after the Meta duplicate check. | Native Chatwoot provides equivalent delayed unanswered-message acknowledgements with cross-mode deduplication and lifecycle cancellation. |
+
 ## Patch details
 
 ### 1. Facebook send fix (`zz_umi_facebook_fix.rb`)

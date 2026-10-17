@@ -31,6 +31,13 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     end
   end
 
+  it 'keeps a customer waiting after an automatic acknowledgement template' do
+    incoming = create(:message, conversation: conversation, message_type: :incoming, created_at: start)
+    create(:message, conversation: conversation, message_type: :template, created_at: start + 5.minutes,
+                     content: 'Sorry to keep you waiting.', content_attributes: { umi_customer_acknowledgement: { mode: 'day' } })
+    expect(queue.show(conversation.reload.display_id)[:conversation][:waiting][:message_id]).to eq(incoming.id)
+  end
+
   it 'exposes every incoming ID so a purchase after a collaboration in the same burst can notify Mai' do
     first = create(:message, conversation: conversation, message_type: :incoming, created_at: start, content: 'Can we collaborate?')
     second = create(:message, conversation: conversation, message_type: :incoming, created_at: start + 1.minute,
