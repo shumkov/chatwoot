@@ -1,6 +1,6 @@
 # Customer waiting acknowledgements
 
-Status: deployed disabled, 17 October 2026; not activated. User approved night and delayed-day acknowledgements; activation waits for a duplicate check in Meta Business Suite.
+Status: activated for inbox 2 on 18 October 2026 at 11:33 Bangkok, after live Meta duplicate-automation verification. First real delivery remains to be observed.
 
 ## Problem and scope
 
@@ -56,7 +56,7 @@ Update Mai's editable Google Doc: acknowledgements are automatic, do not replace
 
 ## Design review resolution
 
-Two independent reviews identified native day/night template suppression and status-transition replay. The unified template service and durable resolved/snoozed message boundary address both. Night/day share one acknowledgement until a human reply; this explicitly prevents repeated apologies for the same unanswered customer. API login is pending; activation remains blocked, implementation can proceed under the approved behavior.
+Two independent reviews identified native day/night template suppression and status-transition replay. The unified template service and durable resolved/snoozed message boundary address both. Night/day share one acknowledgement until a human reply; this explicitly prevents repeated apologies for the same unanswered customer. At design review, Meta login was pending; implementation proceeded with activation disabled until the duplicate check.
 
 Final review clarifications: both modes require open status and identical message eligibility. Night jobs executed after opening are discarded, never converted to day catch-up. Every activation/re-add uses a fresh started_at. Acknowledgement lookup uses the whole current human/lifecycle/activation boundary, surviving deletion of its first incoming. Successful human follows existing UMI reporting: public human_response? and !failed?, not a new transport receipt definition. Day jobs are scheduled for the first eligible incoming plus five minutes; duplicate later triggers can enqueue redundant checks, but cannot send additional replies.
 
@@ -76,7 +76,15 @@ Inherited transport limitation: native Instagram echo deduplication assumes the 
 - Under both reminder locks, fresh analysis covered 62 candidates (2 refreshed, zero unavailable or remaining). No-send preview had zero operator items/sends and no pending presentation changes; collaboration queue had 10 entries with zero pending/sends. Delivery receipts and crontab remained unchanged. Both locks released and reacquisition verified.
 - Remaining: Meta Business Suite browser login and duplicate-auto-reply inspection; activate with fresh timestamp; publish the guide addition below and verify an owner-only or first live delivery. No production customer acknowledgement has been sent by this change. The editable Mai guide has not yet been changed to claim these acknowledgements are active.
 
-## Mai guide addition prepared for activation
+## Activation checkpoint, 18 October
+
+- Live Meta Business Suite inspection for UMI Page `516819784857962`, business `497970999394825`: Away message and FAQ off; Auto-reply not configured (offered under Suggested / Try It); Business Agent offered for activation. Existing Lead reminder was inspected: an admin-only note after 12 hours in Qualified, not a customer reply. Meta settings were not changed.
+- Reviewed inbox validation passed before creating InstallationConfig `107`, `UMI_CUSTOMER_ACKNOWLEDGEMENTS`, with `{"inbox_ids":[2],"started_at":"2026-10-18T04:33:14.091044Z"}`. Persisted readback confirmed activation. No historical messages were replayed or test messages sent to customers.
+- Rails and Sidekiq read back the same configuration; hooks and validator passed, and the live worker consumes the high queue. Fresh analysis: 63 candidates, zero unavailable or remaining. No-send preview: zero operator items/sends/pending presentation changes; collaboration queue 9 with zero pending. Existing receipts and crontab unchanged; both reminder locks released and reacquisition verified. HTTPS 200, no restart or redeploy. At 04:34:18 UTC there were zero incoming messages since activation and zero acknowledgements, so real delivery was not yet observable.
+- Updated both tabs of [UMI chat guide for Mai](https://docs.google.com/document/d/1F2DG54uY7P6a8r-_Ms2vYbqUBL_JcGfCuJ_sNI9-qHw/edit): full operating guidance in the main tab and a reminder in the playbook's delayed-response section. Each update used a fresh document revision; readback verified the additions and preserved existing paragraphs, styles and the other tab. Exported PDF pages 2 and 12 were visually checked.
+- Remaining observation: the first eligible real incoming message and its provider delivery status. Configuration activation does not by itself prove live delivery; no customer message was manufactured for this check.
+
+## Mai guide addition published at activation
 
 **Automatic acknowledgements (Facebook and Instagram)**
 
