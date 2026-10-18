@@ -293,3 +293,56 @@ the note is private, has the source marker, is visible to Mai, has no duplicate,
 and caused no public write. Inbox-wide enablement remains a separate decision.
 The canonical deployment, backup and reminder continuity receipt is in
 `umi-vps-infra/docs/CHATWOOT_QUIET_NOTES_PRIVATE_DRAFT_READINESS_RELEASE_20261018.md`.
+
+### Inbox-2 private-draft activation amendment
+
+The exact-source pilot was left empty because there was no genuinely unanswered
+turn at the time of release. It cannot produce suggestions for future customers
+without an operator editing configuration for each message. The owner has now
+approved automatic **private** suggestions for new actionable Facebook and
+Instagram messages in unified inbox 2. This supersedes the exact-source-first
+selection and separate inbox-wide decision in the pilot plan above; the release
+receipt remains a record of what was deployed at that time. Mai still reviews,
+edits and sends any customer reply herself. A draft is not guaranteed for every
+incoming message, and no public auto-reply is introduced.
+
+Use the already registered account `message_created` webhook and the existing
+single worker. Add one optional ISO-8601 activation timestamp in configuration,
+`CHATWOOT_DRAFT_INBOX_AFTER` in strict UTC `YYYY-MM-DDTHH:MM:SSZ` form;
+absence means inbox-wide drafting is off. For an
+incoming public contact message in account 1/inbox 2, retain existing admission
+and durable deduplication, then require the refetched source's creation time to
+be strictly later than the activation timestamp. Reject an invalid timestamp
+at startup; compare the API's Unix-seconds source time, not the webhook's claimed
+time. A message created in the activation second is excluded. This excludes delayed webhook
+deliveries and retries for pre-activation conversations. An explicit exact
+conversation/message pair may still be used for a bounded one-off check, even
+when inbox-wide drafting is off. It must not weaken the refetch, latest-public-
+message, status, redaction, newer-turn, marker or private-only checks.
+
+The model continues to decide whether a borderline turn warrants a draft;
+obvious thanks, reactions and story mentions stop before it. Also skip the
+observed blank Instagram story reply carrying only an `ig_story` reference;
+a text-bearing story reply can still contain a real customer question and must
+reach the model. Other image-only product inquiries remain eligible. It must preserve
+the actual ad greeting and creative as potentially contradictory context, use
+Mai's current guide, published FAQ and live Shopify reads, and ask for the
+missing product rather than assert one. This extends only admission; no new
+worker, poller, queue, permission framework, public send or order write is
+needed. A plain Boolean enable switch is simpler to type but admits delayed
+pre-activation events, so the activation timestamp is the safer single setting.
+Polling Chatwoot would duplicate its webhook and introduce a second cursor.
+
+Before activation, test default-off and post-activation admission, wrong
+account/inbox/type, pre-activation source, duplicate/restart, burst coalescing,
+later human reply/newer customer turn, resolved/redacted conversation, and
+private marker/readback. Verify webhook registration and worker health. After
+activation, inspect the first real eligible turn and confirm a useful private
+note with its exact source marker, no duplicate and no public write. If no new
+eligible turn has arrived, record readiness without claiming live delivery.
+
+Follow-up work on whether story engagement becomes a customer sale and how
+missing Instagram profiles enter the CRM is separate from private drafting.
+Klaviyo Social is currently unconnected; do not infer paid lifecycle or a
+customer role from a story interaction. Investigate a concrete missing-profile
+example from Mai before changing identity or lifecycle paths.
