@@ -4,8 +4,7 @@
 #
 # Only what the agent cannot already see goes in. The tap message already shows
 # the option the customer chose word for word, and the conversation sidebar
-# already shows the ad name and id, so neither is repeated. What is new is the
-# greeting sent before the tap, the options not taken, and the answer the ad is
+# already shows the ad name and id. What is new is the greeting and answer the ad is
 # configured to send — which on Messenger reaches the customer but never reaches
 # Chatwoot, making this note the only record of it.
 #
@@ -20,7 +19,7 @@ class Umi::Meta::AdContextNotePresenter
   end
 
   def body
-    [greeting_part, choice_part, answer_part, hierarchy_part, footer].compact.join("\n\n")
+    [greeting_part, choice_part, answer_part].compact.join("\n\n")
   end
 
   # Written when Meta could not be read at all. It names no ad copy and gives
@@ -43,13 +42,9 @@ class Umi::Meta::AdContextNotePresenter
   end
 
   def choice_part
-    return if titles.empty?
-    return "The ad offered #{titles.size} options: #{italic_list(titles)}." if tapped_index.nil?
+    return if titles.empty? || tapped_index
 
-    others = titles.reject.with_index { |_, index| index == tapped_index }
-    line = "They tapped **option #{tapped_index + 1} of #{titles.size}** — #{italic(titles[tapped_index])}."
-    line += "\nThe other options were: #{italic_list(others)}." if others.any?
-    line
+    "The ad offered #{titles.size} options: #{italic_list(titles)}."
   end
 
   def italic_list(names)
@@ -60,9 +55,17 @@ class Umi::Meta::AdContextNotePresenter
   # once per option would be three copies of the same 300 characters. Saying so
   # is also the more useful fact: it means the answer did not address whichever
   # question was asked.
-  def answer_part
+  def answer_part # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
     answers = @welcome.items.filter_map { |item| item[:response] }
     return if answers.empty?
+
+    if tapped_index
+      selected = @welcome.items[tapped_index]
+      return 'The selected option has no configured answer.' if selected[:response].blank?
+      if answers.uniq.size > 1 || answers.size != titles.size
+        return "For the selected option #{italic(selected[:title])}, the ad is configured to answer:\n#{quote(selected[:response])}"
+      end
+    end
     return per_option_answers if answers.uniq.size > 1
 
     "The ad is configured to answer#{identical_scope(answers)}:\n#{quote(answers.first)}"
@@ -79,25 +82,6 @@ class Umi::Meta::AdContextNotePresenter
       "#{italic(item[:title])}\n#{quote(item[:response])}"
     end
     "The ad is configured to answer:\n\n#{lines.join("\n\n")}"
-  end
-
-  # Meta's webhook carries only the ad, so campaign and ad set are otherwise
-  # invisible in Chatwoot. One line, and last: it is context for the answer
-  # above it, not the thing the agent opened the conversation to read.
-  #
-  # Dropped entirely when neither level came back — the ad name on its own is
-  # already in the conversation sidebar, so a line carrying just that is noise.
-  def hierarchy_part
-    levels = { 'Campaign' => @welcome.campaign_name, 'Ad set' => @welcome.adset_name }.compact_blank
-    return if levels.empty?
-
-    levels['Ad'] = @welcome.ad_name if @welcome.ad_name.present?
-    levels.map { |label, name| "#{label}: #{italic(name)}" }.join(' › ')
-  end
-
-  def footer
-    '_Read from Meta just now. Not visible to the customer. On Messenger the ad reply is not stored ' \
-      'in Chatwoot, so this is the only record of it._'
   end
 
   def titles

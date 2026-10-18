@@ -45,12 +45,16 @@ class Umi::Funnel::CustomerProjection
     conversation.save!
   end
 
-  def self.summarize!(conversation, contact, classification: nil)
+  def self.summarize!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     projection = conversation.additional_attributes.fetch(KEY)
-    signature = projection.except('summary').merge('facts' => projection.fetch('facts').except('umi_payment_snapshot_at'))
-    return if projection['summary'] == signature && classification.nil?
+    signature = summary_content(projection, contact)
+    previous = projection['summary']
+    previous = summary_content(previous, contact) if previous.is_a?(Hash)
+    return if previous == signature && classification.nil? && projection['summary'] == signature
 
-    write_note!(conversation, contact, classification: classification)
+    if (previous != signature || classification) && (signature.present? || previous.present? || classification)
+      write_note!(conversation, contact, classification: classification)
+    end
     projection['summary'] = signature
     conversation.additional_attributes = conversation.additional_attributes.merge(KEY => projection)
   end
@@ -74,26 +78,34 @@ class Umi::Funnel::CustomerProjection
     end
   end
 
-  def self.write_note!(conversation, contact, classification: nil) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity, Metrics/AbcSize, Metrics/MethodLength
-    projection = conversation.additional_attributes.fetch(KEY)
+  def self.summary_content(projection, contact) # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     attributes = projection.fetch('facts')
+    lines = []
+    stage = attributes['umi_funnel_stage']
+    lines << "Customer: #{stage}." if %w[chooser seeker client repeat].include?(stage)
     count = attributes['umi_paid_order_count']
-    history = if count.nil?
-                'Payment history unknown.'
-              else
-                "#{attributes['umi_paid_history_complete'] ? '' : 'At least '}#{count} confirmed paid orders; " \
-                  "history #{attributes['umi_paid_history_complete'] ? 'complete' : 'incomplete'}."
-              end
-    roles = Umi::Funnel::Configuration::ROLES.map { |key, label| "#{label}: #{attributes.fetch(key, 'unknown')}" }.join('; ')
-    barter = { true => 'yes (order marked barter)', false => 'no tagged orders', nil => 'unknown' }.fetch(attributes['umi_barter_history'])
-    content = "Customer: #{attributes.fetch('umi_funnel_stage', 'unclassified')}. #{history}\n#{roles}\nBarter history: #{barter}."
-    service = projection.fetch('service', { 'state' => 'unknown', 'freshness' => 'unknown' })
-    content += "\nService reservation: #{service.fetch('state')} (#{service.fetch('freshness')})."
-    content += "\nCustomer data is stale; last verified facts retained." if projection['freshness'] == 'stale'
-    if contact.additional_attributes.dig('umi_klaviyo_sync', 'error').to_s.start_with?('identity_unresolved')
-      content += "\nCustomer identity unresolved; verify email or phone, or link an existing profile."
+    if count&.positive?
+      prefix = attributes['umi_paid_history_complete'] ? '' : 'At least '
+      lines << "#{prefix}#{count} confirmed paid #{count == 1 ? 'order' : 'orders'}."
     end
-    content += "\n#{classification.fetch(:text)}" if classification
+    Umi::Funnel::Configuration::ROLES.each do |key, label|
+      lines << "#{label}: yes." if attributes[key] == 'yes'
+    end
+    lines << 'Barter history: yes (order marked barter).' if attributes['umi_barter_history'] == true
+    service = projection.fetch('service', {})
+    lines << "Service reservation: #{service['state']} (fresh)." if %w[hold clear].include?(service['state']) && service['freshness'] == 'fresh'
+    if contact.additional_attributes.dig('umi_klaviyo_sync', 'error').to_s.start_with?('identity_unresolved')
+      lines << 'Customer identity unresolved; verify email or phone, or link an existing profile.'
+    end
+    lines.join("\n")
+  end
+
+  def self.write_note!(conversation, contact, classification: nil)
+    content = summary_content(conversation.additional_attributes.fetch(KEY), contact)
+    if content.blank? && !classification
+      content = 'Previously noted customer context is no longer verified; check current attributes before relying on the earlier note.'
+    end
+    content = [content, classification.fetch(:text)].reject(&:blank?).join("\n") if classification
     create_note!(conversation, contact, content, classification)
   end
 

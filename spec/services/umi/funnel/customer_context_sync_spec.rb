@@ -65,14 +65,15 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
       sync.perform
       Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
       expect(conversation.reload.label_list).to include('barter')
+      count = conversation.messages.where(private: true).count
       value == :absent ? properties.delete('umi_barter_history') : properties['umi_barter_history'] = value
       properties['umi_payment_snapshot_at'] = Time.current.utc.iso8601
       sync.perform
       Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
       expect(contact.reload.custom_attributes['umi_barter_history']).to eq(value == false ? false : nil)
       expect(conversation.reload.label_list).not_to include('barter')
-      summary = value == false ? 'Barter history: no tagged orders.' : 'Barter history: unknown.'
-      expect(conversation.messages.where(private: true).last.content).to include(summary)
+      expect(conversation.messages.where(private: true).count).to eq(count + 1)
+      expect(conversation.messages.where(private: true).last.content).to include('no longer verified')
     end
   end
 
@@ -85,7 +86,7 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
     Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
     expect(contact.reload.custom_attributes['umi_barter_history']).to be(true)
     expect(conversation.reload.label_list).to include('barter')
-    expect(conversation.messages.where(private: true).last.content).to include('Customer data is stale; last verified facts retained.')
+    expect(conversation.messages.where(private: true).last.content).to include('Barter history: yes')
   end
 
   it 'rejects a non-boolean barter fact instead of treating text as a positive' do
@@ -101,6 +102,7 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
       sync.perform
       Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
       expect(conversation.reload.label_list).to include(previous_stage)
+      count = conversation.messages.where(private: true).count
 
       properties.merge!('umi_buyer_lifecycle' => 'unclassified', 'umi_paid_history_complete' => false)
       count_present ? properties['umi_paid_order_count'] = nil : properties.delete('umi_paid_order_count')
@@ -111,7 +113,8 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
                                                           'umi_paid_history_complete' => false)
       expect(contact.additional_attributes.dig('umi_klaviyo_sync', 'status')).to eq('fresh')
       expect(conversation.reload.label_list & %w[client repeat]).to be_empty
-      expect(conversation.messages.where(private: true).last.content).to include('Customer: unclassified.', 'Payment history unknown.')
+      expect(conversation.messages.where(private: true).count).to eq(count + 1)
+      expect(conversation.messages.where(private: true).last.content).to include('no longer verified')
     end
   end
 
@@ -155,16 +158,33 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
     expect(conversation.messages.where(private: true).last.content).to include('Service reservation: clear (fresh).')
   end
 
-  it 'shows an expired clear service observation as stale and absent service evidence as unknown' do
+  it 'keeps expired or absent service evidence out of private notes' do
     conversation
     properties.merge!('umi_service_recovery_state' => 'clear', 'umi_service_snapshot_at' => 3.hours.ago.utc.iso8601)
     sync.perform
     Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
-    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: clear (stale).')
+    expect(conversation.messages.where(private: true)).to be_empty
     properties.except!('umi_service_recovery_state', 'umi_service_snapshot_at')
     sync.perform
     Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
-    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: unknown (unknown).')
+    expect(conversation.messages.where(private: true)).to be_empty
+  end
+
+  it 'withdraws a previously fresh service hold when it becomes stale' do
+    conversation
+    properties.merge!('umi_service_recovery_state' => 'hold', 'umi_service_snapshot_at' => 5.minutes.ago.utc.iso8601)
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).last.content).to include('Service reservation: hold')
+    count = conversation.messages.where(private: true).count
+
+    properties['umi_service_snapshot_at'] = 3.hours.ago.utc.iso8601
+    sync.perform
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count + 1)
+    expect(conversation.messages.where(private: true).last.content).to include('no longer verified')
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count + 1)
   end
 
   it 'roundtrips yes, false and explicit unset with a confirmed baseline and no echo' do
@@ -280,13 +300,13 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
     )
     Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
     expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'status')).to eq('stale')
-    expect(conversation.messages.where(private: true).count).to eq(2)
+    expect(conversation.messages.where(private: true).count).to eq(1)
 
     allow(client).to receive(:profile).and_return(profile)
     sync.perform
     Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
     expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'status')).to eq('fresh')
-    expect(conversation.messages.where(private: true).count).to eq(3)
+    expect(conversation.messages.where(private: true).count).to eq(1)
   end
 
   it 'retains a newer operator value when its own follow-up PATCH fails before applying' do
@@ -370,7 +390,7 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
     expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'roles', 'umi_vip', 'pending')).to be_nil
   end
 
-  it 'writes one stale transition and one recovery note but none for unchanged polls' do
+  it 'keeps metadata-only stale transitions and recovery out of private notes' do
     properties.merge!('umi_buyer_lifecycle' => 'client', 'umi_paid_order_count' => 1)
     conversation
     sync.perform
@@ -381,13 +401,13 @@ RSpec.describe 'Klaviyo customer context sync', type: :model do
       expect { sync.perform }.to raise_error(Umi::Funnel::KlaviyoClient::Error)
       Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
     end
-    expect(conversation.messages.where(private: true).count).to eq(2)
+    expect(conversation.messages.where(private: true).count).to eq(1)
     allow(client).to receive(:profile).and_return(profile)
     2.times do
       sync.perform
       Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
     end
-    expect(conversation.messages.where(private: true).count).to eq(3)
+    expect(conversation.messages.where(private: true).count).to eq(1)
   end
 
   it 'reconciles a contact-only manual conflict and retains evidence without inventing a conversation' do

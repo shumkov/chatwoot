@@ -13,11 +13,11 @@ describe Umi::Meta::AdContextNotePresenter do
     )
   end
 
-  it 'marks which option the customer tapped and lists the rest' do
+  it 'keeps the missing ad answer without repeating the customer tap or campaign wrapper' do
     body = described_class.new(welcome, tapped_title: 'Option two').body
 
-    expect(body).to include('option 2 of 3', '*Option two*')
-    expect(body).to include('The other options were: *Option one*, *Option three*')
+    expect(body).to include('Same answer', 'greeted with')
+    expect(body).not_to include('option 2 of 3', 'The other options', 'Campaign:', 'Ad set:', 'Read from Meta')
   end
 
   it 'falls back to listing the options when the tap cannot be matched' do
@@ -42,7 +42,17 @@ describe Umi::Meta::AdContextNotePresenter do
 
     body = described_class.new(welcome, tapped_title: 'A').body
 
-    expect(body).to include('Answer A', 'Answer B')
+    expect(body).to include('Answer A')
+    expect(body).not_to include('Answer B')
+  end
+
+  it 'does not attribute another option’s configured answer to a tap with no answer' do
+    welcome.items = [{ title: 'A', response: nil }, { title: 'B', response: 'Answer B' }]
+
+    body = described_class.new(welcome, tapped_title: 'A').body
+
+    expect(body).to include('selected option', 'no configured answer')
+    expect(body).not_to include('Answer B')
   end
 
   it 'does not claim Meta sent anything, because 23% of taps get no reply' do
@@ -52,54 +62,14 @@ describe Umi::Meta::AdContextNotePresenter do
     expect(body).not_to match(/Meta sent|was told|has already been told/)
   end
 
-  describe 'the campaign hierarchy' do
-    # Meta's webhook carries only ad_id and ad_title, so campaign and ad set are
-    # otherwise invisible in Chatwoot at any level.
-    it 'names all three levels on one line' do
-      line = described_class.new(welcome, tapped_title: 'Option one').body.lines
-                            .find { |l| l.include?('Campaign:') }
+  it 'keeps the greeting and configured answer when campaign metadata is absent' do
+    welcome.campaign_name = nil
+    welcome.adset_name = nil
 
-      expect(line).to include('05082026_Conversation_Messages Engagement', 'Thai_Board', 'Video_2')
-      expect(line.chomp.lines.size).to eq(1)
-    end
+    body = described_class.new(welcome, tapped_title: 'Option one').body
 
-    # The agent reads this mid-conversation. The greeting and the buttons are
-    # what they came for; three names must not sit on top of them.
-    it 'keeps the hierarchy below the greeting and the answer' do
-      body = described_class.new(welcome, tapped_title: 'Option one').body
-
-      expect(body.index('Campaign:')).to be > body.index('greeted with')
-      expect(body.index('Campaign:')).to be > body.index('Same answer')
-    end
-
-    # The welcome message is the value; the hierarchy is context. Losing the
-    # second must not cost the first.
-    it 'still renders everything else when Meta returns no campaign or ad set' do
-      welcome.campaign_name = nil
-      welcome.adset_name = nil
-
-      body = described_class.new(welcome, tapped_title: 'Option one').body
-
-      expect(body).to include('greeted with', 'Same answer', 'option 1 of 3')
-      expect(body).not_to include('Campaign:', 'Ad set:')
-    end
-
-    it 'shows whichever level did come back' do
-      welcome.campaign_name = nil
-
-      body = described_class.new(welcome, tapped_title: 'Option one').body
-
-      expect(body).to include('Ad set: *Thai_Board*')
-      expect(body).not_to include('Campaign:')
-    end
-
-    # An ad name on its own is already in the conversation sidebar.
-    it 'drops the line entirely rather than printing the ad name alone' do
-      welcome.campaign_name = nil
-      welcome.adset_name = nil
-
-      expect(described_class.new(welcome, tapped_title: 'Option one').body).not_to include('Video_2')
-    end
+    expect(body).to include('greeted with', 'Same answer')
+    expect(body).not_to include('Campaign:', 'Ad set:')
   end
 
   # Liquid is skipped for these notes, but Chatwoot's Liquid pass rewrites
@@ -122,7 +92,7 @@ describe Umi::Meta::AdContextNotePresenter do
 
     body = described_class.new(welcome, tapped_title: 'Learn more').body
 
-    expect(body).to include('option 1 of 1')
+    expect(body).to include('greeted with')
     expect(body).not_to include('configured to answer')
   end
 end

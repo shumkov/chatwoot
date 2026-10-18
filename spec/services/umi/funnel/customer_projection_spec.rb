@@ -26,6 +26,56 @@ RSpec.describe 'Customer projection', type: :model do
     expect(conversation.messages.where(private: true).count).to eq(1)
   end
 
+  it 'does not bury a new customer question under unknown facts or metadata refresh notes' do
+    conversation
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id, conversation.id)
+    expect(conversation.messages.where(private: true)).to be_empty
+
+    Umi::Funnel::CustomerMutation.new(contact, source: 'system').perform(
+      snapshot: { 'buyer_lifecycle' => 'client', 'paid_order_count' => 1, 'paid_history_complete' => true }
+    )
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    note = conversation.messages.where(private: true).last
+    expect(note.content).to include('1 confirmed paid order')
+    expect(note.content).not_to include('unknown', 'Barter history', 'Service reservation')
+
+    count = conversation.messages.where(private: true).count
+    contact.additional_attributes['umi_klaviyo_sync']['revision'] += 1
+    contact.save!
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count)
+  end
+
+  it 'does not repost an unchanged customer fact when migrating an existing summary signature' do
+    Umi::Funnel::CustomerMutation.new(contact, source: 'system').perform(
+      snapshot: { 'buyer_lifecycle' => 'client', 'paid_order_count' => 1, 'paid_history_complete' => true }
+    )
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id, conversation.id)
+    count = conversation.messages.where(private: true).count
+    projection = conversation.reload.additional_attributes.fetch('umi_customer_projection')
+    conversation.update!(additional_attributes: conversation.additional_attributes.merge(
+      'umi_customer_projection' => projection.merge('summary' => projection.except('summary'))
+    ))
+
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id, conversation.id)
+    expect(conversation.messages.where(private: true).count).to eq(count)
+    expect(conversation.reload.additional_attributes.dig('umi_customer_projection', 'summary')).to be_a(String)
+  end
+
+  it 'withdraws a former positive fact once when no verified context remains' do
+    conversation
+    Umi::Funnel::CustomerMutation.new(contact, source: 'system').perform(roles: { umi_vip: 'yes' })
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).last.content).to include('vip: yes')
+
+    Umi::Funnel::CustomerMutation.new(contact, source: 'system').perform(roles: { umi_vip: 'unknown' })
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).last.content).to include('no longer verified')
+    count = conversation.messages.where(private: true).count
+    Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+    expect(conversation.messages.where(private: true).count).to eq(count)
+  end
+
   it 'preserves the last verified facts on timeout and does not call unknown a non-buyer' do
     service = Umi::Funnel::CustomerMutation.new(contact, source: 'system')
     service.perform(snapshot: { 'status' => 'stale' })
@@ -65,6 +115,7 @@ RSpec.describe 'Customer projection', type: :model do
 
   it 'commits the incoming message even when its deferred initial summary fails' do
     message = create(:message, :incoming, conversation: conversation, account: account)
+    contact.update!(custom_attributes: contact.custom_attributes.merge('umi_funnel_stage' => 'client'))
     allow(Umi::Funnel::CustomerProjection).to receive(:write_note!).and_raise('note storage unavailable')
     expect { Umi::Funnel::CustomerProjectionJob.perform_now(contact.id, conversation.id) }.to raise_error('note storage unavailable')
     expect(Message.exists?(message.id)).to be(true)
