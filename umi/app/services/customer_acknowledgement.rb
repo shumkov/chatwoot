@@ -22,12 +22,16 @@ class Umi::CustomerAcknowledgement
     new(message, settings).schedule
   end
 
+  def self.generation_for(settings, inbox_id)
+    settings.fetch('inbox_started_at', {}).fetch(inbox_id.to_s, settings.fetch('started_at'))
+  end
+
   def initialize(message, settings)
     @message = message
     @conversation = message.conversation
     @inbox = message.inbox
-    @settings = settings
-    @started_at = Time.iso8601(settings.fetch('started_at'))
+    @generation = self.class.generation_for(settings, @inbox.id)
+    @started_at = Time.iso8601(@generation)
   end
 
   def schedule
@@ -36,7 +40,7 @@ class Umi::CustomerAcknowledgement
     validate_configuration!
     mode = working_at?(@message.created_at) ? 'day' : 'night'
     due_at = mode == 'day' ? @message.created_at + 5.minutes : Time.current
-    Umi::CustomerAcknowledgementJob.set(wait_until: due_at).perform_later(@message.id, @settings.fetch('started_at'), mode)
+    Umi::CustomerAcknowledgementJob.set(wait_until: due_at).perform_later(@message.id, @generation, mode)
   end
 
   def perform(mode)
@@ -105,9 +109,12 @@ class Umi::CustomerAcknowledgement
   end
 
   def validate_configuration! # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-    unless @inbox.channel_type == 'Channel::FacebookPage' && @inbox.working_hours_enabled? &&
+    @inbox.reload
+    supported_channel = %w[Channel::FacebookPage Channel::WebWidget Channel::Line].include?(@inbox.channel_type) ||
+                        (@inbox.channel_type == 'Channel::TwilioSms' && @inbox.channel.whatsapp?)
+    unless supported_channel && @inbox.working_hours_enabled? &&
            @inbox.out_of_office_message.blank? && !@inbox.greeting_enabled?
-      raise ArgumentError, 'Customer acknowledgements require a Facebook/Instagram inbox with business hours and native auto-replies disabled'
+      raise ArgumentError, 'Customer acknowledgements require a supported inbox with business hours and native auto-replies disabled'
     end
     raise ArgumentError, 'Customer acknowledgement copy requires Asia/Bangkok hours' unless @inbox.timezone == 'Asia/Bangkok'
 
@@ -117,7 +124,8 @@ class Umi::CustomerAcknowledgement
     end
       raise ArgumentError, 'Customer acknowledgement copy requires daily 09:00–21:00 hours'
     end
-    return unless GlobalConfigService.load('ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT', nil)
+    return unless @inbox.channel_type == 'Channel::FacebookPage' &&
+                  GlobalConfigService.load('ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT', nil)
 
     raise ArgumentError, 'Automated acknowledgements cannot use the global HUMAN_AGENT messaging tag'
   end
