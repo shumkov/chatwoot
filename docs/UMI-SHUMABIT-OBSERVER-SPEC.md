@@ -270,3 +270,26 @@ messages. Compare the draft with the Mai guide and live facts, have Mai assess
 whether it helps her send a reply, and read back private visibility, marker,
 source revision, absence of duplicate notes and zero public writes. Expand
 inbox-wide only after that evidence and an explicit rollout decision.
+
+### 18 October rollout receipt
+
+Quiet context notes shipped in signed Chatwoot release `umi-v4.16.0-34`
+(`8df74f91a38b343dee90fc0a8db8d14132b136cb`, immutable image digest
+`sha256:68d0d85a026ac4f669c94111b7d3fef2231c95a2e86ac32b2c86d6ebd58e0b53`).
+The signed Shumabit bridge source `540f74d001f12586bf959bd08c27e5eaffc8ec0b`
+is installed with `CHATWOOT_DRAFT_PILOT_SOURCES=""`. No live private draft has
+been posted, and future messages cannot draft until exact source pairs are
+configured. The `gpt-6-sol`/low no-send evaluation of already answered
+conversation 1168 produced a grounded clarification question, which is model
+quality evidence, not live delivery evidence.
+
+A fresh inbox-2 scan through 14:55 Bangkok found no eligible unanswered source:
+conversation 1169 had a human reply and conversation 70 had an outgoing reply
+to its collaboration turn, while 1168 and 1166 were already answered. These
+answered turns remain fixtures only. Before any
+pilot post, select a newly eligible conversation/message pair, recheck its
+unanswered state and source revision immediately before posting, then verify
+the note is private, has the source marker, is visible to Mai, has no duplicate,
+and caused no public write. Inbox-wide enablement remains a separate decision.
+The canonical deployment, backup and reminder continuity receipt is in
+`umi-vps-infra/docs/CHATWOOT_QUIET_NOTES_PRIVATE_DRAFT_READINESS_RELEASE_20261018.md`.
