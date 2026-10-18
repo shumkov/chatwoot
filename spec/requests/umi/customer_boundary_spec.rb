@@ -99,6 +99,7 @@ RSpec.describe 'Customer context public boundaries', type: :request do
     let(:summary) { conversation.messages.where(private: true).first! }
 
     before do
+      contact.update!(custom_attributes: contact.custom_attributes.merge('umi_vip' => 'yes'))
       with_modified_env UMI_CUSTOMER_CONTEXT_ACCOUNT_IDS: account.id.to_s do
         Umi::Funnel::CustomerProjectionJob.perform_now(contact.id, conversation.id)
       end
