@@ -2,8 +2,15 @@
 
 module Umi::Shopify::ProductRetry
   def retry
-    return super unless message.content_attributes.key?('umi_product_card')
+    @message ||= @conversation.messages.find_by(id: permitted_params[:id])
+    return super unless @message&.content_attributes&.key?('umi_product_card')
 
+    retry_product_share
+  end
+
+  private
+
+  def retry_product_share
     message.with_lock do
       state = message.content_attributes.dig('umi_product_delivery', 'state')
       next render json: { error: 'Reconcile the product share before retry.' }, status: :conflict unless state == 'rejected'
@@ -17,8 +24,6 @@ module Umi::Shopify::ProductRetry
   rescue ArgumentError, ActiveRecord::RecordNotFound => e
     render json: { error: e.message }, status: :conflict
   end
-
-  private
 
   def verify_product_requester!
     card = message.content_attributes.fetch('umi_product_card')
