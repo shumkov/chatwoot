@@ -30,6 +30,7 @@ module Umi::Shopify::MessageOrderLinkable
 
   def rewrite_eligible?
     return false if @umi_shopify_order_links_rewritten
+    return false if content_attributes['umi_product_card'].present?
     return false if ActiveModel::Type::Boolean.new.cast(ENV.fetch('UMI_SHOPIFY_ORDER_LINK_REWRITE_DISABLED', false))
 
     (outgoing? || template?) && !private? && conversation.contact_id.present?

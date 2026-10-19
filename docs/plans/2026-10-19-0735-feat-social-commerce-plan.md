@@ -9,6 +9,10 @@ execution: code
 
 # Social Commerce in Chatwoot - Plan
 
+## Delivery checkpoint — 2026-10-19
+
+U1 staff admission, U2 product facts, U3 Facebook/Page-linked Instagram transport, and U5 unpaid drafts/private PromptPay are implemented locally. U4 provides Cloud image/text product sharing and visible inbound catalog enquiries/orders. Native WhatsApp single-product sending is not implemented or enabled: the inspected WABA returned no linked catalog, so there is no verified retailer mapping to use. U6 live canaries and per-channel activation remain outstanding. Local tests are not production delivery evidence. See `UMI-PRODUCT-CARDS.md`, `UMI-CLOUD-PRODUCT-SHARES.md`, `UMI-DRAFT-COMMANDS.md` and the PromptPay addendum for operator and endpoint details.
+
 ## Goal Capsule
 
 - **Objective:** Mai can identify and share an exact UMI product in an existing Messenger, Instagram, or WhatsApp conversation and, when a customer agrees to buy, prepare an unpaid Shopify checkout link without losing the conversation or mistaking a cart, draft, or link click for payment.

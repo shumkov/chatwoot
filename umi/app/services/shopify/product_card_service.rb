@@ -4,11 +4,12 @@
 class Umi::Shopify::ProductCardService
   FIELDS = %w[product_id title variant_id variant_title image_url canonical_url snapshot_at price].freeze
 
-  def initialize(conversation:, facts:, source_id:, requested_by:)
+  def initialize(conversation:, facts:, source_id:, requested_by:, sender: nil)
     @conversation = conversation
     @facts = facts.stringify_keys.slice(*FIELDS)
     @source_id = source_id
     @requested_by = requested_by
+    @sender = sender
   end
 
   def perform
@@ -18,15 +19,19 @@ class Umi::Shopify::ProductCardService
     verify_claim!(token)
     uri.query = URI.encode_www_form(URI.decode_www_form(uri.query.to_s).to_h.except('umi_cw').to_a + [['umi_cw', token]])
     card = @facts.except('canonical_url').merge('version' => 1, 'url' => uri.to_s, 'source_id' => @source_id, 'requested_by' => @requested_by)
-    @conversation.messages.create!(account_id: @conversation.account_id, inbox_id: @conversation.inbox_id,
-                                   message_type: :outgoing, content_type: :text, private: false,
-                                   content: summary, content_attributes: { 'umi_product_card' => card })
+    create_message(card)
   rescue StandardError
     Umi::Shopify::OrderLinkTokenService.discard(token) if token
     raise
   end
 
   private
+
+  def create_message(card)
+    @conversation.messages.create!(account_id: @conversation.account_id, inbox_id: @conversation.inbox_id,
+                                   sender: @sender, message_type: :outgoing, content_type: :text, private: false,
+                                   content: summary(card['url']), content_attributes: { 'umi_product_card' => card })
+  end
 
   def canonical_uri
     uri = URI.parse(@facts.fetch('canonical_url'))
@@ -42,11 +47,15 @@ class Umi::Shopify::ProductCardService
                                                              [@conversation.account_id, @conversation.id, @conversation.contact_id]
   end
 
-  def summary
+  def summary(url)
     parts = [@facts.fetch('title'), @facts['variant_title']]
     price = @facts['price']
     parts << "#{price.fetch('amount')} #{price.fetch('currency')} (#{price.fetch('market')})" if price
-    parts << 'Product availability and price snapshot; checkout confirms final total.'
+    parts << if @conversation.inbox.channel.is_a?(Channel::Whatsapp)
+               url
+             else
+               'Product availability and price snapshot; checkout confirms final total.'
+             end
     parts.compact.join("\n")
   end
 end
