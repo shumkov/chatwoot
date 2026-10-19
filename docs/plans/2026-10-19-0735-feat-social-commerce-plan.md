@@ -19,6 +19,18 @@ Release continuation: merge reviewed sources, produce/verify a Chatwoot release 
 
 U1 staff admission, U2 product facts, U3 Facebook/Page-linked Instagram transport, and U5 unpaid drafts/private PromptPay are implemented locally. U4 provides Cloud image/text product sharing and visible inbound catalog enquiries/orders. Native WhatsApp single-product sending is not implemented or enabled: the inspected WABA returned no linked catalog, so there is no verified retailer mapping to use. U6 live canaries and per-channel activation remain outstanding. Local tests are not production delivery evidence. See `UMI-PRODUCT-CARDS.md`, `UMI-CLOUD-PRODUCT-SHARES.md`, `UMI-DRAFT-COMMANDS.md` and the PromptPay addendum for operator and endpoint details.
 
+### Catalogue connection attempt — 2026-10-19
+
+Live phone commerce settings return `is_cart_enabled: true` and `is_catalog_visible: true` (HTTP 200). These switches are already enabled, but do not establish a catalogue association or prove customer-visible functionality.
+
+The owner authorized connecting the existing catalogue in Meta and using product cards as the main product presentation. Browser login completed. Production inbox 3 confirms Cloud WABA `1900779887500226` (UMI clothing), phone-number ID `1123368177532417`, public number +66 80 005 3593. The existing `Shopify Product Catalog` is `1200409158757107`, owned by business `497970999394825`; its Commerce account is `1286633862440382`. Its actual UMI products come from Shopify and the supplementary Flexify feed. Facebook Page `516819784857962` and Instagram @umi.asia are already connected to that shop.
+
+The authorized **Connect Catalogue** attempt failed with Meta's explicit message: **“Product catalogue already linked to WhatsApp business account”**; the dialog says a catalogue can only be linked to one WABA. No successful association, detach, replacement catalogue or provider migration occurred. Both the browser and independent Graph v23.0 reads show empty `product_catalogs` for all three owned WABAs: target `1900779887500226`, UMI (Klaviyo) `1102576082727242`, and UMI `1673373860633578`. The business reports no client WABAs. The conflicting association remains unidentified; do not infer that Klaviyo owns it or disconnect another channel speculatively.
+
+Catalogue eligibility is variant-specific: Sway Beige/M content ID `43654748504111` and Black/S `43654748569647` are shown **Eligible**, while out-of-stock variants explain the product group's **Not eligible** status. Separately, the Actions screen reports policy rejections for underwear variants (Aura, Lure, Pure). Those are not evidence that the whole catalogue is unusable; no products were hidden, deleted or appealed during this connection task. UI content IDs alone do not complete the API retailer-to-Shopify mapping contract.
+
+Continuation: establish whether a legacy WhatsApp Business mobile-app connection holds this catalogue; otherwise escalate the contradictory association to Meta support with the catalogue/business/WABA IDs and empty read results. Only after the owner association is identified should a transfer or other remedy be proposed. Native-card implementation and owner-only rendering/cart verification remain outstanding; the rejected connection does not activate any Chatwoot feature.
+
 ## Goal Capsule
 
 - **Objective:** Mai can identify and share an exact UMI product in an existing Messenger, Instagram, or WhatsApp conversation and, when a customer agrees to buy, prepare an unpaid Shopify checkout link without losing the conversation or mistaking a cart, draft, or link click for payment.
