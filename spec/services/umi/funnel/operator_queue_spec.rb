@@ -20,7 +20,11 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
         begin
           example.run
         ensure
-          account.destroy!
+          perform_enqueued_jobs(only: ActiveRecord::DestroyAssociationAsyncJob) do
+            account.conversations.destroy_all
+            account.contacts.destroy_all
+            account.destroy!
+          end
         end
       else
         ApplicationRecord.transaction(isolation: :repeatable_read) do
@@ -56,7 +60,10 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
   end
 
   describe 'collaboration label projection' do
-    let!(:activity) { create(:message, conversation: conversation, message_type: :incoming, created_at: start) }
+    let!(:activity) do
+      create(:message, account: account, inbox: inbox, conversation: conversation, sender: conversation.contact,
+                       message_type: :incoming, created_at: start)
+    end
 
     it 'rejects a message committed before the projection lock while its conversation callback is still pending', :committed do
       baseline = queue.show(conversation.reload.display_id)[:conversation]
