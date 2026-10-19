@@ -11,6 +11,12 @@ execution: code
 
 ## Delivery checkpoint — 2026-10-19
 
+Source delivery is published in [Chatwoot #100](https://github.com/shumkov/chatwoot/pull/100), [Shumabit #45](https://github.com/shumkov/shumabit-claude/pull/45), and [infrastructure #134](https://github.com/shumkov/umi-vps-infra/pull/134). All are open; none is production activation. U6 package/config source and operator docs are implemented. The installer retains existing draft/restock settings and leaves commerce off.
+
+Verification: Bridge 150/150, zero skipped; broad Rails integration 147/147 followed by final shared-operator regression 11/11; changed Ruby files lint clean; infrastructure 3 commerce + 19 existing contract tests passed. Independent source reviews have no unresolved findings. Actual production identity is the shared operator User1; generated-note markers prevent recursive command handling, without claiming a separate bot permission boundary.
+
+Release continuation: merge reviewed sources, produce/verify a Chatwoot release image through the canonical infrastructure owner, install the exact signed Shumabit revision, and complete owner-only product rendering plus private unpaid-draft/QR canaries before channel activation. The owner has been asked for a personal test conversation URL; no real customer recipient was selected. No payment, invoice email, customer message or production change occurred during source implementation.
+
 U1 staff admission, U2 product facts, U3 Facebook/Page-linked Instagram transport, and U5 unpaid drafts/private PromptPay are implemented locally. U4 provides Cloud image/text product sharing and visible inbound catalog enquiries/orders. Native WhatsApp single-product sending is not implemented or enabled: the inspected WABA returned no linked catalog, so there is no verified retailer mapping to use. U6 live canaries and per-channel activation remain outstanding. Local tests are not production delivery evidence. See `UMI-PRODUCT-CARDS.md`, `UMI-CLOUD-PRODUCT-SHARES.md`, `UMI-DRAFT-COMMANDS.md` and the PromptPay addendum for operator and endpoint details.
 
 ## Goal Capsule
