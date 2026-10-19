@@ -559,6 +559,11 @@ remain as active patch 17 because the invariant still protects ordinary and
 reconciliation-heal writes. The retired implementation remains available in
 Git ancestry but is not a supported operator workflow.
 
+| 64 | Staff Shopify product shares with conversation attribution | `umi/app/services/shopify/product_{card_service,source,delivery}.rb`, `umi/app/controllers/shopify/product_{shares_controller,retry}.rb`, `config/initializers/zz_umi_product_cards.rb`, focused service/request specs, `docs/UMI-PRODUCT-CARDS.md` | Stores verified product facts and attributed CTA on one normal service-principal outgoing row per private staff source. Default-off Facebook/Page-linked Instagram generic delivery records acceptance, rejection or uncertainty; Retry preserves facts and blocks uncertain replay. | Native Chatwoot commerce messages preserve equivalent Shopify conversation attribution and staff-request provenance. |
+| 65 | Cloud WhatsApp product shares and visible catalog enquiries | `umi/app/services/shopify/cloud_product_{provider,incoming}.rb`, Cloud branches of product delivery/endpoint and initializer, focused Cloud specs, `docs/UMI-CLOUD-PRODUCT-SHARES.md` | Reuses the staff source and attributed PDP row for one default-off Cloud image/text share in a live session. Makes product enquiries and catalog-order IDs visible without inventing a Shopify order or mapping absent catalog data. | Native Chatwoot Cloud commerce supports equivalent attributed product shares and safe visible catalog enquiries. |
+
+| 66 | Staff-created Shopify draft association | `umi/app/controllers/shopify/draft_commands_controller.rb`, `umi/app/services/shopify/draft_command.rb`, `config/initializers/zz_umi_draft_commands.rb`, `spec/requests/umi/draft_commands_spec.rb`, `docs/UMI-DRAFT-COMMANDS.md` | Verifies the staff source, current contact, exact Shopify basket and source marker before using existing unpaid-draft linkage; exposes exact linked-purchase identity for private QR preparation. No payment or invoice sending. | Native Chatwoot staff draft creation provides equivalent source-bound association and requester audit. |
+
 <!-- Add new patches here as commits, newest last. -->
 
 ## Notes / candidates (not yet patched)
