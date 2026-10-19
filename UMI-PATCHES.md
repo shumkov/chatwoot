@@ -559,6 +559,8 @@ remain as active patch 17 because the invariant still protects ordinary and
 reconciliation-heal writes. The retired implementation remains available in
 Git ancestry but is not a supported operator workflow.
 
+| 64 | Shopify product shares with conversation attribution | `umi/app/services/shopify/product_card_service.rb`, focused service specs | Stores verified product facts and an attributed CTA on a normal outgoing message; token preparation must succeed before the share is saved. Channel delivery and staff-command activation are separate parts of the social-commerce rollout. | Native Chatwoot commerce messages preserve equivalent Shopify conversation attribution and staff-request provenance. |
+
 <!-- Add new patches here as commits, newest last. -->
 
 ## Notes / candidates (not yet patched)
