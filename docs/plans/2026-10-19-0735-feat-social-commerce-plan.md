@@ -11,9 +11,13 @@ execution: code
 
 ## Delivery checkpoint — 2026-10-19
 
+Current owner-directed release scope is **Instagram only**. WhatsApp is blocked and deferred until 2026-10-20; do not activate the Cloud image/PDP fallback, retry catalogue connection, or move catalogue ownership as a workaround. Messenger product sharing also stays off in this release. Enable Instagram independently only after the owner-recipient canary; existing ordinary messaging is unchanged. Instagram cards are product presentations, not an editable native cart: a multi-item basket remains an unpaid Shopify draft with a checkout link.
+
 Source delivery is published in [Chatwoot #100](https://github.com/shumkov/chatwoot/pull/100), [Shumabit #45](https://github.com/shumkov/shumabit-claude/pull/45), and [infrastructure #134](https://github.com/shumkov/umi-vps-infra/pull/134). All are open; none is production activation. U6 package/config source and operator docs are implemented. The installer retains existing draft/restock settings and leaves commerce off.
 
 Verification: Bridge 150/150, zero skipped; broad Rails integration 147/147 followed by final shared-operator regression 11/11; changed Ruby files lint clean; infrastructure 3 commerce + 19 existing contract tests passed. Independent source reviews have no unresolved findings. Actual production identity is the shared operator User1; generated-note markers prevent recursive command handling, without claiming a separate bot permission boundary.
+
+Full PR CI subsequently found an invalid-message Retry regression (409 instead of the existing 422) and four Cloud incoming test failures caused by committed operator-queue fixtures leaving contacts behind. Both were reproduced before correction: Retry 1 failing example; queue-plus-Cloud 68 examples with the same four failures. The corrected combined suite passed 96 examples, zero failures, with zero persisted contacts afterward; two independent delta reviews found no actionable issues. Full CI on the corrected revision remains a release gate. The fixture fix changes no WhatsApp runtime behavior.
 
 Release continuation: merge reviewed sources, produce/verify a Chatwoot release image through the canonical infrastructure owner, install the exact signed Shumabit revision, and complete owner-only product rendering plus private unpaid-draft/QR canaries before channel activation. The owner has been asked for a personal test conversation URL; no real customer recipient was selected. No payment, invoice email, customer message or production change occurred during source implementation.
 
@@ -22,6 +26,8 @@ U1 staff admission, U2 product facts, U3 Facebook/Page-linked Instagram transpor
 ### Catalogue connection attempt — 2026-10-19
 
 Live phone commerce settings return `is_cart_enabled: true` and `is_catalog_visible: true` (HTTP 200). These switches are already enabled, but do not establish a catalogue association or prove customer-visible functionality.
+
+After the owner reconfirmed the target number and requested connection again, one direct, documented `POST /1900779887500226/product_catalogs` with the existing catalogue ID also failed definitively: HTTP 400, code 100, subcode 2388099, `is_transient: false`, trace `AB32iZv1VYJ_NWtz768SpoV`. Subsequent GET returned HTTP 200 with `data: []`. This reproduces the browser rejection through the existing production credential; do not keep retrying the unchanged request. Further Business Settings inspection currently requires the owner's Meta passkey confirmation.
 
 The owner authorized connecting the existing catalogue in Meta and using product cards as the main product presentation. Browser login completed. Production inbox 3 confirms Cloud WABA `1900779887500226` (UMI clothing), phone-number ID `1123368177532417`, public number +66 80 005 3593. The existing `Shopify Product Catalog` is `1200409158757107`, owned by business `497970999394825`; its Commerce account is `1286633862440382`. Its actual UMI products come from Shopify and the supplementary Flexify feed. Facebook Page `516819784857962` and Instagram @umi.asia are already connected to that shop.
 
