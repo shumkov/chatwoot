@@ -110,7 +110,11 @@ module Umi::Shopify::ProductDelivery
     query = { access_token: access_token }
     proof = calculate_app_secret_proof(GlobalConfigService.load('FB_APP_SECRET', ''), access_token)
     query[:appsecret_proof] = proof if proof
-    HTTParty.post('https://graph.facebook.com/v21.0/me/messages', body: payload, query: query, timeout: 30).parsed_response
+    HTTParty.post(
+      'https://graph.facebook.com/v21.0/me/messages',
+      body: payload.to_json,
+      headers: { 'Content-Type' => 'application/json' }, query: query, timeout: 30
+    ).parsed_response
   end
 
   def product_state(state, error = nil)
