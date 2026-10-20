@@ -103,10 +103,36 @@ RSpec.describe Umi::Shopify::ProductDelivery do
     end
     expect(message.reload.content_attributes.dig('umi_product_delivery', 'state')).to eq('accepted'), message.external_error
     expect(HTTParty).to have_received(:post).once.with('https://graph.facebook.com/v21.0/me/messages',
-                                                       hash_including(body: hash_including(messaging_type: 'RESPONSE'),
+                                                       hash_including(body: kind_of(String), headers: { 'Content-Type' => 'application/json' },
                                                                       query: hash_including(access_token: channel.page_access_token)))
     expect(Facebook::Messenger::Bot).not_to have_received(:deliver)
     expect(message.reload.source_id).to eq('ig.card')
+  end
+
+  it 'encodes IG generic template elements and buttons as JSON instead of form fields' do
+    conversation.update!(additional_attributes: { type: 'instagram_direct_message' })
+    allow(GlobalConfigService).to receive(:load).and_call_original
+    allow(GlobalConfigService).to receive(:load).with('FB_APP_SECRET', '').and_return('app-secret')
+    card.merge!('image_url' => 'https://example.com/top.jpg', 'variant_title' => 'Beige / M')
+    wire_request = nil
+    provider = stub_request(:post, 'https://graph.facebook.com/v21.0/me/messages')
+               .with(query: hash_including('access_token' => channel.page_access_token))
+    provider.to_return do |request|
+      wire_request = request
+      { status: 200, body: { message_id: 'ig.card' }.to_json, headers: { 'Content-Type' => 'application/json' } }
+    end
+    with_modified_env UMI_PRODUCT_CARDS_INSTAGRAM_ENABLED: 'true' do
+      SendReplyJob.perform_now(message.id)
+    end
+    expect(wire_request).not_to be_nil, message.reload.external_error
+    expect(wire_request.headers['Content-Type']).to eq('application/json')
+    payload = JSON.parse(wire_request.body)
+    expect(payload).to include('messaging_type' => 'RESPONSE')
+    element = { 'title' => 'Top', 'image_url' => 'https://example.com/top.jpg', 'subtitle' => 'Beige / M',
+                'buttons' => [{ 'type' => 'web_url', 'url' => card['url'], 'title' => 'View product' }] }
+    expect(payload.dig('message', 'attachment', 'payload', 'elements')).to eq([element])
+    expect(message.reload.source_id).to eq('ig.card')
+    expect(message.content_attributes.dig('umi_product_delivery', 'state')).to eq('accepted')
   end
 
   it 'holds an expired or rebound attribution before any provider call' do
