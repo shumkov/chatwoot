@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import ArticleListItem from './ArticleListItem.vue';
-import { useMapGetter } from 'dashboard/composables/store';
+import UmiIcon from 'widget/components/UmiIcon.vue';
 
 const props = defineProps({
   articles: {
@@ -12,8 +12,6 @@ const props = defineProps({
 
 const emit = defineEmits(['view', 'viewAll']);
 
-const widgetColor = useMapGetter('appConfig/getWidgetColor');
-
 const articlesToDisplay = computed(() => props.articles.slice(0, 6));
 
 const onArticleClick = slug => {
@@ -22,9 +20,9 @@ const onArticleClick = slug => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-3">
-    <h3 class="text-sm font-semibold text-n-slate-12">{{ $t('UMI.FAQ') }}</h3>
-    <div class="flex flex-col gap-2">
+  <div class="flex flex-col">
+    <h3 class="umi-section-label">{{ $t('UMI.FAQ') }}</h3>
+    <div class="flex flex-col">
       <ArticleListItem
         v-for="article in articlesToDisplay"
         :key="article.slug"
@@ -34,14 +32,13 @@ const onArticleClick = slug => {
         @select-article="onArticleClick"
       />
     </div>
-    <div>
+    <div class="mt-2">
       <button
-        class="text-sm font-medium tracking-wide inline-flex items-center gap-1"
-        :style="{ color: widgetColor }"
+        class="umi-ink-hover inline-flex items-center gap-2 min-h-11 text-[13px] leading-5"
         @click="$emit('viewAll')"
       >
         <span>{{ $t('UMI.ALL_TOPICS') }}</span>
-        <span class="i-lucide-arrow-right size-3.5 shrink-0" />
+        <UmiIcon name="arrow" class="w-[15px] rtl:rotate-180" />
       </button>
     </div>
   </div>

@@ -10,7 +10,10 @@
     "CONTINUE": "Continue conversation",
     "ALL_TOPICS": "All topics",
     "CHANNELS_HEADING": "Chat with us on",
-    "CALL": "Call"
+    "CALL": "Call",
+    "CLOSE": "Close",
+    "BACK": "Back",
+    "ONLINE": "Online"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {

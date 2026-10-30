@@ -4,7 +4,6 @@
 @import 'tailwindcss/utilities';
 @import 'shared/assets/fonts/widget_fonts';
 @import 'views/conversation';
-@import 'umi-theme';
 
 html,
 body {
@@ -407,3 +406,6 @@ blockquote {
     --white-alpha: 255, 255, 255, 0.1;
   }
 }
+
+// UMI: last, so the storefront layer wins ties with the rules above.
+@import 'umi-theme';

@@ -54,8 +54,8 @@ const links = computed(() =>
 </script>
 
 <template>
-  <div class="flex flex-col w-full gap-2">
-    <p class="px-1 text-sm font-medium text-n-slate-11">
+  <div class="flex flex-col w-full">
+    <p class="umi-section-label">
       {{ $t('UMI.CHANNELS_HEADING') }}
     </p>
     <div class="grid grid-cols-2 gap-2">
@@ -65,10 +65,10 @@ const links = computed(() =>
         :href="link.url"
         target="_blank"
         rel="noopener noreferrer"
-        class="flex items-center gap-2 px-3 py-2.5 transition outline-1 outline outline-n-container rounded-xl bg-n-background dark:bg-n-solid-2 text-n-slate-12 hover:outline-n-slate-6"
+        class="umi-control flex items-center gap-2 px-3 min-h-11 bg-n-background text-n-slate-12"
       >
         <span class="inline-flex shrink-0" v-html="link.icon" />
-        <span class="text-sm font-medium">{{ link.label }}</span>
+        <span class="text-[13px] leading-5">{{ link.label }}</span>
       </a>
     </div>
   </div>

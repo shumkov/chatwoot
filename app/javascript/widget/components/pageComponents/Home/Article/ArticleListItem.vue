@@ -1,4 +1,6 @@
 <script setup>
+import UmiIcon from 'widget/components/UmiIcon.vue';
+
 const props = defineProps({
   slug: {
     type: String,
@@ -20,16 +22,11 @@ const onClick = () => {
 </script>
 
 <template>
-  <div
-    class="flex items-center justify-between rounded cursor-pointer text-n-slate-11 hover:text-n-slate-12 gap-2"
-    role="button"
+  <button
+    class="umi-ink-hover flex items-center justify-between w-full gap-4 py-2.5 text-[15px] leading-6 ltr:text-left rtl:text-right"
     @click="onClick"
   >
-    <button
-      class="underline-offset-2 leading-5 ltr:text-left rtl:text-right text-base"
-    >
-      {{ title }}
-    </button>
-    <span class="i-lucide-chevron-right text-base shrink-0" />
-  </div>
+    <span>{{ title }}</span>
+    <UmiIcon name="arrow" class="w-[15px] rtl:rotate-180" />
+  </button>
 </template>

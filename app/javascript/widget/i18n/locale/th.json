@@ -10,7 +10,10 @@
     "CONTINUE": "สนทนาต่อ",
     "ALL_TOPICS": "หัวข้อทั้งหมด",
     "CHANNELS_HEADING": "แชทกับเราได้ที่",
-    "CALL": "โทร"
+    "CALL": "โทร",
+    "CLOSE": "ปิด",
+    "BACK": "กลับ",
+    "ONLINE": "ออนไลน์"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {

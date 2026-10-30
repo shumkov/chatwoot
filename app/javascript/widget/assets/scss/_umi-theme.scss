@@ -1,14 +1,102 @@
 /*
- * UMI: align the live-chat widget with the storefront design —
- * Helvetica, squared corners, pure white surfaces, black instead of Chatwoot
- * blue, flat (no shadows). Imported last in woot.scss so it wins.
- * See docs/UMI-WIDGET-HOME-SPEC.md.
+ * UMI: align the live-chat widget with the storefront theme (umi-store-theme) —
+ * Cy Grotesk Key Regular only, the theme's ink and lines, squared corners, pure white
+ * surfaces, flat (no shadows), the theme's focus ring, header chrome and inset.
+ * Imported at the end of woot.scss so it wins ties with the widget's own rules.
+ * See docs/UMI-WIDGET-HOME-SPEC.md and docs/UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md.
  */
+
+/* The storefront's one font, from the URL the storefront itself preloads
+   (snippets/cy-grotesk-key-font.liquid): chat.umi.store is same-site with umi.store, so the
+   iframe reuses the file the storefront already downloaded. Keep the URL in step with the theme. */
+@font-face {
+  font-family: 'Cy Grotesk Key';
+  src:
+    url('https://cdn.shopify.com/s/files/1/0673/9496/1455/files/CyGrotesk-KeyRegular.woff2?v=1742220533')
+      format('woff2'),
+    url('https://cdn.shopify.com/s/files/1/0673/9496/1455/files/CyGrotesk-KeyRegular.woff?v=1742220533')
+      format('woff');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --umi-ink: 18, 18, 18;
+  --umi-control-line: rgba(var(--umi-ink), 0.55);
+  --umi-text-emphasis-shadow: 0.3px 0 0 currentColor, -0.15px 0 0 currentColor;
+  /* The drawer's side inset: the theme's 24 px desktop drawer inset, 16 px on phones. */
+  --umi-inset: 24px;
+}
+
+/* The SDK tags the widget `is-mobile` when the storefront window is phone-sized; the iframe
+   itself is about 400 px wide either way, so no media query inside it can tell. */
+.is-mobile {
+  --umi-inset: 16px;
+}
 
 html,
 body {
-  font-family: Helvetica, 'Helvetica Neue', Arial, sans-serif !important;
+  font-family: 'Cy Grotesk Key', 'Noto Sans Thai', 'IBM Plex Sans Thai',
+    Thonburi, 'Leelawadee UI', sans-serif !important;
+  font-synthesis: none;
+  letter-spacing: 0.6px;
+  color: rgb(var(--umi-ink));
   background-color: #ffffff !important;
+}
+
+/* One Regular face. Synthesis-off stops a smeared fake bold of Cy Grotesk; the weight reset
+   also stops the Thai fallback faces, which ship real bold files. */
+*,
+*::before,
+*::after {
+  font-weight: 400 !important;
+}
+
+/* Emphasis in running text is the theme's hairline shadow, not bold. */
+strong,
+b {
+  text-shadow: var(--umi-text-emphasis-shadow);
+}
+
+/* 16 px on every field, so iOS does not zoom the page when one takes focus. */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
+/* The theme's focus ring (base.css): none on pointer focus, 1 px dashed ink on keyboard focus.
+   `!important` beats Chatwoot's outline-none utilities and focus rings. */
+*:focus {
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+*:focus-visible {
+  outline: 1px dashed currentColor !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+
+/* Chatwoot draws most field borders as a 1 px outline, which the rules above would remove on
+   focus. Keep the border and darken it to ink instead, as the theme's fields darken on hover.
+   The home composer and the in-chat reply box ring their own box (below). */
+input:not(.reset-base, .umi-composer-input):focus,
+textarea:not(.reset-base, .umi-composer-input):focus,
+select:not(.reset-base):focus,
+.reset-base[class~='outline-1']:focus {
+  outline: 1px solid rgb(var(--umi-ink)) !important;
+  outline-offset: -1px !important;
+}
+
+/* The phone field outlines its wrapper; the input inside stays bare. */
+.phone-input input:focus {
+  outline: 0 !important;
+}
+
+.phone-input:focus-within {
+  outline-color: rgb(var(--umi-ink)) !important;
 }
 
 /* No rounded corners anywhere (the storefront is squared). */
@@ -31,37 +119,134 @@ body {
   background-color: #ffffff !important;
 }
 
-/* Black instead of Chatwoot blue accents. */
+/* The theme's ink instead of Chatwoot's slate and blue. */
 .text-n-brand,
 .text-woot-500,
-.text-woot-600 {
-  color: #121212 !important;
+.text-woot-600,
+.text-n-slate-12 {
+  color: rgb(var(--umi-ink)) !important;
 }
 
-/* Home composer: the utility `border` doesn't render on this <form>, so give it
-   an explicit squared box with the border matching the channel tiles above it,
-   keep the send button inside, and make the input tall enough that the text sits
-   centred (Chatwoot's base <textarea> styles otherwise cramp and round it).
-   Scoped to the home composer so the in-conversation reply box is untouched. */
+.umi-inset-x {
+  padding-inline: var(--umi-inset);
+}
+
+/* Header: the theme drawer header — 16 px above and below a 16/24 Regular title. */
+.umi-header {
+  padding: 16px var(--umi-inset);
+}
+
+.umi-header-title {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.umi-header-status {
+  font-size: 12px;
+  line-height: 16.8px;
+  color: rgba(var(--umi-ink), 0.75) !important;
+}
+
+/* Presence: a 6 px dot after the title. Its class avoids "rounded" so the squaring rule above
+   does not reach it. */
+.umi-online-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-start: 6px;
+  border-radius: 50%;
+}
+
+/* Back and close: the theme's 44 px tap area, overhanging the inset by 16 px so the 10 px glyph
+   sits a pixel inside it, as in the storefront's drawers. The negative block margin keeps the
+   header at the title's height. `display` is left alone: woot.scss decides when close shows. */
+.umi-header-button {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  margin-block: -10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--umi-ink));
+  cursor: pointer;
+  line-height: 0;
+}
+
+.umi-header-button--start {
+  margin-inline-start: -16px;
+}
+
+.umi-header-button--end {
+  margin-inline-end: -16px;
+}
+
+.umi-header-icon {
+  display: block;
+  width: 10px;
+  height: 10px;
+  margin: auto;
+}
+
+.umi-header-button:focus-visible {
+  outline-offset: -2px !important;
+}
+
+@media (hover: hover) {
+  .umi-header-button:hover,
+  .umi-ink-hover:hover {
+    color: rgba(var(--umi-ink), 0.75);
+  }
+}
+
+/* Section labels ("FAQ", "Chat with us on"): the cart's "Complete your look". */
+.umi-section-label {
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 16.8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgb(var(--umi-ink));
+}
+
+/* Outlined controls (channel tiles, "Continue conversation", the composer): the theme's
+   outlined control — 0.55 ink at rest, full ink on hover. */
+.umi-control,
 .umi-composer {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 6px 0 14px;
-  border: 1px solid #ececec;
+  border: 1px solid var(--umi-control-line);
   border-radius: 0;
   background: #fff;
 }
 
+@media (hover: hover) {
+  .umi-control:hover {
+    border-color: rgb(var(--umi-ink));
+  }
+}
+
+/* Home composer: a 44 px field with the send arrow inside it. The ring goes on the box when
+   the textarea has keyboard focus, so it does not double up when the send button has it. */
+.umi-composer {
+  display: flex;
+  align-items: center;
+  padding-inline-start: 14px;
+}
+
+.umi-composer:has(.umi-composer-input:focus-visible) {
+  outline: 1px dashed rgb(var(--umi-ink));
+  outline-offset: 2px;
+}
+
 .umi-composer-input {
   flex: 1;
-  height: 44px;
-  min-height: 44px;
+  height: 42px;
+  min-height: 42px;
   max-height: 120px;
-  padding: 10px 0 !important;
+  padding: 9px 0 !important;
   margin: 0 !important;
-  line-height: 24px;
-  font-size: 15px;
+  line-height: 24px !important;
+  color: rgb(var(--umi-ink)) !important;
   border: none !important;
   border-radius: 0 !important;
   outline: none !important;
@@ -70,9 +255,49 @@ body {
   resize: none;
 }
 
-/* The send button is always visible (so the field reads as a message box), but
-   dimmed until there's text to send. */
-.umi-composer button:disabled {
+.umi-composer-input::placeholder {
+  color: #757575;
+}
+
+.umi-composer-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 42px;
+  flex-shrink: 0;
+  color: rgb(var(--umi-ink));
+}
+
+.umi-composer-send:focus-visible {
+  outline-offset: -2px !important;
+}
+
+/* The send arrow is always visible (so the field reads as a message box), but dimmed until
+   there is text to send. */
+.umi-composer-send:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* In-chat reply box: Chatwoot draws its border as a box-shadow, which the flat rule above
+   removes. Give it the composer's box, ring and placeholder instead. The textarea's own outline
+   is off for good: Chatwoot transitions it, so on blur it flashed a dark box inside the border. */
+div:has(> .user-message-input) {
+  border: 1px solid var(--umi-control-line);
+}
+
+div:has(> .user-message-input:focus-visible) {
+  outline: 1px dashed rgb(var(--umi-ink));
+  outline-offset: 2px;
+}
+
+.user-message-input {
+  outline: none !important;
+  transition: none !important;
+  background: transparent !important;
+}
+
+.user-message-input::placeholder {
+  color: #757575;
 }

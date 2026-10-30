@@ -1,7 +1,7 @@
 <script setup>
 import { toRef } from 'vue';
 import { useRouter } from 'vue-router';
-import FluentIcon from 'shared/components/FluentIcon/Index.vue';
+import UmiIcon from './UmiIcon.vue';
 import HeaderActions from './HeaderActions.vue';
 import AvailabilityContainer from 'widget/components/Availability/AvailabilityContainer.vue';
 import { useAvailability } from 'widget/composables/useAvailability';
@@ -26,14 +26,19 @@ const onBackButtonClick = () => {
 </script>
 
 <template>
-  <header class="flex justify-between w-full p-5 bg-n-background gap-2">
-    <div class="flex items-center">
+  <!-- UMI: the storefront drawer header — theme inset, 16/24 Regular title, the theme's
+       back arrow and close cross (see UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md). -->
+  <header
+    class="umi-header flex justify-between items-center w-full bg-n-background gap-2"
+  >
+    <div class="flex items-center min-w-0">
       <button
         v-if="showBackButton"
-        class="px-2 ltr:-ml-3 rtl:-mr-3"
+        class="umi-header-button umi-header-button--start"
+        :aria-label="$t('UMI.BACK')"
         @click="onBackButtonClick"
       >
-        <FluentIcon icon="chevron-left" size="24" class="text-n-slate-12" />
+        <UmiIcon name="back" class="umi-header-icon rtl:rotate-180" />
       </button>
       <img
         v-if="avatarUrl"
@@ -41,20 +46,19 @@ const onBackButtonClick = () => {
         :src="avatarUrl"
         alt="avatar"
       />
-      <div class="flex flex-col gap-1">
-        <div class="flex items-center text-xl font-semibold text-n-slate-12">
-          <span v-dompurify-html="title" class="ltr:mr-1 rtl:ml-1" />
-          <div
-            :class="`h-2 w-2 rounded-full
-              ${isOnline ? 'bg-n-teal-10' : 'hidden'}`"
-          />
+      <div class="flex flex-col min-w-0">
+        <div class="umi-header-title flex items-center">
+          <span v-dompurify-html="title" class="truncate" />
+          <span v-if="isOnline" class="umi-online-dot bg-n-teal-10">
+            <span class="sr-only">{{ $t('UMI.ONLINE') }}</span>
+          </span>
         </div>
         <AvailabilityContainer
           v-if="showStatus"
           :agents="availableAgents"
           :show-header="false"
           :show-avatars="false"
-          text-classes="text-xs leading-3"
+          text-classes="umi-header-status"
         />
       </div>
     </div>

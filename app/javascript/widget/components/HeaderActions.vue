@@ -3,12 +3,13 @@ import { mapGetters } from 'vuex';
 import { IFrameHelper, RNHelper } from 'widget/helpers/utils';
 import { popoutChatWindow } from '../helpers/popoutHelper';
 import FluentIcon from 'shared/components/FluentIcon/Index.vue';
+import UmiIcon from './UmiIcon.vue';
 import configMixin from 'widget/mixins/configMixin';
 import { CONVERSATION_STATUS } from 'shared/constants/messages';
 
 export default {
   name: 'HeaderActions',
-  components: { FluentIcon },
+  components: { FluentIcon, UmiIcon },
   mixins: [configMixin],
   props: {
     showPopoutButton: {
@@ -100,14 +101,16 @@ export default {
     >
       <FluentIcon icon="open" size="22" class="text-n-slate-12" />
     </button>
+    <!-- UMI: the storefront's one close cross (see UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md). -->
     <button
-      class="button transparent compact close-button"
+      class="close-button umi-header-button umi-header-button--end"
       :class="{
         'rn-close-button': isRNWebView,
       }"
+      :aria-label="$t('UMI.CLOSE')"
       @click="closeWindow"
     >
-      <FluentIcon icon="dismiss" size="24" class="text-n-slate-12" />
+      <UmiIcon name="close" class="umi-header-icon" />
     </button>
   </div>
 </template>

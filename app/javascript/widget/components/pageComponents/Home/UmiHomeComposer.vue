@@ -7,12 +7,11 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useStore, useMapGetter } from 'dashboard/composables/store.js';
-import ChatSendButton from 'widget/components/ChatSendButton.vue';
+import UmiIcon from 'widget/components/UmiIcon.vue';
 
 const store = useStore();
 const router = useRouter();
 const conversationSize = useMapGetter('conversation/getConversationSize');
-const widgetColor = useMapGetter('appConfig/getWidgetColor');
 
 const content = ref('');
 const isSending = ref(false);
@@ -51,14 +50,11 @@ const onKeydown = e => {
   <button
     v-if="conversationSize > 0"
     type="button"
-    class="flex items-center justify-between w-full gap-2 px-4 py-3 font-medium border border-n-container bg-n-background text-n-slate-12"
+    class="umi-control flex items-center justify-between w-full gap-2 px-4 min-h-11 text-[15px] leading-6 bg-n-background text-n-slate-12"
     @click="openChat"
   >
     <span>{{ $t('UMI.CONTINUE') }}</span>
-    <span
-      class="i-lucide-chevron-right size-5 shrink-0"
-      :style="{ color: widgetColor }"
-    />
+    <UmiIcon name="arrow" class="w-[15px] rtl:rotate-180" />
   </button>
 
   <form v-else class="umi-composer w-full" @submit.prevent="submit">
@@ -66,12 +62,17 @@ const onKeydown = e => {
       v-model="content"
       rows="1"
       :placeholder="$t('UMI.TYPE_MESSAGE')"
-      class="umi-composer-input flex-1 h-8 min-h-8 py-1 my-2 text-sm bg-transparent border-none outline-none resize-none text-n-slate-12 placeholder:text-n-slate-10 max-h-24"
+      :aria-label="$t('UMI.TYPE_MESSAGE')"
+      class="umi-composer-input"
       @keydown="onKeydown"
     />
-    <ChatSendButton
-      :color="widgetColor || '#121212'"
+    <button
+      type="submit"
+      class="umi-composer-send"
+      :aria-label="$t('UMI.SEND')"
       :disabled="!content.trim()"
-    />
+    >
+      <UmiIcon name="arrow" class="w-[15px] rtl:rotate-180" />
+    </button>
   </form>
 </template>

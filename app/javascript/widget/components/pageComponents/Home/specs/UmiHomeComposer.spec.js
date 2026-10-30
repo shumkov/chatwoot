@@ -34,6 +34,13 @@ describe('UmiHomeComposer', () => {
     expect(replace).toHaveBeenCalledWith({ name: 'messages' });
   });
 
+  it('sends with the theme arrow, named for screen readers', () => {
+    const send = mount(UmiHomeComposer).find('button[type="submit"]');
+
+    expect(send.attributes('aria-label')).toBe('UMI.SEND');
+    expect(send.find('svg').attributes('viewBox')).toBe('0 0 14 10');
+  });
+
   it('ignores empty / whitespace-only input', async () => {
     const wrapper = mount(UmiHomeComposer);
     await wrapper.find('textarea').setValue('   ');
