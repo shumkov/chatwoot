@@ -295,6 +295,42 @@ inbox schedules. A 20:55 incoming is due at09:05 next day; a23:00 incoming at09:
 Snooze cannot hide a genuinely unanswered incoming message from the timer.
 
 Detail shape: {schema_version:1, account_id, as_of, conversation: row-with-context}.
+
+Queue list and detail additionally advertise `capabilities.message_window_version: 1`.
+Every row includes `message_window`, evaluated at the envelope's `as_of`, independently
+of `waiting` and the content `revision`. A successful human outgoing can clear the
+transport wait while customer-contact work remains subject to this window.
+
+The projection exposes native `can_reply`, transport `channel_type`, visible
+`messaging_channel`, `evaluated_at`, `state`, `reason`, native and trustworthy
+`last_incoming_message_id` / `last_incoming_at` (native fields are prefixed
+`native_`), `standard_expires_at`, `human_expires_at`, `human_extension`,
+`policy_revision` and `basis`. States are `standard_open`, `closed`,
+`unrestricted` and `unknown`. The reserved `human_only` state requires a separately
+reviewed permission and sender rollout; this adapter never advertises it.
+
+Native transport policy remains authoritative, including the Messenger flag for
+Page-linked Instagram. An unset/false Meta HUMAN_AGENT flag selects 24 hours;
+a flag-on extension is `unverified`, has no human deadline, and gates contact as
+unknown. No settings or senders are changed. Expiry uses strict UTC calendar time:
+the exact deadline is closed. Unrestricted means no native time restriction,
+without asserting consent or provider deliverability.
+
+Native incoming includes hidden/recovered history, while trustworthy chronology
+excludes private/deleted incoming and uses the source time for recovered incoming.
+A deadline-changing discrepancy, unavailable source time, future timestamp or
+incompatible policy is unknown. Live future incoming detection is batched across
+the queue page; policy selection is shared per inbox and the existing batched
+message load supplies chronology. No provider API is called.
+
+Operational `response_episodes` requested with `INCLUDE_EVIDENCE=1` add the same
+`message_window` only for still-unanswered episodes, using incoming at or before
+the report `AS_OF`, including later incoming in the same burst. Their basis is
+`historical_reconstruction_current_policy_history_unavailable`: current policy
+cannot establish historical provider permissions. Closed episodes remain
+unanswered; period membership, response metrics, privacy exclusions and recovered
+chronology coverage remain unchanged. This evidence is separate from the current
+semantic unresolved-task snapshot owned by the reminder consumer.
 Detail requires the same since parameter. Return404 for confirmed excluded/missing
 records; distinguish network/auth/server errors. Detail returns the same row plus messages [{id, created_at, direction, private,
 human, delivery_status, content, attachment_types, recovered, source_created_at}] for the full available conversation history,

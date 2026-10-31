@@ -9,7 +9,7 @@ class Umi::Funnel::OperatorQueue
   PAGE_SIZE = 50
   CHANNELS = %w[Channel::FacebookPage Channel::Instagram Channel::Line Channel::Whatsapp Channel::Email Channel::WebWidget
                 Channel::Telegram Channel::Sms Channel::TwilioSms].freeze
-  MESSAGE_FIELDS = %i[id conversation_id inbox_id created_at message_type content_type private status sender_type sender_id].freeze
+  MESSAGE_FIELDS = %i[id account_id conversation_id inbox_id created_at message_type content_type private status sender_type sender_id].freeze
   PAYMENT_FIELDS = %w[classification review_reasons currency original_order_value current_order_value captured refunded net_cash
                       last_payment_at order_created_at order_updated_at paid_basket paid_history_unknown identity_hold].freeze
 
@@ -138,15 +138,17 @@ class Umi::Funnel::OperatorQueue
                         .where("COALESCE(contacts.additional_attributes ->> 'umi_profile_redacted', 'false') != 'true'")
                         .where.not(id: Conversation.tagged_with('spam').select(:id))
     scope.where(status: %i[open pending snoozed]).or(scope.where(status: :resolved, updated_at: @since..))
-         .preload(:contact, :inbox, :assignee)
+         .preload(:contact, :assignee, inbox: :channel)
   end
 
   def load_context(conversations, detail: false) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
     ids = conversations.map(&:id)
     fields = MESSAGE_FIELDS + message_metadata + [Arel.sql("md5(COALESCE(content, '')) AS content_digest")]
     fields += [:content] if detail
-    messages = Message.where(conversation_id: ids, created_at: ..@as_of).select(*fields).reorder(:created_at, :id).preload(:sender, :inbox).to_a
+    messages = Message.where(conversation_id: ids, created_at: ..@as_of)
+                      .select(*fields).reorder(:created_at, :id).preload(:sender, :inbox).to_a
     @messages = messages.group_by(&:conversation_id)
+    load_windows(conversations)
     @resolved_at = ReportingEvent.where(account_id: @account_id, conversation_id: ids, name: 'conversation_resolved',
                                         event_end_time: ..@as_of).group(:conversation_id).maximum(:event_end_time)
     @attachments = Attachment.where(message_id: messages.map(&:id)).order(:id).to_a.group_by(&:message_id)
@@ -157,6 +159,18 @@ class Umi::Funnel::OperatorQueue
     orders = @orders.values.flatten
     @financial = Umi::ShopifyOrderFinancialState.where(account_id: @account_id, shopify_order_id: orders.map(&:shopify_order_id), redacted_at: nil)
                                                 .order(:id).to_a.index_by { |state| [state.shop_domain, state.shopify_order_id] }
+  end
+
+  def load_windows(conversations)
+    @window_policies = conversations.uniq(&:inbox_id).to_h do |conversation|
+      [conversation.inbox_id, Umi::Funnel::MessageWindow.policy_for(conversation)]
+    end
+    @future_incoming_ids = if @fixed_as_of
+                             []
+                           else
+                             Message.where(account_id: @account_id, conversation_id: conversations.map(&:id)).incoming
+                                    .where('created_at > ?', @as_of).reorder(nil).distinct.pluck(:conversation_id)
+                           end
   end
 
   def message_metadata
@@ -170,7 +184,7 @@ class Umi::Funnel::OperatorQueue
   end
 
   def envelope
-    { schema_version: 1, account_id: @account_id, as_of: @as_of.utc.iso8601(6) }
+    { schema_version: 1, account_id: @account_id, as_of: @as_of.utc.iso8601(6), capabilities: { message_window_version: 1 } }
   end
 
   def coverage
@@ -184,7 +198,14 @@ class Umi::Funnel::OperatorQueue
     { id: conversation.id, display_id: conversation.display_id, inbox_id: conversation.inbox_id, status: conversation.status,
       snoozed_until: conversation.snoozed_until&.utc&.iso8601(6), assignee_name: conversation.assignee&.name,
       sales_status: conversation.custom_attributes['umi_sales_status'], labels: conversation.label_list.sort, revision: revision(conversation),
-      active_since: active_since(conversation), waiting: waiting, chronology: chronology }.merge(resolution(conversation))
+      active_since: active_since(conversation), waiting: waiting, chronology: chronology,
+      message_window: message_window(conversation) }.merge(resolution(conversation))
+  end
+
+  def message_window(conversation)
+    Umi::Funnel::MessageWindow.new(conversation: conversation, as_of: @as_of,
+                                   messages: Array(@messages[conversation.id]), policy: @window_policies.fetch(conversation.inbox_id),
+                                   historical: @fixed_as_of, future_incoming: @future_incoming_ids.include?(conversation.id)).perform
   end
 
   def active_since(conversation) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
