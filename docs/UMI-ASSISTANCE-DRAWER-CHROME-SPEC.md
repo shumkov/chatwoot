@@ -52,8 +52,10 @@ sans-serif` — the theme's Thai fallback stack (component-language-switch.css:1
      Grotesk, but the Thai fallback faces have real bold files that only the weight reset stops.
      `strong`/`b` in messages get the theme's emphasis token (base.css:73).
    - Base tracking 0.6 px and ink #121212, as the theme body.
-   - Every `input`, `textarea`, `select` computes 16 px, so iOS does not zoom the page on focus
-     (home composer, pre-chat form, in-chat reply box).
+   - Every `input`, `textarea`, `select` computes 14 px on phones and desktop (home composer,
+     pre-chat form, in-chat reply box). iOS zooms the page when a field under 16 px takes focus;
+     the storefront stops that page-wide with an iOS-only `maximum-scale=1` viewport, which
+     covers this iframe. (Shipped at 16 px first; the owner found 16 px too large.)
 2. **Inset.** `--umi-inset`: 24 px, and 16 px under `.is-mobile` (set on the root wrapper,
    `App.vue:376`, by the SDK's `toggle-close-button` message when the storefront window is
    ≤ 668 px; the iframe is ~400 px wide either way, so a media query inside it cannot tell). The
@@ -93,7 +95,7 @@ sans-serif` — the theme's Thai fallback stack (component-language-switch.css:1
    - Channel tiles: the theme's outlined control (component-cart-drawer.css:680-689) — 1 px
      rgba(18,18,18,.55) border at rest, ink on hover under `@media (hover: hover)`; squared;
      13 px label; 20 px brand glyphs unchanged; 44 px min height.
-   - Composer: 44 px box, 1 px rgba(18,18,18,.55) border, 16 px text, placeholder #757575
+   - Composer: 44 px box, 1 px rgba(18,18,18,.55) border, 14 px text, placeholder #757575
      (the theme hides placeholders behind floating labels, so there is no token; #757575 is
      4.6:1 on white). Send is a 44 px button with the theme's `icon-arrow` (the newsletter submit's
      arrow) and `aria-label` `UMI.SEND`, replacing the core `ChatSendButton` in this component only;
