@@ -573,6 +573,8 @@ Git ancestry but is not a supported operator workflow.
 
 | 66 | Staff-created Shopify draft association | `umi/app/controllers/shopify/draft_commands_controller.rb`, `umi/app/services/shopify/draft_command.rb`, `config/initializers/zz_umi_draft_commands.rb`, `spec/requests/umi/draft_commands_spec.rb`, `docs/UMI-DRAFT-COMMANDS.md` | Verifies the staff source, current contact, exact Shopify basket and source marker before using existing unpaid-draft linkage; exposes exact linked-purchase identity for private QR preparation. No payment or invoice sending. | Native Chatwoot staff draft creation provides equivalent source-bound association and requester audit. |
 
+| 67 | Assistance widget without "Powered by Chatwoot" | `app/javascript/widget/components/layouts/ViewWithHeader.vue` | The widget footer linked to chatwoot.com under UMI's Assistance drawer. The layout now always renders `Branding` with `disable-branding`, so only its 12 px bottom spacer remains. This edits MIT-licensed widget code; the `disable_branding` account feature flag (sold as an Enterprise plan feature) stays off. | Chatwoot offers a supported way to hide the link on this plan, or UMI moves the widget off Chatwoot. |
+
 <!-- Add new patches here as commits, newest last. -->
 
 ## Notes / candidates (not yet patched)
