@@ -41,7 +41,9 @@ const message = computed(() => {
 </script>
 
 <template>
-  <p class="text-[13px] leading-[19.5px] text-[rgba(var(--umi-ink),0.75)]">
+  <p
+    class="text-[13px] leading-[19.5px] text-[rgba(var(--umi-ink),0.75)] [:lang(th)_&]:leading-[20.8px]"
+  >
     {{ message }}
   </p>
 </template>

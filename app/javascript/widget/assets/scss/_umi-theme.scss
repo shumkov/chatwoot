@@ -494,3 +494,21 @@ div:has(> .user-message-input:focus-visible) {
 .umi-avatar {
   border-radius: 50%;
 }
+
+/* ---------- Thai ----------
+   Thai stacks vowels and tone marks above and below the line, so its body and meta text get a
+   1.6 line height (the reply-to snippets truncate, so their marks would clip without it).
+   <html lang> is set from the widget's language in entrypoints/widget.js. UMI components carry
+   their own [:lang(th)] utilities. */
+:lang(th) .conversation-wrap .chat-bubble-wrap > .chat-bubble.agent:not(.form),
+:lang(th) .conversation-wrap .chat-bubble.user,
+:lang(th) .conversation-wrap .file .umi-file-title,
+:lang(th) .umi-reply-to {
+  line-height: 1.6 !important;
+}
+
+:lang(th) .conversation-wrap .file .download,
+:lang(th) .umi-header-status,
+:lang(th) .umi-section-label {
+  line-height: 19.2px !important;
+}

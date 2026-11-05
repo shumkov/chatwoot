@@ -8,7 +8,7 @@ export default {
 <template>
   <div class="agent-message-wrap sticky bottom-1">
     <div
-      class="umi-typing mt-2 bg-white text-xs leading-[16.8px] text-[rgba(var(--umi-ink),0.75)]"
+      class="umi-typing mt-2 bg-white text-xs leading-[16.8px] text-[rgba(var(--umi-ink),0.75)] [:lang(th)_&]:leading-[19.2px]"
     >
       {{ $t('UMI.TYPING') }}
     </div>

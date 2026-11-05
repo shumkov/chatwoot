@@ -27,7 +27,7 @@ const youLabel = computed(() => `${t('YOU')}, `);
 
 <template>
   <div
-    class="umi-message-meta flex items-center gap-2 pt-1 text-xs leading-[16.8px] text-[rgba(var(--umi-ink),0.75)]"
+    class="umi-message-meta flex items-center gap-2 pt-1 text-xs leading-[16.8px] text-[rgba(var(--umi-ink),0.75)] [:lang(th)_&]:leading-[19.2px]"
     :class="align === 'end' ? 'justify-end' : 'justify-start'"
   >
     <img

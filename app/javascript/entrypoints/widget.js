@@ -1,4 +1,4 @@
-import { createApp } from 'vue';
+import { createApp, watch } from 'vue';
 import { createI18n } from 'vue-i18n';
 
 import VueDOMPurifyHTML from 'vue-dompurify-html';
@@ -11,6 +11,7 @@ import { directive as onClickaway } from 'vue3-click-away';
 import { domPurifyConfig } from '../shared/helpers/HTMLSanitizer';
 import { plugin, defaultConfig } from '@formkit/vue';
 import { markIosWebview } from '../widget/helpers/umiIosWebview';
+import { umiLocaleTag } from '../widget/helpers/umiMessageTime';
 
 import {
   startsWithPlus,
@@ -25,6 +26,15 @@ const i18n = createI18n({
   locale: 'en',
   messages: i18nMessages,
 });
+
+// UMI: <html lang> follows the widget's language, so Thai text is set and read as Thai.
+watch(
+  i18n.global.locale,
+  locale => {
+    document.documentElement.lang = umiLocaleTag(locale);
+  },
+  { immediate: true }
+);
 
 const app = createApp(App);
 app.use(i18n);

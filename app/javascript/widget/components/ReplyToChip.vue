@@ -53,7 +53,7 @@ export default {
     @click="navigateTo(replyTo.id)"
   >
     <FluentIcon icon="arrow-reply" size="12" class="flex-shrink-0" />
-    <div class="truncate max-w-[8rem]">
+    <div class="umi-reply-to truncate max-w-[8rem]">
       {{ replyTo.content || replyToAttachment }}
     </div>
   </button>
