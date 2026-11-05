@@ -12,6 +12,7 @@ import DragWrapper from 'widget/components/DragWrapper.vue';
 import { BUS_EVENTS } from 'shared/constants/busEvents';
 import { emitter } from 'shared/helpers/mitt';
 import { mapGetters } from 'vuex';
+import UmiMessageMeta from 'widget/components/UmiMessageMeta.vue';
 
 export default {
   name: 'UserMessage',
@@ -24,6 +25,7 @@ export default {
     FluentIcon,
     ReplyToChip,
     DragWrapper,
+    UmiMessageMeta,
   },
   mixins: [messageMixin],
   props: {
@@ -103,7 +105,10 @@ export default {
 </script>
 
 <template>
-  <div class="user-message-wrap group">
+  <div
+    class="user-message-wrap group"
+    :class="{ 'umi-group-end': message.showAvatar || isFailed }"
+  >
     <div class="flex gap-1 user-message">
       <div
         class="message-wrap"
@@ -169,7 +174,8 @@ export default {
           <button
             v-if="!hasAttachments"
             :title="$t('COMPONENTS.MESSAGE_BUBBLE.RETRY')"
-            class="inline-flex items-center justify-center ltr:ml-2 rtl:mr-2"
+            :aria-label="$t('COMPONENTS.MESSAGE_BUBBLE.RETRY')"
+            class="inline-flex items-center justify-center size-6 ltr:ml-2 rtl:mr-2"
             @click="retrySendMessage"
           >
             <FluentIcon icon="arrow-clockwise" size="14" />
@@ -177,5 +183,11 @@ export default {
         </div>
       </div>
     </div>
+    <UmiMessageMeta
+      v-if="(message.showAvatar || isFailed) && !isInProgress"
+      :time="message.created_at"
+      :failed="isFailed"
+      align="end"
+    />
   </div>
 </template>

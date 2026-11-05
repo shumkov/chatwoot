@@ -67,7 +67,9 @@ carries `!important`, as the rest of the layer does. Only the transcript is rest
 **Team messages**
 - `.agent-message` and its `.message-wrap` lose their margins and max-widths (`mb-0.5` included).
 - `.avatar-wrap` is hidden, because the avatar moves under the group.
-- The text bubble becomes transparent, with no padding, no radius, no shadow, and ink 14/21.
+- The text bubble (`.chat-bubble-wrap > .chat-bubble.agent:not(.form)`; `ChatForm`'s root is also
+  a `.chat-bubble.agent`) becomes transparent, with no padding, no radius, no shadow, and ink 14/21.
+  Links and code in it are ink (Chatwoot paints links blue, 3.8:1).
   Radius and shadow come through `@apply`, so they are reset explicitly.
 - The attachments wrapper is transparent with no padding.
 - `.has-attachment { overflow: visible }`, so focus rings on image and file links are not clipped.
@@ -106,7 +108,7 @@ carries `!important`, as the rest of the layer does. Only the transcript is rest
 **Reply affordances**
 - `MessageReplyButton` gets class `umi-reply-button` and `aria-label` (`UMI.REPLY`).
 - No slate background, ink at 0.55, and a 24 px box.
-- Shown on hover and also on `:focus-within` of the message, so a keyboard user can see it.
+- Shown on hover and when it has keyboard focus itself (`:focus-visible`).
 - `ReplyToChip` and the composer's "Replying to" bar (`FooterReplyTo`): ink at 0.75 on the 5 %
   block, no opacity. Both get the Thai line height (section 4), because both truncate.
 
@@ -145,8 +147,9 @@ New files (Tailwind utilities, as UMI-owned markup):
     the class avoids "rounded");
   - the name;
   - a separator ` · ` (`aria-hidden`);
-  - `<time datetime="ISO">` with the formatted time, or `UMI.NOT_SENT` when failed.
-- The visitor's row has an `sr-only` "You" (`UMI.YOU`) before the time, so screen readers can tell
+  - `<time datetime="ISO">` with the formatted time, or `UMI.NOT_SENT` when failed. A hidden
+    comma follows the name, because the dot is `aria-hidden`.
+- The visitor's row has an `sr-only` "You" (the existing `YOU` key) before the time, so screen readers can tell
   who wrote what.
 
 **Team (`AgentMessage.vue`)**
@@ -161,8 +164,9 @@ New files (Tailwind utilities, as UMI-owned markup):
 
 **Visitor (`UserMessage.vue`)**
 - After the `.user-message` row, inside the root, so it sits under the bubble whatever the flex
-  direction: `UmiMessageMeta align="end"` when `message.showAvatar && !isInProgress`, with
-  `failed=isFailed`.
+  direction: `UmiMessageMeta align="end"` when `(message.showAvatar || isFailed) &&
+  !isInProgress`, with `failed=isFailed`. A failed message also ends its group, so two failures in
+  a row both say "Not sent".
 
 **Time**
 - `umiMessageTime(unixSeconds, locale)` returns
@@ -283,7 +287,8 @@ New files (Tailwind utilities, as UMI-owned markup):
      the theme: TikTok, WeChat, Snapchat, Firefox, Edge and the Google app. Plus `markIosWebview`.
    - Time specs run with `TZ=UTC` and match the en time with `/11:22\sPM/` (ICU may use U+202F).
      `UmiDateLabel` uses `vi.setSystemTime`.
-   - `MessageAttachments.spec.js` stubs `UmiMessageMeta`.
+   - `MessageAttachments.spec.js` needs no stub: `vitest.setup.js` installs a global i18n, so
+     `UmiMessageMeta`'s `useI18n()` resolves.
 2. eslint and prettier on changed files.
 3. Local stack inside the live storefront: desktop Chrome via Playwright request routing, at 390 and
    1440, EN and `/th/`. Assert:

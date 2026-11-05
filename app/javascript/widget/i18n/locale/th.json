@@ -13,7 +13,11 @@
     "CALL": "โทร",
     "CLOSE": "ปิด",
     "BACK": "กลับ",
-    "ONLINE": "ออนไลน์"
+    "ONLINE": "ออนไลน์",
+    "TYPING": "กำลังพิมพ์…",
+    "AUTOMATIC": "UMI, ข้อความอัตโนมัติ",
+    "NOT_SENT": "ส่งไม่สำเร็จ",
+    "REPLY": "ตอบกลับ"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {

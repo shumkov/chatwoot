@@ -53,7 +53,6 @@ export default {
 
   computed: {
     ...mapGetters({
-      widgetColor: 'appConfig/getWidgetColor',
       isWidgetOpen: 'appConfig/getIsWidgetOpen',
       shouldShowEmojiPicker: 'appConfig/getShouldShowEmojiPicker',
     }),
@@ -182,11 +181,7 @@ export default {
         @select="onSelectEmoji"
         @keydown.esc="hideEmojiPicker"
       />
-      <ChatSendButton
-        v-if="showSendButton"
-        :color="widgetColor"
-        @click="handleButtonClick"
-      />
+      <ChatSendButton v-if="showSendButton" @click="handleButtonClick" />
     </div>
   </div>
 </template>

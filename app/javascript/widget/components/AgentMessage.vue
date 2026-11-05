@@ -12,6 +12,7 @@ import configMixin from '../mixins/configMixin';
 import messageMixin from '../mixins/messageMixin';
 import { isASubmittedFormMessage } from 'shared/helpers/MessageTypeHelper';
 import ReplyToChip from 'widget/components/ReplyToChip.vue';
+import UmiMessageMeta from 'widget/components/UmiMessageMeta.vue';
 import { BUS_EVENTS } from 'shared/constants/busEvents';
 import { emitter } from 'shared/helpers/mitt';
 
@@ -26,6 +27,7 @@ export default {
     FileBubble,
     MessageReplyButton,
     ReplyToChip,
+    UmiMessageMeta,
   },
   mixins: [configMixin, messageMixin],
   props: {
@@ -139,6 +141,25 @@ export default {
     hasReplyTo() {
       return this.replyTo && (this.replyTo.content || this.replyTo.attachments);
     },
+    // UMI: the transcript names people and their photo; messages with no sender (Chatwoot's
+    // templates, automation rules) are signed as UMI's automatic messages instead of "Bot".
+    metaName() {
+      return this.message.sender ||
+        this.message.additional_attributes?.sender_name
+        ? this.agentName
+        : this.$t('UMI.AUTOMATIC');
+    },
+    metaAvatarUrl() {
+      const { sender } = this.message;
+      return sender?.type === 'user' ? sender.avatar_url || '' : '';
+    },
+    endsGroup() {
+      return (
+        this.message.showAvatar ||
+        this.hasRecordedResponse ||
+        this.isASubmittedForm
+      );
+    },
   },
   watch: {
     message() {
@@ -169,6 +190,7 @@ export default {
     class="agent-message-wrap group"
     :class="{
       'has-response': hasRecordedResponse || isASubmittedForm,
+      'umi-group-end': endsGroup,
     }"
   >
     <div v-if="!isASubmittedForm" class="agent-message">
@@ -246,10 +268,11 @@ export default {
             />
           </div>
         </div>
-        <p
+        <UmiMessageMeta
           v-if="message.showAvatar || hasRecordedResponse"
-          v-dompurify-html="agentName"
-          class="agent-name text-n-slate-11"
+          :time="message.created_at"
+          :name="metaName"
+          :avatar-url="metaAvatarUrl"
         />
       </div>
     </div>

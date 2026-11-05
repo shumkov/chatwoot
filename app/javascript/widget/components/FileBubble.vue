@@ -58,7 +58,7 @@ export default {
     </div>
     <div class="ltr:pr-1 rtl:pl-1">
       <div
-        class="m-0 font-medium text-sm"
+        class="umi-file-title m-0 font-medium text-sm"
         :class="{ 'text-n-slate-12': !isUserBubble }"
         :style="{ color: textColor }"
       >

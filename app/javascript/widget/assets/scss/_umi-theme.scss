@@ -3,7 +3,8 @@
  * Cy Grotesk Key Regular only, the theme's ink and lines, squared corners, pure white
  * surfaces, flat (no shadows), the theme's focus ring, header chrome and inset.
  * Imported at the end of woot.scss so it wins ties with the widget's own rules.
- * See docs/UMI-WIDGET-HOME-SPEC.md and docs/UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md.
+ * See docs/UMI-WIDGET-HOME-SPEC.md, docs/UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md and
+ * docs/UMI-ASSISTANCE-CONVERSATION-SPEC.md (the conversation as a transcript).
  */
 
 /* The storefront's one font, from the URL the storefront itself preloads
@@ -311,4 +312,185 @@ div:has(> .user-message-input:focus-visible) {
 
 .user-message-input::placeholder {
   color: #757575;
+}
+
+/* ---------- Conversation: a transcript, not bubbles ----------
+   Team messages are plain text on white at the start; visitor messages a 5 % ink block at the
+   end; the name and time sit under each group (UmiMessageMeta). The conversation views are
+   lazy-loaded, so their scoped styles arrive after this file, and _conversation.scss nests its
+   rules under .conversation-wrap: hence the anchored selectors and !important. Only the transcript
+   is touched; unread popouts, cards, options, forms, articles and CSAT keep Chatwoot's look. */
+.bg-n-slate-2 {
+  background-color: #fff !important;
+}
+
+.conversation-wrap {
+  padding: 24px var(--umi-inset) 16px !important;
+}
+
+.conversation-wrap .umi-date-label {
+  margin: 0 0 24px !important;
+}
+
+.conversation-wrap .messages-wrap + .messages-wrap {
+  margin-top: 24px !important;
+}
+
+/* Spacing: 8 px between team messages, 4 px between visitor ones, 24 px between groups. */
+.conversation-wrap .messages-wrap > .agent-message-wrap {
+  margin-top: 8px !important;
+}
+
+.conversation-wrap .messages-wrap > .user-message-wrap {
+  margin-top: 4px !important;
+}
+
+.conversation-wrap .messages-wrap > .umi-group-end + *,
+.conversation-wrap .agent-message-wrap > .user-message-wrap {
+  margin-top: 24px !important;
+}
+
+.conversation-wrap .messages-wrap > .umi-date-label + * {
+  margin-top: 0 !important;
+}
+
+/* Team: full width, no avatar column (the photo moves under the group). */
+.conversation-wrap .agent-message,
+.conversation-wrap .agent-message .message-wrap {
+  max-width: 100% !important;
+  margin: 0 !important;
+}
+
+.conversation-wrap .agent-message .avatar-wrap {
+  display: none !important;
+}
+
+.conversation-wrap .chat-bubble-wrap > .chat-bubble.agent:not(.form),
+.conversation-wrap .has-attachment.agent {
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: rgb(var(--umi-ink)) !important;
+}
+
+/* The email prompt's field runs the column's width, so its placeholder is not cut short.
+   `[class~='flex']`, not `.flex`: a `.flex` selector here makes Tailwind's `@apply flex` circular. */
+.conversation-wrap
+  .agent-message
+  .message-wrap
+  > [class~='flex']
+  > div:has(.email-input-group) {
+  flex: 1 1 auto;
+}
+
+.conversation-wrap
+  .chat-bubble-wrap
+  > .chat-bubble.agent:has(.email-input-group) {
+  display: block !important;
+}
+
+/* Focus rings on image and file links must not be clipped; the overflow only rounded bubbles. */
+.conversation-wrap .has-attachment {
+  overflow: visible !important;
+}
+
+/* Visitor: a squared 5 % ink block at the end. */
+.conversation-wrap .user-message {
+  max-width: 78% !important;
+  margin: 0 0 0 auto !important;
+}
+
+[dir='rtl'] .conversation-wrap .user-message {
+  margin: 0 auto 0 0 !important;
+}
+
+.conversation-wrap .user-message .message-wrap {
+  margin: 0 !important;
+}
+
+/* Beats the inline widget-colour background and text colour. */
+.conversation-wrap .chat-bubble.user,
+.conversation-wrap .user-message .is-failed .chat-bubble.user {
+  padding: 10px 14px !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: rgba(var(--umi-ink), 0.05) !important;
+  color: rgb(var(--umi-ink)) !important;
+}
+
+/* Links and code in ink on both sides (Chatwoot paints links blue, visitor code white). */
+.conversation-wrap
+  :is(.chat-bubble.user, .chat-bubble-wrap > .chat-bubble.agent:not(.form))
+  :is(a, code, pre, blockquote p) {
+  color: rgb(var(--umi-ink)) !important;
+}
+
+/* A visitor's photo stands bare; a visitor's file stays in the block. */
+.conversation-wrap
+  .chat-bubble.has-attachment.user:has(.image):not(:has(.file)) {
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+/* Failed: said in words under the message ("Not sent"); the retry button is ink, not ruby. */
+.conversation-wrap .is-failed .text-n-ruby-9 {
+  padding: 0 8px !important;
+  color: rgb(var(--umi-ink)) !important;
+}
+
+/* Images: the time lives under the group, so no gradient or overlaid time. */
+.conversation-wrap .image .wrap::before,
+.conversation-wrap .image .time {
+  display: none !important;
+}
+
+/* Files: ink, aligned with the text, with the theme's underlined link. */
+.conversation-wrap .file {
+  padding: 0 !important;
+}
+
+.conversation-wrap .file .icon-wrap {
+  margin-inline: 0 8px !important;
+  color: rgb(var(--umi-ink)) !important;
+  line-height: 0 !important;
+}
+
+.conversation-wrap .file .icon-wrap svg {
+  width: 24px;
+  height: 24px;
+}
+
+.conversation-wrap .file .umi-file-title {
+  font-size: 14px !important;
+  line-height: 20px !important;
+  color: rgb(var(--umi-ink)) !important;
+}
+
+.conversation-wrap .file .download {
+  font-size: 12px !important;
+  line-height: 16.8px !important;
+  color: rgb(var(--umi-ink)) !important;
+  text-decoration: underline !important;
+}
+
+/* Reply: a quiet 24 px glyph, visible on hover and on keyboard focus. */
+.conversation-wrap .umi-reply-button {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0 !important;
+  background: transparent !important;
+  color: rgba(var(--umi-ink), 0.55) !important;
+}
+
+.conversation-wrap .umi-reply-button:focus-visible {
+  opacity: 1 !important;
+}
+
+/* The 20 px photo under a team group is a circle; its class avoids the squaring rule. */
+.umi-avatar {
+  border-radius: 50%;
 }

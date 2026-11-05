@@ -1,7 +1,7 @@
 <script>
 import ChatMessage from 'widget/components/ChatMessage.vue';
 import AgentTypingBubble from 'widget/components/AgentTypingBubble.vue';
-import DateSeparator from 'shared/components/DateSeparator.vue';
+import UmiDateLabel from 'widget/components/UmiDateLabel.vue';
 import Spinner from 'shared/components/Spinner.vue';
 import { useDarkMode } from 'widget/composables/useDarkMode';
 import { MESSAGE_TYPE } from 'shared/constants/messages';
@@ -12,7 +12,7 @@ export default {
   components: {
     ChatMessage,
     AgentTypingBubble,
-    DateSeparator,
+    UmiDateLabel,
     Spinner,
   },
   props: {
@@ -109,7 +109,7 @@ export default {
         :key="groupedMessage.date"
         class="messages-wrap"
       >
-        <DateSeparator :date="groupedMessage.date" />
+        <UmiDateLabel :timestamp="groupedMessage.messages[0].created_at" />
         <ChatMessage
           v-for="message in groupedMessage.messages"
           :key="message.id"

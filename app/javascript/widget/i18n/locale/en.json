@@ -13,7 +13,11 @@
     "CALL": "Call",
     "CLOSE": "Close",
     "BACK": "Back",
-    "ONLINE": "Online"
+    "ONLINE": "Online",
+    "TYPING": "Typing…",
+    "AUTOMATIC": "UMI, automatic",
+    "NOT_SENT": "Not sent",
+    "REPLY": "Reply"
   },
   "COMPONENTS": {
     "FILE_BUBBLE": {
