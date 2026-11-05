@@ -145,7 +145,7 @@ export default {
                 />
 
                 <VideoBubble
-                  v-if="attachment.file_type === 'video' && !hasVideoError"
+                  v-else-if="attachment.file_type === 'video' && !hasVideoError"
                   :url="attachment.data_url"
                   :readable-time="readableTime"
                   @error="onVideoLoadError"
