@@ -490,6 +490,13 @@ div:has(> .user-message-input:focus-visible) {
   opacity: 1 !important;
 }
 
+/* Reply-to snippets (on a message and above the composer): ink on the 5 % block, not faded slate. */
+:has(> .umi-reply-to) {
+  opacity: 1 !important;
+  background: rgba(var(--umi-ink), 0.05) !important;
+  color: rgba(var(--umi-ink), 0.75) !important;
+}
+
 /* The 20 px photo under a team group is a circle; its class avoids the squaring rule. */
 .umi-avatar {
   border-radius: 50%;

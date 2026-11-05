@@ -34,6 +34,7 @@ export default {
     </div>
     <button
       class="items-end flex-shrink-0 p-1 rounded-md hover:bg-n-slate-5"
+      :aria-label="$t('UMI.CLOSE')"
       @click="$emit('dismiss')"
     >
       <FluentIcon icon="dismiss" size="12" />

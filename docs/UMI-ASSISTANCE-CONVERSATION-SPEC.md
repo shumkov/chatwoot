@@ -110,7 +110,9 @@ carries `!important`, as the rest of the layer does. Only the transcript is rest
 - No slate background, ink at 0.55, and a 24 px box.
 - Shown on hover and when it has keyboard focus itself (`:focus-visible`).
 - `ReplyToChip` and the composer's "Replying to" bar (`FooterReplyTo`): ink at 0.75 on the 5 %
-  block, no opacity. Both get the Thai line height (section 4), because both truncate.
+  block, no opacity, hooked by their `umi-reply-to` snippet (`:has(> .umi-reply-to)`). The bar's
+  dismiss button gets a name (`UMI.CLOSE`). Both get the Thai line height (section 4), because both
+  truncate.
 
 **Typing**
 - `AgentTypingBubble.vue`'s template becomes the text `UMI.TYPING` ("Typing…" / "กำลังพิมพ์…"):
