@@ -10,11 +10,15 @@ import router from '../widget/router';
 import { directive as onClickaway } from 'vue3-click-away';
 import { domPurifyConfig } from '../shared/helpers/HTMLSanitizer';
 import { plugin, defaultConfig } from '@formkit/vue';
+import { markIosWebview } from '../widget/helpers/umiIosWebview';
 
 import {
   startsWithPlus,
   isPhoneNumberValidWithDialCode,
 } from 'shared/helpers/Validators';
+
+// UMI: 16 px fields in iOS in-app browsers, decided before first paint.
+markIosWebview(document, navigator);
 
 const i18n = createI18n({
   legacy: false, // https://github.com/intlify/vue-i18n/issues/1902

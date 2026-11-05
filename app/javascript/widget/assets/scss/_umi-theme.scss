@@ -60,12 +60,21 @@ b {
 }
 
 /* 14 px on every field, phones included. iOS would zoom the page on focusing a field under
-   16 px; the storefront prevents that for the whole page, this iframe included, with an
-   iOS-only `maximum-scale=1` in its viewport meta. */
+   16 px; in Mobile Safari the storefront prevents that for the whole page, this iframe included,
+   with `maximum-scale=1` in its viewport meta. */
 input,
 textarea,
 select {
   font-size: 14px !important;
+}
+
+/* iOS browsers other than Safari (apps' in-app browsers, Chrome, Firefox…) keep pinch zoom, so the
+   storefront does not cap their viewport and a 14 px field would zoom the page on focus. There the
+   fields are 16 px; widget/helpers/umiIosWebview.js sets the class with the storefront's own test. */
+html.ios-webview input,
+html.ios-webview textarea,
+html.ios-webview select {
+  font-size: 16px !important;
 }
 
 /* The theme's focus ring (base.css): none on pointer focus, 1 px dashed ink on keyboard focus.
