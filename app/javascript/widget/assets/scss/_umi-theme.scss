@@ -163,6 +163,7 @@ select:not(.reset-base):focus,
    does not reach it. */
 .umi-online-dot {
   display: inline-block;
+  flex-shrink: 0;
   width: 6px;
   height: 6px;
   margin-inline-start: 6px;

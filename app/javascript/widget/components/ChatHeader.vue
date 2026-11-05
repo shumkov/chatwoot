@@ -27,11 +27,13 @@ const onBackButtonClick = () => {
 
 <template>
   <!-- UMI: the storefront drawer header — theme inset, 16/24 Regular title, the theme's
-       back arrow and close cross (see UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md). -->
+       back arrow and close cross (see UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md). The row aligns to
+       its top, so the 44 px buttons centre on the title's line (the status line sits under it,
+       outside that axis), as the theme centres its cross on a one-line drawer title. -->
   <header
-    class="umi-header flex justify-between items-center w-full bg-n-background gap-2"
+    class="umi-header flex justify-between items-start w-full bg-n-background gap-2"
   >
-    <div class="flex items-center min-w-0">
+    <div class="flex items-start min-w-0">
       <button
         v-if="showBackButton"
         class="umi-header-button umi-header-button--start"
@@ -42,7 +44,7 @@ const onBackButtonClick = () => {
       </button>
       <img
         v-if="avatarUrl"
-        class="w-8 h-8 ltr:mr-3 rtl:ml-3 rounded-full"
+        class="w-8 h-8 -my-1 ltr:mr-3 rtl:ml-3 rounded-full"
         :src="avatarUrl"
         alt="avatar"
       />

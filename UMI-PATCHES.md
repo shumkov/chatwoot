@@ -132,7 +132,7 @@ overhang the inset as the cart drawer does, Cy Grotesk Key Regular with no weigh
 above 400, the cart's section-label style, the theme's outlined controls and its
 dashed focus ring. `HeaderActions.vue` keeps the `close-button` class (woot.scss
 uses it to show the button under `.is-mobile` / `.is-bubble-hidden`). See
-`docs/UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md`.
+`docs/UMI-ASSISTANCE-DRAWER-CHROME-SPEC.md`. The back arrow, close cross and online dot share one axis, the title's line box (`ChatHeader.vue` aligns its row to the top so the status line stays outside it); the theme centres its drawer cross the same way.
 
 **Conversation as a transcript (Nov 2026).** No bubbles: team messages are plain
 text on white, visitor messages a squared 5 % ink block, each group signed under

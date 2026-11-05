@@ -65,6 +65,15 @@ sans-serif` — the theme's Thai fallback stack (component-language-switch.css:1
    - 16 px vertical padding, title 400 16/24 #121212. Home header is 56 px; the 44 px header
      buttons take `margin-block: -10px` so they do not grow the row. The chat view adds a status
      line, so its header is taller.
+   - One axis: the back arrow, the close cross and the online dot all centre on the title's 24 px
+     line box (y 28 in the header; glyph tops 23, dot top 25: whole CSS pixels, so whole device
+     pixels at DPR 1, 2 and 3). The header row aligns to its top (`items-start`), so the status
+     line under the title stays outside that axis; centring the buttons on the title-plus-status
+     block put them between the two lines on a fractional pixel (31.39). The line-box centre is
+     the theme's own axis (it centres every drawer cross and back arrow on a one-line title) and
+     sits 0.66 px above Cy Grotesk Key's cap-height centre (28.66; x-height centre 30.26). The
+     avatar branch (unused: the inbox has no avatar) takes `-my-1` to sit on the same axis, and
+     the dot does not shrink beside a truncated title.
    - Close: `HeaderActions.vue` keeps the `close-button` class (the visibility hook that
      `woot.scss` forces on under `.is-mobile` / `.is-bubble-hidden`; on desktop the button shows
      only because the storefront sets `hideMessageBubble: true`) but drops
@@ -76,8 +85,8 @@ sans-serif` — the theme's Thai fallback stack (component-language-switch.css:1
      drawer.
    - Back (chat and pre-chat views): the same box with the theme's `icon-back` artwork and
      `aria-label` `UMI.BACK`, overhanging the start inset, so the svg box's left edge = inset + 1.
-   - Online dot: kept (the only live presence cue), 6 px circle, 6 px after the title, centred on
-     the title's x-height, existing teal. Its class avoids the substring `rounded` (the global
+   - Online dot: kept (the only live presence cue), 6 px circle, 6 px after the title, centred
+     on the title's line box (the axis above), existing teal. Its class avoids the substring `rounded` (the global
      squaring rule matches `[class*='rounded']`) and sets `border-radius: 50%`; the theme rounds
      its own sheet grabber the same way. It carries visually hidden "Online" text (`UMI.ONLINE`).
    - Status line under "Chat": 400 12/16.8, ink 0.75 (override `text-n-slate-11` and the
