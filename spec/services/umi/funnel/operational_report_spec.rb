@@ -23,6 +23,56 @@ RSpec.describe 'Umi::Funnel::OperationalReport' do
                      sender: type == :outgoing ? agent : conversation.contact, message_type: type, **attributes)
   end
 
+  describe 'unanswered message window evidence' do
+    let(:inbox) { create(:inbox, account: account, channel: create(:channel_facebook_page, account: account)) }
+
+    before do
+      stub_request(:post, /graph.facebook.com/)
+      allow(GlobalConfigService).to receive(:load).with('ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT', nil).and_return(nil)
+    end
+
+    it 'projects the latest incoming at the cutoff without reducing transport-unanswered counts' do
+      first = message(start)
+      latest = message(start + 36.hours)
+      message(start + 3.days)
+      result = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+      episode = result[:rows].sole[:response_episodes].sole
+      expect(episode).to include(start_message_id: first.id, reply_message_id: nil, period_membership: 'started')
+      expect(episode[:message_window]).to include(evaluated_at: params[:as_of].iso8601(6), can_reply: true, state: 'standard_open',
+                                                  last_incoming_message_id: latest.id,
+                                                  standard_expires_at: (latest.created_at + 24.hours).iso8601(6),
+                                                  basis: 'historical_reconstruction_current_policy_history_unavailable')
+      expect(result[:rows].sole[:first_response]).to include(eligible: 1, responded: 0)
+    end
+
+    it 'keeps a resolved carried-over request unanswered and closed at the cutoff' do
+      incoming = message(start - 1.day)
+      conversation.update!(status: :resolved)
+      result = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+      episode = result[:rows].sole[:response_episodes].sole
+      expect(episode).to include(reply_message_id: nil, period_membership: 'carried_over')
+      expect(episode[:message_window]).to include(can_reply: false, state: 'closed', last_incoming_message_id: incoming.id)
+      expect(result[:rows].sole[:first_response][:eligible]).to eq(0)
+    end
+
+    it 'does not attach current window evidence to already answered episodes' do
+      message(start)
+      message(start + 1.minute, type: :outgoing)
+      result = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+      expect(result[:rows].sole[:response_episodes].sole).not_to have_key(:message_window)
+    end
+
+    it 'retains private native incoming evidence without treating it as a fresh public window' do
+      incoming = message(start)
+      private_incoming = message(start + 36.hours, private: true)
+      result = Umi::Funnel::OperationalReport.perform(**params, include_evidence: true)
+      episode = result[:rows].sole[:response_episodes].sole
+      expect(episode[:incoming_message_ids]).to eq([incoming.id])
+      expect(episode[:message_window]).to include(can_reply: true, state: 'unknown', reason: 'native_incoming_mismatch',
+                                                  native_last_incoming_message_id: private_incoming.id, last_incoming_message_id: incoming.id)
+    end
+  end
+
   it 'keeps the burst timer through private, automated and bot replies across the week boundary' do
     message(start, content: 'Secret customer content')
     message(start + 30.seconds)

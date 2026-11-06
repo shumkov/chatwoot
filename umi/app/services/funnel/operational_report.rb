@@ -20,6 +20,7 @@ class Umi::Funnel::OperationalReport
     @effective_from = [@from, @boundary].max
     @inboxes = inbox_id ? [@account.inboxes.find(inbox_id)] : @account.inboxes.order(:id).to_a
     @rows = {}
+    @window_policies = {}
   end
 
   def perform
@@ -27,7 +28,7 @@ class Umi::Funnel::OperationalReport
       row_for(inbox, 'other') unless inbox.channel_type.in?(%w[Channel::FacebookPage Channel::Instagram])
       candidates = inbox.messages.incoming.where(private: false,
                                                  created_at: (@include_evidence ? @boundary : @effective_from)...@until_time).select(:conversation_id)
-      @account.conversations.where(inbox_id: inbox.id, id: candidates).includes(:contact).find_each do |conversation|
+      @account.conversations.where(inbox_id: inbox.id, id: candidates).includes(:contact, inbox: :channel).find_each do |conversation|
         collect(conversation, row_for(inbox, messaging_channel(conversation, inbox)))
       end
     end
@@ -64,8 +65,9 @@ class Umi::Funnel::OperationalReport
   end
 
   def collect(conversation, row)
-    messages = conversation.messages.where(private: false, message_type: %i[incoming outgoing]).where(created_at: ..@as_of)
-                           .reorder(:created_at, :id).includes(:sender).to_a
+    window_messages = conversation.messages.where(account_id: @account.id, message_type: %i[incoming outgoing]).where(created_at: ..@as_of)
+                                  .reorder(:created_at, :id).includes(:sender).to_a
+    messages = window_messages.reject(&:private?)
     return unless messages.any? { |message| message.incoming? && message.created_at < @until_time }
     return if @include_evidence && !relevant_to_evidence_period?(messages)
 
@@ -108,7 +110,13 @@ class Umi::Funnel::OperationalReport
                                 episode[:incoming_messages].any? do |message|
                                   message[:created_at] >= @effective_from && message[:created_at] < @until_time
                                 end)
-        row[:response_episodes] << episode_evidence(conversation, row[:inbox], episode, index)
+        evidence = episode_evidence(conversation, row[:inbox], episode, index)
+        unless episode[:finish]
+          policy = @window_policies[conversation.inbox_id] ||= Umi::Funnel::MessageWindow.policy_for(conversation)
+          evidence[:message_window] = Umi::Funnel::MessageWindow.new(conversation: conversation, as_of: @as_of,
+                                                                     messages: window_messages, policy: policy, historical: true).perform
+        end
+        row[:response_episodes] << evidence
       end
       next if episode[:start] < @effective_from
 

@@ -14,6 +14,7 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
   let(:queue) { Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start, as_of: as_of) }
 
   around do |example|
+    stub_request(:post, /graph.facebook.com/)
     with_modified_env UMI_FUNNEL_ACCOUNT_IDS: account.id.to_s, UMI_FUNNEL_STARTED_AT: '2026-09-01T00:00:00Z',
                       UMI_FUNNEL_CLASSIFIER_MODE: 'off', UMI_FUNNEL_CLASSIFIER_INBOX_IDS: inbox.id.to_s do
       if example.metadata[:committed]
@@ -32,6 +33,65 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
           raise ActiveRecord::Rollback
         end
       end
+    end
+  end
+
+  describe 'message window capability' do
+    let(:inbox) { create(:inbox, account: account, channel: create(:channel_facebook_page, account: account)) }
+
+    before do
+      allow(GlobalConfigService).to receive(:load).with('ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT', nil).and_return(nil)
+    end
+
+    it 'exposes the expired native capability on list and detail even after a generic human answer clears waiting' do
+      conversation.update!(display_id: 1181)
+      incoming = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, created_at: as_of - 25.hours)
+      create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :outgoing, sender: agent,
+                       created_at: as_of - 24.hours)
+      detail = queue.show(1181)
+      list = queue.index
+      expect(detail).to include(schema_version: 1, capabilities: { message_window_version: 1 })
+      expect(list[:capabilities]).to eq(detail[:capabilities])
+      expect(detail[:conversation][:waiting]).to be_nil
+      expect(list[:conversations].sole[:message_window]).to eq(detail[:conversation][:message_window])
+      expect(detail[:conversation][:message_window]).to include(can_reply: false, state: 'closed',
+                                                                standard_expires_at: (incoming.created_at + 24.hours).iso8601(6))
+    end
+
+    it 'extends the deadline on new incoming while retaining the unanswered burst identity' do
+      first = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, created_at: start)
+      latest = create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, created_at: as_of - 1.minute)
+      row = queue.show(conversation.reload.display_id)[:conversation]
+      expect(row[:waiting][:message_id]).to eq(first.id)
+      expect(row[:message_window]).to include(last_incoming_message_id: latest.id,
+                                              standard_expires_at: (latest.created_at + 24.hours).iso8601(6))
+    end
+
+    it 'closes with clock passage without changing the semantic revision' do
+      create(:message, account: account, inbox: inbox, conversation: conversation, message_type: :incoming, created_at: start)
+      early = queue.show(conversation.reload.display_id)[:conversation]
+      later = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start, as_of: start + 24.hours)
+                                        .show(conversation.display_id)[:conversation]
+      expect(early[:message_window][:state]).to eq('standard_open')
+      expect(later[:message_window][:state]).to eq('closed')
+      expect(later[:revision]).to eq(early[:revision])
+      expect(later[:message_window][:policy_revision]).to eq(early[:message_window][:policy_revision])
+    end
+
+    it 'bounds live window history queries across a page of conversations' do
+      5.times do
+        thread = create(:conversation, account: account, inbox: inbox)
+        create(:message, account: account, inbox: inbox, conversation: thread, created_at: as_of - 1.minute)
+      end
+      queries = []
+      subscriber = ->(*args) { queries << args.last[:sql] if args.last[:sql].match?(/SELECT .*FROM "messages"/m) }
+      result = travel_to(as_of) do
+        live_queue = Umi::Funnel::OperatorQueue.new(account_id: account.id, since: start)
+        ActiveSupport::Notifications.subscribed(subscriber, 'sql.active_record') { live_queue.index }
+      end
+      expect(result[:conversations].size).to eq(5)
+      expect(result[:conversations].map { |row| row[:message_window][:state] }).to all(eq('standard_open'))
+      expect(queries.size).to eq(2)
     end
   end
 

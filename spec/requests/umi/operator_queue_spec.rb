@@ -32,7 +32,11 @@ RSpec.describe 'UMI operator queue', type: :request do
     before_attributes = conversation.reload.attributes
     get "#{url}/#{conversation.reload.display_id}", params: { since: since }, headers: user.create_new_auth_token
     expect(response).to have_http_status(:ok)
-    expect(response.parsed_body).to include('schema_version' => 1, 'account_id' => account.id)
+    expect(response.parsed_body).to include('schema_version' => 1, 'account_id' => account.id,
+                                            'capabilities' => { 'message_window_version' => 1 })
+    expect(response.parsed_body['conversation']['message_window']).to include(
+      'state' => 'unrestricted', 'can_reply' => true, 'evaluated_at' => response.parsed_body['as_of']
+    )
     expect(response.parsed_body['conversation']).to include('id' => conversation.id, 'display_id' => 123_456,
                                                             'resolved_at' => nil, 'resolved_message_id' => nil)
     expect(conversation.reload.attributes).to eq(before_attributes)
