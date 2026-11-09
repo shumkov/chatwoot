@@ -4,6 +4,8 @@ class Umi::Funnel::ProfileSyncJob < MutexApplicationJob
   queue_as :low
   BATCH_SIZE = 250
 
+  self.log_arguments = false
+
   # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
   def perform(contact_id, force: false)
     contact = Contact.find_by(id: contact_id)
