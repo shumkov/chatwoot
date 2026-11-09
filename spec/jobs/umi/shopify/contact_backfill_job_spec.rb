@@ -10,6 +10,9 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
   let(:run_id) { 'run-1' }
   let(:run_started_at) { '2026-07-21T00:00:00Z' }
   let(:client) { instance_double(ShopifyAPI::Clients::Rest::Admin) }
+  # Looked up per example: the test environment reloads code, and a class captured when this
+  # file loaded raises a RetryableError that the reloaded class's retry_on no longer matches.
+  let(:job_class) { 'Umi::Shopify::ContactBackfillJob'.constantize }
 
   def page_response(customers, next_page_info: nil)
     instance_double(ShopifyAPI::Clients::HttpResponse, body: { 'customers' => customers }, next_page_info: next_page_info)
@@ -36,8 +39,8 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
                                   .and_return(page_response([customer(1, 'a@example.com')], next_page_info: 'cursor-2'))
 
     expect do
-      described_class.perform_now(account.id, run_id, run_started_at)
-    end.to have_enqueued_job(described_class).with(account.id, run_id, run_started_at, 'cursor-2')
+      job_class.perform_now(account.id, run_id, run_started_at)
+    end.to have_enqueued_job(job_class).with(account.id, run_id, run_started_at, 'cursor-2')
 
     expect(account.contacts.from_email('a@example.com')).to be_present
     expect(hook.reload.settings['umi_contact_sync_watermark']).to be_nil # not the final page
@@ -47,7 +50,7 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
     allow(client).to receive(:get).with(path: 'customers.json', query: { limit: 250, page_info: 'cursor-9' })
                                   .and_return(page_response([customer(2, 'b@example.com')]))
 
-    described_class.perform_now(account.id, run_id, run_started_at, 'cursor-9')
+    job_class.perform_now(account.id, run_id, run_started_at, 'cursor-9')
 
     expect(hook.reload.settings['umi_contact_sync_watermark']).to eq(run_started_at)
     expect(Redis::Alfred.get(Umi::Shopify::SyncLock.key(account.id))).to be_nil
@@ -57,8 +60,8 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
     allow(client).to receive(:get).with(path: 'customers/count.json').and_return(count_response(50_000))
 
     with_modified_env UMI_SHOPIFY_CONTACT_SYNC_MAX_CUSTOMERS: '20000' do
-      expect { described_class.perform_now(account.id, run_id, run_started_at) }
-        .not_to have_enqueued_job(described_class)
+      expect { job_class.perform_now(account.id, run_id, run_started_at) }
+        .not_to have_enqueued_job(job_class)
     end
 
     expect(Redis::Alfred.get(Umi::Shopify::SyncLock.key(account.id))).to be_nil
@@ -71,8 +74,8 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
     tracker = instance_double(ChatwootExceptionTracker, capture_exception: true)
     allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker)
 
-    expect { described_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
-      .not_to have_enqueued_job(described_class)
+    expect { job_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
+      .not_to have_enqueued_job(job_class)
 
     expect(tracker).to have_received(:capture_exception)
   end
@@ -95,15 +98,15 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
       # The global Sidekiq retry cap (3) is far too short for a Shopify blip;
       # the chain carries its own retry_on with long backoff.
       it 'retries the same cursor via retry_on' do
-        expect { described_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
-          .to have_enqueued_job(described_class).with(account.id, run_id, run_started_at, 'cursor-3')
+        expect { job_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
+          .to have_enqueued_job(job_class).with(account.id, run_id, run_started_at, 'cursor-3')
       end
 
       it 'releases the lock and reports when retries are exhausted' do
         tracker = instance_double(ChatwootExceptionTracker, capture_exception: true)
         allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker)
 
-        job = described_class.new(account.id, run_id, run_started_at, 'cursor-3')
+        job = job_class.new(account.id, run_id, run_started_at, 'cursor-3')
         job.executions = 8
         # retry_on tracks attempts per exception class, not via the plain
         # executions counter.
@@ -122,8 +125,8 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
         tracker = instance_double(ChatwootExceptionTracker, capture_exception: true)
         allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker)
 
-        expect { described_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
-          .not_to have_enqueued_job(described_class)
+        expect { job_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
+          .not_to have_enqueued_job(job_class)
 
         expect(tracker).to have_received(:capture_exception)
         expect(Redis::Alfred.get(Umi::Shopify::SyncLock.key(account.id))).to be_nil
@@ -139,7 +142,7 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
     allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker)
 
     expect(Umi::Shopify::ClientFactory).not_to receive(:client_for)
-    described_class.perform_now(account.id, run_id, run_started_at)
+    job_class.perform_now(account.id, run_id, run_started_at)
 
     expect(tracker).to have_received(:capture_exception)
     expect(Redis::Alfred.get(Umi::Shopify::SyncLock.key(account.id))).to be_nil
@@ -151,7 +154,7 @@ RSpec.describe Umi::Shopify::ContactBackfillJob do
     allow(client).to receive(:get).with(path: 'customers.json', query: { limit: 250, page_info: 'cursor-3' })
                                   .and_raise(SocketError, 'getaddrinfo failed')
 
-    expect { described_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
-      .to have_enqueued_job(described_class).with(account.id, run_id, run_started_at, 'cursor-3')
+    expect { job_class.perform_now(account.id, run_id, run_started_at, 'cursor-3') }
+      .to have_enqueued_job(job_class).with(account.id, run_id, run_started_at, 'cursor-3')
   end
 end
