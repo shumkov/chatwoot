@@ -3,6 +3,8 @@
 class Umi::Funnel::CustomerProjectionJob < ApplicationJob
   queue_as :high
 
+  self.log_arguments = false
+
   def perform(contact_id, conversation_id = nil)
     contact = Contact.find_by(id: contact_id)
     return unless contact && Umi::Funnel::Configuration.customer_context_enabled?(contact.account_id)
