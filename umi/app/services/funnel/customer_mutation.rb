@@ -2,9 +2,10 @@
 
 class Umi::Funnel::CustomerMutation
   # Bookkeeping timestamps that the funnel's schedulers and freshness checks read back from the contact.
-  # A write that moves only these persists without callbacks: no CRM projection, contact.updated event or
-  # agent broadcast follows, because nothing a webhook, note or agent shows depends on them. Anything else,
-  # including a key that is new or missing on either side, takes the full save.
+  # A write that moves only these persists without callbacks, so no CRM projection, contact.updated event or
+  # agent broadcast follows. Their only visible effects are time-relative: the CRM note's service freshness,
+  # which ReconcileJob re-projects, and the payment snapshot time in an open contact sidebar, which refreshes
+  # on reload. Anything else, including a key that is new or missing on either side, takes the full save.
   FRESHNESS_FIELDS = %w[umi_payment_snapshot_at].freeze
   FRESHNESS_PATHS = [%w[checked_at], %w[next_sync_at], %w[failed_at], %w[payment_snapshot_at],
                      %w[segments observed_at], %w[service observed_at]].freeze

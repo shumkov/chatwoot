@@ -92,9 +92,11 @@ RSpec.describe 'Funnel freshness-only customer writes', type: :job do
       sync.perform
       travel 20.minutes
       mutated = contact.reload
+      clear_enqueued_jobs
       Umi::Funnel::CustomerMutation.new(mutated, source: 'remote').perform(
         sync: { 'expected' => Umi::Funnel::CustomerContextSync.version(mutated), 'metadata' => { 'checked_at' => Time.current.utc.iso8601 } }
       )
+      expect(fan_out.call).to eq({})
       expect(mutated).not_to be_changed
       expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'checked_at')).to eq(Time.current.utc.iso8601)
     end
@@ -173,6 +175,18 @@ RSpec.describe 'Funnel freshness-only customer writes', type: :job do
       expect(conversation.messages.where(private: true).last.content).to include('Customer role umi_vip')
     end
 
+    it 'fans out a first service observation time even when the service state stays the same' do
+      properties.delete('umi_service_recovery_state')
+      sync.perform
+      expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'service')).to eq('state' => 'unknown')
+      travel 20.minutes
+      properties.merge!('umi_payment_snapshot_at' => Time.current.iso8601, 'umi_service_recovery_state' => 'unknown')
+      clear_enqueued_jobs
+      sync.perform
+      expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'service')).to include('state' => 'unknown', 'observed_at' => anything)
+      expect(fan_out.call).to eq(all_fan_out)
+    end
+
     it 'fans out a write that adds a key the freshness rules do not know' do
       Umi::Funnel::CustomerMutation.new(contact.reload, source: 'remote').perform(
         sync: { 'expected' => Umi::Funnel::CustomerContextSync.version(contact), 'metadata' => { 'checked_at' => Time.current.utc.iso8601,
@@ -236,8 +250,7 @@ RSpec.describe 'Funnel freshness-only customer writes', type: :job do
       sync.perform
       expect(fan_out.call).to eq({})
 
-      Umi::Funnel::ReconcileJob.perform_now
-      Umi::Funnel::CustomerProjectionJob.perform_now(contact.id)
+      perform_enqueued_jobs(only: Umi::Funnel::CustomerProjectionJob) { Umi::Funnel::ReconcileJob.perform_now }
       expect(notes.last.content).to include('Service reservation: hold (fresh).')
     end
 
