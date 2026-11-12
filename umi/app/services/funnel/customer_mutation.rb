@@ -1,6 +1,14 @@
 # frozen_string_literal: true
 
 class Umi::Funnel::CustomerMutation
+  # Bookkeeping timestamps that the funnel's schedulers and freshness checks read back from the contact.
+  # A write that moves only these persists without callbacks: no CRM projection, contact.updated event or
+  # agent broadcast follows, because nothing a webhook, note or agent shows depends on them. Anything else,
+  # including a key that is new or missing on either side, takes the full save.
+  FRESHNESS_FIELDS = %w[umi_payment_snapshot_at].freeze
+  FRESHNESS_PATHS = [%w[checked_at], %w[next_sync_at], %w[failed_at], %w[payment_snapshot_at],
+                     %w[segments observed_at], %w[service observed_at]].freeze
+
   def initialize(contact, source:, actor: nil, conversation: nil)
     @contact = contact
     @source = source
@@ -18,16 +26,16 @@ class Umi::Funnel::CustomerMutation
       raise ArgumentError, 'Contact is redacted' if @contact.additional_attributes['umi_profile_redacted']
 
       state = @contact.additional_attributes.fetch('umi_klaviyo_sync', {}).deep_dup
-      previous = @contact.custom_attributes.slice(*(Umi::Funnel::Configuration::CONTACT_FIELDS - ['umi_payment_snapshot_at']))
+      previous = @contact.custom_attributes.slice(*(Umi::Funnel::Configuration::CONTACT_FIELDS - FRESHNESS_FIELDS))
       previous_status = state['status']
       state.merge!(sync.fetch('metadata')) if sync
       write_conflicts!(sync.fetch('conflicts', {})) if sync
       apply_roles(roles.stringify_keys, state)
       apply_snapshot(snapshot, state) if snapshot
-      current = @contact.custom_attributes.slice(*(Umi::Funnel::Configuration::CONTACT_FIELDS - ['umi_payment_snapshot_at']))
+      current = @contact.custom_attributes.slice(*(Umi::Funnel::Configuration::CONTACT_FIELDS - FRESHNESS_FIELDS))
       state['revision'] = state.fetch('revision', 0) + 1 if previous != current || previous_status != state['status']
       @contact.additional_attributes = @contact.additional_attributes.merge('umi_klaviyo_sync' => state)
-      @contact.save!
+      persist!
       project_current_conversation! if @conversation && previous != current && !defer_projection
     end
     @contact
@@ -35,6 +43,33 @@ class Umi::Funnel::CustomerMutation
   # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
   private
+
+  def persist!
+    return @contact.save! unless freshness_only?
+
+    @contact.update_columns(@contact.changes.transform_values(&:last)) # rubocop:disable Rails/SkipsModelValidations
+  end
+
+  # An unchanged mutation keeps the full save: operator edits rely on its contact.updated dispatch.
+  def freshness_only?
+    changed = @contact.changed
+    return false if changed.empty? || (changed - %w[custom_attributes additional_attributes]).any?
+
+    equal_except?(@contact.custom_attributes_in_database, @contact.custom_attributes, FRESHNESS_FIELDS.zip) &&
+      equal_except?(@contact.additional_attributes_in_database, @contact.additional_attributes,
+                    FRESHNESS_PATHS.map { |path| ['umi_klaviyo_sync', *path] })
+  end
+
+  # A path is ignored only where both sides hold it, so adding or removing a timestamp is a real change.
+  def equal_except?(before, after, paths) # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+    before = before.deep_dup
+    after = after.deep_dup
+    paths.each do |*parents, key|
+      nodes = [before, after].map { |value| parents.empty? ? value : value&.dig(*parents) }
+      nodes.each { |node| node.delete(key) } if nodes.all? { |node| node.is_a?(Hash) && node.key?(key) }
+    end
+    before == after
+  end
 
   def current_sync?(sync)
     expected = sync.fetch('expected')

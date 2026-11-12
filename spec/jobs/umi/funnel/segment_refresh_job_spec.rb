@@ -61,6 +61,27 @@ RSpec.describe 'Configured customer segment refresh', type: :job do
                                                                                          'chooser_id' => 'SS6aWp', 'seeker_id' => 'RUy6Wc')
   end
 
+  it 'records an unchanged membership pass without a contact update fan-out' do
+    job.perform(account.id)
+    updated_at = contact.reload.updated_at
+    travel 6.minutes
+    clear_enqueued_jobs
+    job.perform(account.id)
+    expect(enqueued_jobs.pluck(:job)).not_to include(Umi::Funnel::CustomerProjectionJob, EventDispatcherJob, ActionCableBroadcastJob)
+    expect(contact.reload.additional_attributes.dig('umi_klaviyo_sync', 'segments', 'observed_at')).to eq(Time.current.utc.iso8601)
+    expect(contact.updated_at).to eq(updated_at)
+  end
+
+  it 'fans out a membership change to the CRM projection and agents' do
+    job.perform(account.id)
+    travel 6.minutes
+    allow(client).to receive(:segment_profiles).with('RUy6Wc')
+    clear_enqueued_jobs
+    job.perform(account.id)
+    expect(contact.reload.custom_attributes['umi_funnel_stage']).to eq('chooser')
+    expect(enqueued_jobs.pluck(:job)).to include(Umi::Funnel::CustomerProjectionJob, EventDispatcherJob, ActionCableBroadcastJob)
+  end
+
   it 'does not publish the first scan when the second pagination fails' do
     allow(client).to receive(:segment_profiles).with('RUy6Wc').and_raise(Umi::Funnel::KlaviyoClient::Error, 'second page failed')
     job.perform(account.id)

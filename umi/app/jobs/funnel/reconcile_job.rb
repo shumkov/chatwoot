@@ -25,6 +25,7 @@ class Umi::Funnel::ReconcileJob < ApplicationJob
       Umi::Shopify::OrderFinancialReconcileJob.perform_later(state.id)
     end
     Umi::Funnel::ProfileSyncJob.enqueue_due
+    Umi::Funnel::CustomerProjectionJob.enqueue_open
     Umi::Funnel::ConversationClassifier.enqueue
   end
 end

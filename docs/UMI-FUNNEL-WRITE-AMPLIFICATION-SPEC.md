@@ -1,6 +1,6 @@
 # Funnel bookkeeping writes without fan-out
 
-Status: proposed and independently reviewed. It needs Ivan's go before any code is written.
+Status: approved by Ivan on 2026-11-12 and implemented for release `umi-v4.16.0-43`.
 
 ## Problem
 
@@ -153,9 +153,11 @@ it. Enqueue it for every contact that:
   that is open, pending or snoozed).
 
 Today that is 17 contacts, about 204 jobs/h, a load that grows with open work. `apply!` is a no-op write
-when nothing changed. The guard refreshes the note and `facts` within one reconcile cycle plus `low`-queue
-latency (it shares the queue with up to 250 `ProfileSyncJob`s a tick). Today's cadence is about 10
-minutes.
+when nothing changed. The guard refreshes the note and `facts` within one reconcile cycle plus `high`-queue
+latency, the queue `CustomerProjectionJob` already runs on. Today's cadence is about 10 minutes.
+
+The filter lives in `ProfileSyncJob.linked_contacts`, which `enqueue_due` now also uses, and the enqueue in
+`CustomerProjectionJob.enqueue_open`.
 
 ### Expected reduction
 
@@ -233,8 +235,10 @@ That is about 22.2k fewer jobs an hour, ~530k a day. What remains is ~70k a day,
 
 ## Test plan
 
-A new `spec/services/umi/funnel/customer_mutation_spec.rb` drives the real producers, freezing time with
-`travel_to`. Every negative case below must fail on today's code. Scope the `EventDispatcherJob`
+A new `spec/services/umi/funnel/freshness_writes_spec.rb` drives the real producers, freezing time with
+`travel_to`. The two segment-refresh cases live in `spec/jobs/umi/funnel/segment_refresh_job_spec.rb`, which
+already stubs the Klaviyo segment definitions. The forced `ProfileSyncJob` after an operator role edit is
+already covered by `profile_sync_job_spec.rb`. Every negative case below must fail on today's code. Scope the `EventDispatcherJob`
 assertions to `contact.updated`.
 
 1. **No fan-out for timestamp-only writes.** Each of these, run a second time, enqueues no

@@ -36,16 +36,20 @@ class Umi::Funnel::ProfileSyncJob < MutexApplicationJob
     account_id = ENV['UMI_FUNNEL_KLAVIYO_ACCOUNT_ID'].to_i
     return unless Umi::Funnel::Configuration.customer_context_enabled?(account_id)
 
-    scope = Contact.where(account_id: account_id)
-                   .where("additional_attributes ->> 'umi_klaviyo_profile_id' IS NOT NULL")
-                   .where("additional_attributes -> 'umi_klaviyo_binding' IS NOT NULL")
-                   .where("COALESCE(additional_attributes ->> 'umi_profile_redacted', 'false') != 'true'")
+    scope = linked_contacts(account_id)
     due = scope.where("(additional_attributes #>> '{umi_klaviyo_sync,next_sync_at}') IS NULL OR " \
                       "(additional_attributes #>> '{umi_klaviyo_sync,next_sync_at}')::timestamptz <= ?", Time.current)
     due.order(Arel.sql("additional_attributes #>> '{umi_klaviyo_sync,checked_at}' ASC NULLS FIRST"), :id)
        .limit(BATCH_SIZE).pluck(:id).each { |id| perform_later(id) }
     Umi::Funnel::SegmentRefreshJob.perform_later(account_id)
     Rails.logger.info("[umi-funnel] profile refresh capacity linked=#{scope.count} per_15m=#{BATCH_SIZE * 3} due=#{due.count}")
+  end
+
+  def self.linked_contacts(account_id)
+    Contact.where(account_id: account_id)
+           .where("additional_attributes ->> 'umi_klaviyo_profile_id' IS NOT NULL")
+           .where("additional_attributes -> 'umi_klaviyo_binding' IS NOT NULL")
+           .where("COALESCE(additional_attributes ->> 'umi_profile_redacted', 'false') != 'true'")
   end
 
   private
