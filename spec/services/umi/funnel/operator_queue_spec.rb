@@ -55,7 +55,7 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
       expect(detail[:conversation][:waiting]).to be_nil
       expect(list[:conversations].sole[:message_window]).to eq(detail[:conversation][:message_window])
       expect(detail[:conversation][:message_window]).to include(can_reply: false, state: 'closed',
-                                                                standard_expires_at: (incoming.created_at + 24.hours).iso8601(6))
+                                                                standard_expires_at: (incoming.created_at + 24.hours).utc.iso8601(6))
     end
 
     it 'extends the deadline on new incoming while retaining the unanswered burst identity' do
@@ -64,7 +64,7 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
       row = queue.show(conversation.reload.display_id)[:conversation]
       expect(row[:waiting][:message_id]).to eq(first.id)
       expect(row[:message_window]).to include(last_incoming_message_id: latest.id,
-                                              standard_expires_at: (latest.created_at + 24.hours).iso8601(6))
+                                              standard_expires_at: (latest.created_at + 24.hours).utc.iso8601(6))
     end
 
     it 'closes with clock passage without changing the semantic revision' do
