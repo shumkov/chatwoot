@@ -107,6 +107,23 @@ RSpec.describe 'Shopify customer binding through generic contact writers', type:
       expect(contact.reload.additional_attributes).to eq('company_name' => 'ACME', 'shopify_orders_count' => 3,
                                                          'description' => 'from widget')
     end
+
+    # A visitor who submits someone else's email is merged into that contact.
+    # Marking that contact erased would keep its Shopify customer from ever
+    # being bound again, so visitor input carrying UMI technical keys is
+    # refused outright (Umi::Funnel::CustomerBoundary), whatever else it sets.
+    %w[umi_profile_redacted umi_klaviyo_profile_id umi_klaviyo_binding umi_klaviyo_sync umi_customer_projection].each do |key|
+      it "refuses visitor input carrying #{key}" do
+        contact.update!(additional_attributes: { 'company_name' => 'ACME', 'umi_klaviyo_profile_id' => 'kl-1' })
+
+        patch '/api/v1/widget/contact', headers: { 'X-Auth-Token' => token }, as: :json,
+                                        params: { website_token: web_widget.website_token,
+                                                  additional_attributes: { key => 'visitor', 'description' => 'from widget' } }
+
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(contact.reload.additional_attributes).to eq('company_name' => 'ACME', 'umi_klaviyo_profile_id' => 'kl-1')
+      end
+    end
   end
 
   # A merge is not a second binding: the base inherits the mergee's customer
