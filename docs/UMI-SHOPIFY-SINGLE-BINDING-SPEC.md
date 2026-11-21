@@ -159,7 +159,8 @@ in `link_order!`; T3 redact for X holds A1 and waits for contact C2 (matched by 
 of C2 holds C2 and waits for X. Without G, T2 would not wait. It needs a redact of the same customer, a
 reconcile of its draft and a poll enriching an email-matched contact in the same instant. Postgres
 detects the cycle and aborts one transaction with `deadlock_detected` (no hang); each party is safe to
-abort (job retry, compliance retry job, the poll run retried next tick).
+abort (job retry; for the compliance side, the durable rechecked retry described under
+"Erasure reach"; the poll run retried next tick).
 
 ## Per-binder behaviour
 
@@ -242,11 +243,38 @@ with X. Under G it stays unbound, so the id match alone would no longer reach it
 
 To keep erasure at its pre-G reach, after redacting the id-bound contacts the handler applies the
 existing exact-email fallback (`account.contacts.from_email`) to one more contact, only when that
-contact is not in the id set and carries no `shopify_customer_id`. The second condition is re-read under
-the contact's row lock inside the per-contact savepoint: binders do not take the account lock, and a
-contact bound to customer Y in between must not be erased (its erasure would also purge Y's orders). A contact bound to any customer is
+contact is not in the id set and carries no `shopify_customer_id`. A contact bound to any customer is
 never touched by this step; phone-only matching is unchanged; a payload whose id matches no contact
 behaves as today. Approved by the coordinator on 2026-11-22.
+
+**Fresh recheck.** Binders do not take the account lock, so the "carries no customer" condition is
+re-read under the contact's row lock inside the per-contact savepoint, in the same transaction as the
+erasure. A contact bound to customer Y in between is left alone: erasing it would also purge Y's
+financial states (`CustomerRedactionService` purges by the customer the contact carries).
+
+**Durable retry, never a dropped erasure.** The step can fail like any other database work, and the
+deadlock analysis above names one way: the residual cycle aborts this step's row lock with
+`deadlock_detected`. Shopify never redelivers a compliance webhook (the handler always answers 200), so
+a failure must not end in a log line. On any error the step's savepoint rolls back and the handler
+enqueues the existing durable retry, `Umi::Shopify::CustomerRedactionRetryJob`, with
+`unbound_only: true`, before re-raising into the existing `compliance_safely` tracker. In that mode the
+job calls `CustomerRedactionService#perform(only_unbound: true)`, which repeats the fresh recheck inside
+its own row lock and erases (anonymize; the record is kept) only a contact that still carries no
+customer. The avatar purge stays after the database commit, so a storage failure never undoes the
+erasure; the retry repeats only the purge. If the contact was bound meanwhile, the service erases
+nothing and the job reports a compliance gap through the existing gap reporting (exception tracker and
+an error log line; with no tracker DSN in production that is the log line), because the person's email
+now sits on a contact that belongs to another customer's erasure. The job's `retry_on StandardError`
+(10 attempts, then Sidekiq's own retries) covers further failures; a failure inside the lock rolls the
+recheck and the erasure back together.
+
+A contact that already carries a customer when the webhook arrives is skipped before any lock, so the
+step takes no row lock it does not need.
+
+The step calls `CustomerRedactionService` directly instead of `apply_redaction`: `anonymize_contact`
+enqueues the job *without* the recheck, which could later anonymize a contact bound to Y. Without
+conversations the contact is destroyed, as the email fallback does today. The job argument is the
+contact id only; no email or other personal data goes into the queue.
 
 ## Unchanged
 
@@ -307,6 +335,7 @@ and marking it erased would keep its customer from ever being bound again. A spe
 | Agent API binds a customer bound elsewhere | 422 `customer_bound_elsewhere`, no write (including other fields of the request) |
 | Sync meets a customer bound to another contact | contact untouched or no contact created; `bound_elsewhere` counted and logged |
 | Lock helper called outside a transaction | raises |
+| The unbound exact-email erasure step fails (including `deadlock_detected` from the residual cycle) | savepoint rolled back, `CustomerRedactionRetryJob(contact_id, unbound_only: true)` enqueued, error tracked; the job rechecks under the row lock and erases, or reports a gap if the contact was bound meanwhile |
 | Lock wait exceeds `statement_timeout` (14 s) or `deadlock_detected` | commerce: 500, rolled back; sidebar: logged, orders still render; sync: the poll run fails without advancing the watermark and the next tick retries everything (idempotent), a backfill page is retried by Sidekiq; `enrich`/`per_record_create` deliberately do not count these as `failed`, which would drop the update until the customer changes again |
 | Hash collision of two lock keys | the two customers serialise; no correctness impact |
 | Check cost | one scan of the account's contacts (the predicate `PaidCustomerLink` and the compliance handler already run) per new binding and one per bulk page; no index, no migration |

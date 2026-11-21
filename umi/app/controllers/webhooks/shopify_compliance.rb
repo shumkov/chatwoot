@@ -117,24 +117,40 @@ module Umi::Webhooks::ShopifyCompliance
   # another contact carries the customer (Umi::Shopify::CustomerBinding), so the
   # id match above does not reach it. The exact-email fallback still applies to
   # it; a contact bound to any customer is left to its own binding.
+  #
+  # Binders do not take the account lock, so "unbound" is re-read under the row
+  # lock in the erasure's own savepoint. Shopify never redelivers, so any failure
+  # here (a deadlock on that row lock included) leaves the durable retry, which
+  # repeats the same re-check before it erases. CustomerRedactionService is
+  # called directly: anonymize_contact would enqueue a retry without the
+  # re-check, which could later erase a contact bound to another customer.
+  # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
   def redact_unbound_email_match(account, payload, bound_ids)
     return if payload[:email].blank?
 
     contact = account.contacts.from_email(payload[:email])
-    return if contact.nil? || bound_ids.include?(contact.id)
+    return if contact.nil? || bound_ids.include?(contact.id) || contact.additional_attributes['shopify_customer_id'].present?
 
     compliance_safely('customers/redact') do
       Contact.transaction(requires_new: true) do
-        # Binders do not take the account lock: re-read under the row lock so
-        # a contact bound meanwhile is left to its own customer's erasure.
         contact.lock!
         next if contact.additional_attributes['shopify_customer_id'].present?
 
-        apply_redaction(contact, :email)
+        contact.conversations.exists? ? Umi::Shopify::CustomerRedactionService.new(contact).perform : contact.destroy!
         Rails.logger.info("[umi-shopify-compliance] customers/redact: unbound contact #{contact.id} matched by email — " \
                           "#{redaction_action(contact, :email)} (shopify customer #{payload[:id]})")
       end
+    rescue StandardError
+      enqueue_unbound_redaction_retry(contact)
+      raise
     end
+  end
+  # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity
+
+  def enqueue_unbound_redaction_retry(contact)
+    Umi::Shopify::CustomerRedactionRetryJob.perform_later(contact.id, unbound_only: true)
+  rescue StandardError => e
+    Rails.logger.error("[umi-shopify-compliance] could not enqueue redaction retry for contact #{contact.id}: #{e.class}: #{e.message}")
   end
 
   # Hook gone (Shopify can deliver after uninstall; shop/redact deletes the

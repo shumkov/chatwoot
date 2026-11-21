@@ -8,9 +8,13 @@ class Umi::Shopify::CustomerRedactionService
     @contact = contact
   end
 
-  def perform
-    @contact.with_lock do
+  # only_unbound: erase only a contact that carries no Shopify customer, read
+  # under the row lock. Returns false, erasing nothing, when it carries one.
+  def perform(only_unbound: false) # rubocop:disable Metrics/MethodLength
+    erased = @contact.with_lock do
       shopify_customer_id = @contact.additional_attributes['shopify_customer_id']
+      next false if only_unbound && shopify_customer_id.present?
+
       @contact.update!(
         name: 'Redacted customer', last_name: '', middle_name: '',
         email: nil, phone_number: nil, identifier: nil,
@@ -24,11 +28,14 @@ class Umi::Shopify::CustomerRedactionService
       Umi::Funnel::Privacy.redact_contact!(@contact, shopify_customer_id: shopify_customer_id)
       Umi::ShopifyOrderAttribution.detach_for(@contact)
       Umi::ShopifyDraftLink.detach(Umi::ShopifyDraftLink.where(contact_id: @contact.id))
+      true
     end
+    return false unless erased
 
     # Active Storage deletion is not transactional. It is intentionally after
     # the database commit; a failure leaves the redaction durable and the retry
     # job can safely attempt the same purge again.
     @contact.avatar.purge
+    true
   end
 end
