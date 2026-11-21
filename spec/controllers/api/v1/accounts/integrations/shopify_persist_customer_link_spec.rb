@@ -53,6 +53,18 @@ RSpec.describe 'Umi Shopify on-touch customer link', type: :request do
     expect(contact.reload.additional_attributes['shopify_customer_id']).to eq(41)
   end
 
+  it 'does not bind a customer another contact already carries, and still renders the orders' do
+    other = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+    stub_customer_search([{ 'id' => 42, 'email' => 'somchai@example.com', 'phone' => nil }])
+
+    fetch_orders
+
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body).to eq('orders' => [])
+    expect(contact.reload.additional_attributes['shopify_customer_id']).to be_nil
+    expect(other.reload.additional_attributes['shopify_customer_id']).to eq('42')
+  end
+
   it 'never breaks the orders response when persistence fails' do
     stub_customer_search([{ 'id' => 42, 'email' => 'somchai@example.com', 'phone' => nil }])
     allow_any_instance_of(Contact).to receive(:update!).and_raise(StandardError, 'boom') # rubocop:disable RSpec/AnyInstance

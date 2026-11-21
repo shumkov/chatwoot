@@ -45,7 +45,8 @@ class Umi::Shopify::DraftLinkReconcileJob < ApplicationJob
       unless link.redacted_at || %w[unlinked resolved].include?(link.status)
         status = case error
                  when 'unavailable' then 'unavailable'
-                 when 'customer_mismatch', 'already_linked', 'paid_link_correction_required', 'stale_preview' then 'conflict'
+                 when 'customer_mismatch', 'customer_bound_elsewhere', 'already_linked', 'paid_link_correction_required', 'stale_preview'
+                   'conflict'
                  else link.status
                  end
         link.update!(status: status, last_error: error, last_checked_at: Time.current)

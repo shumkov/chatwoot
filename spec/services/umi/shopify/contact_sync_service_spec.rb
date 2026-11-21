@@ -169,4 +169,52 @@ RSpec.describe Umi::Shopify::ContactSyncService do
       expect(contact.additional_attributes['shopify_customer_id']).to eq(5)
     end
   end
+
+  # A second contact carrying the same Shopify customer makes that customer's
+  # paid events ambiguous, so the sync never adds one.
+  describe 'a customer already bound to another contact' do
+    let!(:bound) do
+      create(:contact, account: account, name: 'Chat customer', phone_number: '+66900000000',
+                       additional_attributes: { 'shopify_customer_id' => '7', 'shopify_tags' => 'vip' })
+    end
+
+    it 'does not touch a blank contact matched by email' do
+      matched = create(:contact, account: account, name: 'a@example.com', email: 'a@example.com', phone_number: nil)
+
+      counters = sync([customer(id: 7, email: 'a@example.com', phone: '+66812345678', first_name: 'Shopify')])
+
+      expect(counters[:bound_elsewhere]).to eq(1)
+      expect(counters[:enriched]).to eq(0)
+      matched.reload
+      expect(matched.additional_attributes).not_to have_key('shopify_customer_id')
+      expect(matched.name).to eq('a@example.com')
+      expect(matched.phone_number).to be_nil
+      expect(bound.reload.additional_attributes['shopify_customer_id']).to eq('7')
+    end
+
+    %i[bulk per_record].each do |mode|
+      it "creates no second contact for it in #{mode} mode and still creates the others" do
+        counters = sync([customer(id: 7, email: 'a@example.com'), customer(id: 8, email: 'b@example.com')], mode: mode)
+
+        expect(counters[:bound_elsewhere]).to eq(1)
+        expect(counters[:created]).to eq(1)
+        expect(account.contacts.from_email('a@example.com')).to be_nil
+        expect(account.contacts.from_email('b@example.com').additional_attributes['shopify_customer_id']).to eq(8)
+        expect(account.contacts.where("additional_attributes->>'shopify_customer_id' = '7'").pluck(:id)).to eq([bound.id])
+      end
+    end
+
+    # Existing duplicate pairs are left as they are; their Shopify fields keep
+    # refreshing, only new bindings are refused.
+    it 'keeps refreshing the matched contact of an existing pair and leaves the other as it is' do
+      twin = create(:contact, account: account, email: 'a@example.com', additional_attributes: { 'shopify_customer_id' => 7 })
+
+      counters = sync([customer(id: 7, email: 'a@example.com', tags: 'gold')])
+
+      expect(counters[:enriched]).to eq(1)
+      expect(counters[:bound_elsewhere]).to eq(0)
+      expect(twin.reload.additional_attributes).to include('shopify_customer_id' => 7, 'shopify_tags' => 'gold')
+      expect(bound.reload.additional_attributes).to include('shopify_customer_id' => '7', 'shopify_tags' => 'vip')
+    end
+  end
 end

@@ -20,7 +20,8 @@
 #   so without this pin any shop that installed the app could redact contacts
 #   in the one account.
 #
-# Redact policy (spec §3f): match by shopify_customer_id, then exact email. A
+# Redact policy (spec §3f): match by shopify_customer_id, then exact email; when
+# contacts carry the id, an unbound exact-email contact is erased as well. A
 # phone-only match is never destroyed — shared phones are common and destroying
 # would erase a different person's contact and conversations — its shopify
 # attributes are stripped and the tracker pages a human. Matched contacts with
@@ -89,12 +90,14 @@ module Umi::Webhooks::ShopifyCompliance
     payload = params[:customer] || {}
     if payload[:id].present?
       contacts = account.contacts.where("additional_attributes->>'shopify_customer_id' = ?", payload[:id].to_s)
-      if contacts.exists?
+      bound_ids = contacts.ids
+      if bound_ids.any?
         contacts.find_each do |matched_contact|
           compliance_safely('customers/redact') do
             Contact.transaction(requires_new: true) { apply_redaction(matched_contact, :shopify_customer_id) }
           end
         end
+        redact_unbound_email_match(account, payload, bound_ids)
         return
       end
     end
@@ -109,6 +112,30 @@ module Umi::Webhooks::ShopifyCompliance
                       "#{redaction_action(contact, matched_by)} (shopify customer #{payload[:id]})")
   end
   # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
+
+  # A contact that matches the customer only by exact email stays unbound while
+  # another contact carries the customer (Umi::Shopify::CustomerBinding), so the
+  # id match above does not reach it. The exact-email fallback still applies to
+  # it; a contact bound to any customer is left to its own binding.
+  def redact_unbound_email_match(account, payload, bound_ids)
+    return if payload[:email].blank?
+
+    contact = account.contacts.from_email(payload[:email])
+    return if contact.nil? || bound_ids.include?(contact.id)
+
+    compliance_safely('customers/redact') do
+      Contact.transaction(requires_new: true) do
+        # Binders do not take the account lock: re-read under the row lock so
+        # a contact bound meanwhile is left to its own customer's erasure.
+        contact.lock!
+        next if contact.additional_attributes['shopify_customer_id'].present?
+
+        apply_redaction(contact, :email)
+        Rails.logger.info("[umi-shopify-compliance] customers/redact: unbound contact #{contact.id} matched by email — " \
+                          "#{redaction_action(contact, :email)} (shopify customer #{payload[:id]})")
+      end
+    end
+  end
 
   # Hook gone (Shopify can deliver after uninstall; shop/redact deletes the
   # hook): fall back to the single account, but only for the expected shop —

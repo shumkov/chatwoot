@@ -109,6 +109,10 @@ class Umi::Shopify::CommerceController < Api::V1::Accounts::Conversations::BaseC
     @contact.with_lock do
       Umi::Shopify::ManualLinkService.link_customer(@contact, matches.first) if @contact.additional_attributes['shopify_customer_id'].blank?
       @contact.additional_attributes['shopify_customer_id']
+    rescue Umi::Shopify::CommerceError => e
+      # Another contact carries the matched customer: show no linked customer,
+      # like an inexact match. Only explicit actions surface the refusal.
+      raise unless e.message == 'customer_bound_elsewhere'
     end
   end
   # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
