@@ -17,6 +17,11 @@
 # a *different* shopify_customer_id is never touched (two customers sharing a
 # phone must not flap the contact's identity, and redact must never hit the
 # wrong person) — counted as `conflicted`.
+#
+# A customer is carried by at most one contact (Umi::Shopify::CustomerBinding):
+# a blank contact is not bound, and no contact is created, while another
+# contact already carries the customer — counted as `bound_elsewhere`.
+# Contacts that already carry the customer keep refreshing.
 class Umi::Shopify::ContactSyncService
   HAIKUNATOR_NAME = /\A[a-z]+-[a-z]+-\d+\z/i
 
@@ -99,33 +104,46 @@ class Umi::Shopify::ContactSyncService
     [by_email, by_phone]
   end
 
+  # rubocop:disable Metrics/AbcSize, Metrics/MethodLength
   def enrich(contact, row, existing_by_phone)
-    # Fresh read FIRST: the identity guard must see a shopify_customer_id
-    # persisted moments ago by the always-on orders-sidebar link path, and
-    # whole-jsonb writes are last-write-wins against concurrent agent edits
-    # (residual race accepted in the spec).
-    contact.reload
-    incoming_id = row[:additional_attributes]['shopify_customer_id']
-    existing_id = contact.additional_attributes['shopify_customer_id']
-    if existing_id.present? && existing_id.to_s != incoming_id.to_s
-      @counters[:conflicted] += 1
-      Rails.logger.warn("[umi-contact-sync] contact #{contact.id} already linked to shopify customer " \
-                        "#{existing_id}; not overwriting with #{incoming_id}")
-      return
-    end
+    Contact.transaction do
+      # Row lock FIRST: the identity guards must see a binding committed moments
+      # ago by another binder, and the contact lock precedes the customer lock.
+      # reload rather than lock!: one contact object can be matched by two rows
+      # of a page, and a failed save leaves it dirty, which lock! refuses.
+      # Whole-jsonb writes stay last-write-wins against agent edits that take no
+      # lock (residual race accepted in the spec).
+      contact.reload(lock: true)
+      incoming_id = row[:additional_attributes]['shopify_customer_id']
+      existing_id = contact.additional_attributes['shopify_customer_id']
+      if existing_id.present? && existing_id.to_s != incoming_id.to_s
+        @counters[:conflicted] += 1
+        Rails.logger.warn("[umi-contact-sync] contact #{contact.id} already linked to shopify customer " \
+                          "#{existing_id}; not overwriting with #{incoming_id}")
+        next
+      end
+      # Another contact carries this customer: write nothing at all. Filling
+      # this contact's name, email or phone from a customer it does not carry
+      # would be half an identity merge.
+      if existing_id.blank? && Umi::Shopify::CustomerBinding.bound_elsewhere?(contact, incoming_id)
+        @counters[:bound_elsewhere] += 1
+        next
+      end
 
-    assign_enrichment(contact, row, existing_by_phone)
+      assign_enrichment(contact, row, existing_by_phone)
 
-    if contact.changed?
-      contact.save!
-      @counters[:enriched] += 1
-    else
-      @counters[:unchanged] += 1
+      if contact.changed?
+        contact.save!
+        @counters[:enriched] += 1
+      else
+        @counters[:unchanged] += 1
+      end
     end
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => e
     @counters[:failed] += 1
     Rails.logger.warn("[umi-contact-sync] enrich failed for contact #{contact.id}: #{e.message}")
   end
+  # rubocop:enable Metrics/AbcSize, Metrics/MethodLength
 
   def assign_enrichment(contact, row, existing_by_phone)
     assign_identity(contact, row, existing_by_phone)
@@ -187,24 +205,50 @@ class Umi::Shopify::ContactSyncService
     row.merge(additional_attributes: row[:additional_attributes].compact)
   end
 
+  # One transaction per page: every customer of the page is locked (ascending)
+  # and re-checked immediately before the insert.
   def bulk_create(rows)
-    contacts = rows.map { |row| @account.contacts.new(compact_attributes(row)) }
-    return if contacts.empty?
+    return if rows.empty?
 
-    result = Contact.import(contacts, validate: true, on_duplicate_key_ignore: true,
-                                      track_validation_failures: true, batch_size: 1000)
-    @counters[:created] += result.ids.size
-    @counters[:failed] += result.failed_instances.size
+    Contact.transaction do
+      ids = rows.map { |row| customer_id(row) }
+      Umi::Shopify::CustomerBinding.lock!(@account.id, ids)
+      bound = Umi::Shopify::CustomerBinding.bound_customer_ids(@account.id, ids)
+      contacts = rows.reject { |row| skip_bound_customer?(row, bound) }.map { |row| @account.contacts.new(compact_attributes(row)) }
+      next if contacts.empty?
+
+      result = Contact.import(contacts, validate: true, on_duplicate_key_ignore: true,
+                                        track_validation_failures: true, batch_size: 1000)
+      @counters[:created] += result.ids.size
+      @counters[:failed] += result.failed_instances.size
+    end
   end
 
   def per_record_create(rows)
     rows.each do |row|
-      @account.contacts.create!(compact_attributes(row))
-      @counters[:created] += 1
+      Contact.transaction do
+        Umi::Shopify::CustomerBinding.lock!(@account.id, [customer_id(row)])
+        next if skip_bound_customer?(row, Umi::Shopify::CustomerBinding.bound_customer_ids(@account.id, [customer_id(row)]))
+
+        @account.contacts.create!(compact_attributes(row))
+        @counters[:created] += 1
+      end
     rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => e
       @counters[:failed] += 1
       Rails.logger.warn('[umi-contact-sync] create failed for shopify customer ' \
                         "#{row.dig(:additional_attributes, 'shopify_customer_id')}: #{e.message}")
     end
+  end
+
+  def customer_id(row)
+    row.dig(:additional_attributes, 'shopify_customer_id').to_s
+  end
+
+  def skip_bound_customer?(row, bound)
+    return false unless bound.include?(customer_id(row))
+
+    @counters[:bound_elsewhere] += 1
+    Rails.logger.warn("[umi-contact-sync] no contact created for shopify customer #{customer_id(row)}: another contact already carries it")
+    true
   end
 end

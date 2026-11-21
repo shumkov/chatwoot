@@ -147,6 +147,141 @@ RSpec.describe 'Umi Shopify compliance webhooks', type: :request do
       expect(Umi::ProfileLedgerEntry.where(contact_id: contact.id)).to be_empty
     end
 
+    # A contact that matches the customer only by exact email is kept unbound
+    # while another contact carries the customer, so the id match alone no
+    # longer reaches it. The email fallback still has to.
+    it 'also erases an unbound contact holding the exact email when another contact carries the customer' do
+      bound = create(:contact, account: account, email: 'chat@example.com', additional_attributes: { 'shopify_customer_id' => '42' })
+      create(:conversation, account: account, contact: bound)
+      by_email = create(:contact, account: account, email: 'buyer@example.com', additional_attributes: { 'company_name' => 'ACME' })
+      create(:conversation, account: account, contact: by_email)
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42, email: 'Buyer@example.com', phone: '+66811111111' })
+
+      expect(response).to have_http_status(:ok)
+      expect(bound.reload.additional_attributes['umi_profile_redacted']).to be(true)
+      by_email.reload
+      expect(by_email.email).to be_nil
+      expect(by_email.additional_attributes).to eq('company_name' => 'ACME', 'umi_profile_redacted' => true)
+    end
+
+    it 'never erases a contact bound to a different customer, even with the same email' do
+      create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+      other = create(:contact, account: account, email: 'buyer@example.com', additional_attributes: { 'shopify_customer_id' => 77 })
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42, email: 'buyer@example.com' })
+
+      expect(response).to have_http_status(:ok)
+      other.reload
+      expect(other.email).to eq('buyer@example.com')
+      expect(other.additional_attributes).to eq('shopify_customer_id' => 77)
+    end
+
+    it 'keeps the exact-email fallback when no contact carries the customer' do
+      by_email = create(:contact, account: account, email: 'buyer@example.com')
+      by_phone = create(:contact, account: account, phone_number: '+66811111111', additional_attributes: { 'shopify_tags' => 'vip' })
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42, email: 'buyer@example.com', phone: '+66811111111' })
+
+      expect(Contact.exists?(by_email.id)).to be(false)
+      expect(by_phone.reload.additional_attributes).to eq('shopify_tags' => 'vip')
+    end
+
+    # Shopify never redelivers a compliance webhook, so a failed email step
+    # (for example a deadlock on its row lock) must leave a durable retry that
+    # re-checks the contact before it erases anything.
+    it 'retries the unbound email erasure durably when its row lock deadlocks' do
+      bound = create(:contact, account: account, email: 'chat@example.com', additional_attributes: { 'shopify_customer_id' => '42' })
+      create(:conversation, account: account, contact: bound)
+      by_email = create(:contact, account: account, email: 'buyer@example.com')
+      create(:conversation, account: account, contact: by_email)
+      deadlock = true
+      # Abort the statement in Postgres too, so the outer transaction must really
+      # recover through the savepoint for the bound contact's erasure to commit.
+      allow_any_instance_of(Contact).to receive(:lock!).and_wrap_original do |original, *args| # rubocop:disable RSpec/AnyInstance
+        if deadlock && original.receiver.id == by_email.id
+          begin
+            Contact.connection.execute('SELECT 1/0')
+          rescue ActiveRecord::StatementInvalid
+            raise ActiveRecord::Deadlocked, 'deadlock detected'
+          end
+        end
+
+        original.call(*args)
+      end
+
+      expect do
+        post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42, email: 'buyer@example.com' })
+      end.to have_enqueued_job(Umi::Shopify::CustomerRedactionRetryJob).with(by_email.id, unbound_only: true)
+      expect(response).to have_http_status(:ok)
+      expect(bound.reload.additional_attributes['umi_profile_redacted']).to be(true)
+      expect(by_email.reload.email).to eq('buyer@example.com')
+
+      deadlock = false
+      perform_enqueued_jobs(only: Umi::Shopify::CustomerRedactionRetryJob)
+      expect(by_email.reload.email).to be_nil
+      expect(by_email.additional_attributes['umi_profile_redacted']).to be(true)
+    end
+
+    it 'enqueues only the rechecked retry when the email step fails to anonymize' do
+      create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+      by_email = create(:contact, account: account, email: 'buyer@example.com')
+      create(:conversation, account: account, contact: by_email)
+      failing_service = instance_double(Umi::Shopify::CustomerRedactionService)
+      allow(Umi::Shopify::CustomerRedactionService).to receive(:new).and_call_original
+      allow(Umi::Shopify::CustomerRedactionService).to receive(:new).with(by_email).and_return(failing_service)
+      allow(failing_service).to receive(:perform).and_raise(StandardError, 'avatar storage unavailable')
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42, email: 'buyer@example.com' })
+
+      expect(response).to have_http_status(:ok)
+      expect(Umi::Shopify::CustomerRedactionRetryJob).to have_been_enqueued.with(by_email.id, unbound_only: true).exactly(:once)
+      expect(Umi::Shopify::CustomerRedactionRetryJob).not_to have_been_enqueued.with(by_email.id)
+    end
+
+    # The avatar purge is not transactional and runs after the database erasure
+    # commits, so a storage failure on the re-checked retry must not undo it.
+    it 'keeps the database erasure when the rechecked retry fails to purge the avatar' do
+      contact = create(:contact, account: account, email: 'buyer@example.com')
+      create(:conversation, account: account, contact: contact)
+      allow_any_instance_of(ActiveStorage::Attached::One).to receive(:purge).and_raise(StandardError, 'storage unavailable') # rubocop:disable RSpec/AnyInstance
+
+      Umi::Shopify::CustomerRedactionRetryJob.perform_now(contact.id, unbound_only: true)
+
+      contact.reload
+      expect(contact.email).to be_nil
+      expect(contact.additional_attributes['umi_profile_redacted']).to be(true)
+    end
+
+    # The retry runs later; the contact may have been bound to another customer
+    # by then, and erasing it would also purge that customer's records.
+    it 'leaves a contact bound since then to its own customer and reports the gap on the rechecked retry' do
+      contact = create(:contact, account: account, email: 'buyer@example.com', additional_attributes: { 'shopify_customer_id' => '77' })
+      create(:conversation, account: account, contact: contact)
+      tracker = instance_double(ChatwootExceptionTracker, capture_exception: nil)
+      allow(ChatwootExceptionTracker).to receive(:new).and_return(tracker)
+
+      Umi::Shopify::CustomerRedactionRetryJob.perform_now(contact.id, unbound_only: true)
+
+      contact.reload
+      expect(contact.email).to eq('buyer@example.com')
+      expect(contact.additional_attributes).to eq('shopify_customer_id' => '77')
+      expect(ChatwootExceptionTracker).to have_received(:new).with(having_attributes(message: /bound to a Shopify customer/))
+    end
+
+    it 'does not reprocess a bound contact holding the exact email when its own erasure failed' do
+      bound = create(:contact, account: account, email: 'buyer@example.com', additional_attributes: { 'shopify_customer_id' => '42' })
+      create(:conversation, account: account, contact: bound)
+      failing_service = instance_double(Umi::Shopify::CustomerRedactionService)
+      allow(Umi::Shopify::CustomerRedactionService).to receive(:new).and_return(failing_service)
+      allow(failing_service).to receive(:perform).and_raise(StandardError, 'avatar storage unavailable')
+
+      post_webhook('customers/redact', shop_domain: shop_domain, customer: { id: 42, email: 'buyer@example.com' })
+
+      expect(response).to have_http_status(:ok)
+      expect(Umi::Shopify::CustomerRedactionService).to have_received(:new).once
+    end
+
     # Shared phones are common; a phone-only match may be a different person —
     # never destroy on it.
     it 'only strips shopify attributes on a phone-only match' do

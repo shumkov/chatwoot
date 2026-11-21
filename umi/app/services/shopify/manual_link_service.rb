@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 class Umi::Shopify::ManualLinkService
+  # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
   def self.link_customer(contact, customer)
     contact.with_lock do
       raise Umi::Shopify::CommerceError, 'redacted' if contact.additional_attributes['umi_profile_redacted']
@@ -13,11 +14,13 @@ class Umi::Shopify::ManualLinkService
           Umi::ConversationEvent.exists?(contact_id: contact.id, event_type: 'order_paid', redacted_at: nil))
         raise Umi::Shopify::CommerceError, 'customer_in_use'
       end
+      raise Umi::Shopify::CommerceError, 'customer_bound_elsewhere' if Umi::Shopify::CustomerBinding.bound_elsewhere?(contact, customer.fetch('id'))
 
       attributes = contact.additional_attributes.except(*Umi::Shopify::CustomerContactMapper::SHOPIFY_KEYS)
       contact.update!(additional_attributes: attributes.merge('shopify_customer_id' => customer.fetch('id')))
     end
   end
+  # rubocop:enable Metrics/AbcSize, Metrics/CyclomaticComplexity
 
   def initialize(conversation:, actor:)
     @conversation = conversation

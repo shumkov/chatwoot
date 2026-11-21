@@ -98,6 +98,49 @@ RSpec.describe Umi::Shopify::ManualLinkService do
     expect(contact.reload.additional_attributes).to eq({ 'shopify_customer_id' => '42', 'other' => 'preserved' })
   end
 
+  # One Shopify customer bound to two contacts makes every paid event of that
+  # customer ambiguous, so a second binding is refused rather than written.
+  it 'refuses to bind a customer another contact already carries' do
+    other = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => 42 })
+    contact = conversation.contact
+    expect { described_class.link_customer(contact, { 'id' => '42' }) }
+      .to raise_error(Umi::Shopify::CommerceError, 'customer_bound_elsewhere')
+    expect(contact.reload.additional_attributes).not_to have_key('shopify_customer_id')
+    expect(other.reload.additional_attributes['shopify_customer_id']).to eq(42)
+  end
+
+  it 'refuses to move a contact onto a customer another contact already carries' do
+    create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+    contact = conversation.contact
+    contact.update!(additional_attributes: { 'shopify_customer_id' => '99', 'shopify_tags' => 'vip' })
+    expect { described_class.link_customer(contact, { 'id' => '42' }) }
+      .to raise_error(Umi::Shopify::CommerceError, 'customer_bound_elsewhere')
+    expect(contact.reload.additional_attributes).to eq({ 'shopify_customer_id' => '99', 'shopify_tags' => 'vip' })
+  end
+
+  # The historical pairs stay as they are: re-linking a member to its own
+  # customer is a no-op, but a third contact cannot join.
+  it 'keeps an existing duplicate pair unchanged and refuses a third contact' do
+    first = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42', 'shopify_tags' => 'vip' })
+    second = create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => 42 })
+    expect { described_class.link_customer(first, { 'id' => '42' }) }.not_to raise_error
+    expect { described_class.link_customer(second, { 'id' => '42' }) }.not_to raise_error
+    expect(first.reload.additional_attributes).to eq({ 'shopify_customer_id' => '42', 'shopify_tags' => 'vip' })
+    expect(second.reload.additional_attributes).to eq({ 'shopify_customer_id' => 42 })
+    expect { described_class.link_customer(conversation.contact, { 'id' => '42' }) }
+      .to raise_error(Umi::Shopify::CommerceError, 'customer_bound_elsewhere')
+  end
+
+  it 'does not link a purchase whose customer is bound to another contact' do
+    create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+    expect { service.link(order) }.to raise_error(Umi::Shopify::CommerceError, 'customer_bound_elsewhere')
+    expect { service.link(order.merge('kind' => 'draft', 'id' => '10')) }
+      .to raise_error(Umi::Shopify::CommerceError, 'customer_bound_elsewhere')
+    expect(Umi::ShopifyOrderAttribution.count).to eq(0)
+    expect(Umi::ShopifyDraftLink.count).to eq(0)
+    expect(conversation.contact.reload.additional_attributes).not_to have_key('shopify_customer_id')
+  end
+
   it 'cannot revive an unlinked order erased before its first financial read' do
     link = service.link(order)
     service.unlink('order', '123')
@@ -131,7 +174,9 @@ RSpec.describe Umi::Shopify::ManualLinkService do
     old_contact = old_chat.contact
     old_service = described_class.new(conversation: old_chat, actor: actor)
     new_service = described_class.new(conversation: new_chat, actor: actor)
-    draft = { 'kind' => 'draft', 'id' => '101', 'name' => '#D101', 'customer' => { 'id' => '42' } }
+    # Customerless: moving a customer's draft onto a second contact would bind
+    # that customer twice, which is refused; this example is about the stale screen.
+    draft = { 'kind' => 'draft', 'id' => '101', 'name' => '#D101', 'customer' => nil }
     link = old_service.link(draft)
     moved = false
     allow(old_contact).to receive(:with_lock).and_wrap_original do |original, *args, &block|

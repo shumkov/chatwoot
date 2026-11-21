@@ -36,6 +36,14 @@ RSpec.describe Umi::Shopify::DraftLinkReconcileJob do
     expect(Umi::ShopifyOrderAttribution.count).to eq(0)
   end
 
+  it 'holds the draft for review when its customer is bound to another contact' do
+    create(:contact, account: account, additional_attributes: { 'shopify_customer_id' => '42' })
+    described_class.perform_now(link.id)
+    expect(link.reload).to have_attributes(status: 'conflict', last_error: 'customer_bound_elsewhere')
+    expect(Umi::ShopifyOrderAttribution.count).to eq(0)
+    expect(conversation.contact.reload.additional_attributes).not_to have_key('shopify_customer_id')
+  end
+
   it 'does not revive a draft that the operator unlinked during the Shopify read' do
     allow(reader).to receive(:fetch).with('draft', '10') do
       link.update!(status: 'unlinked')

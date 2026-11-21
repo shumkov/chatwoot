@@ -480,6 +480,7 @@
         "ERRORS": {
           "customer_mismatch": "The Shopify customer does not match this contact. Check the selected customer and order.",
           "customer_in_use": "This customer has linked drafts, orders or recorded payments. Correct those links before changing the customer.",
+          "customer_bound_elsewhere": "This Shopify customer is already linked to another contact, so nothing was linked here. Leave the purchase unlinked and ask maintenance if the link belongs on this contact.",
           "already_linked": "This purchase is already linked to another conversation. Remove its unpaid link there first.",
           "missing_draft_scope": "Drafts need Shopify draft-order read access. Customer and order linking are still available.",
           "access_denied": "Shopify did not grant access to this record. Drafts require draft-order read access.",
