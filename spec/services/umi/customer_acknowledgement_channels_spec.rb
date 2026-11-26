@@ -219,9 +219,11 @@ RSpec.describe Umi::CustomerAcknowledgement do
     expect(first.conversation.messages.template.count).to eq(1)
     create(:message, conversation: first.conversation, message_type: :outgoing,
                      sender: create(:user, account: account), content: 'Working on it.')
-    travel 6.minutes
+    # More than 12 hours after the reply, so a new wait rather than a continuation, in the daytime.
+    travel 12.hours + 1.minute
     third = create(:message, conversation: first.conversation, message_type: :incoming, content: 'Another question')
-    Umi::CustomerAcknowledgementJob.new.perform(third.id, new_generation, 'night')
+    travel 5.minutes
+    Umi::CustomerAcknowledgementJob.new.perform(third.id, new_generation, 'day')
     expect(first.conversation.messages.template.count).to eq(2)
   end
 

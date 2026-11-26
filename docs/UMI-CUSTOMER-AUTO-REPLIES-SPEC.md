@@ -19,9 +19,9 @@ Sources: Chatwoot business-hours guide https://app.chatwoot.com/hc/user-guide/ar
 ## Behavior
 
 - Schedule is daily 09:00–21:00 Asia/Bangkok, read from the configured inbox.
-- Night: on a new eligible incoming message outside business hours, acknowledge immediately unless that unanswered burst already has an acknowledgement or a successful public human reply occurred within the last five minutes. No midnight repeat. A later new incoming message can receive the away acknowledgement after the active-exchange suppression expires.
+- Night: on a new eligible incoming message outside business hours, acknowledge immediately unless that unanswered burst already has an acknowledgement or a successful public human reply occurred within the last five minutes. No midnight repeat. A later new incoming message can receive the away acknowledgement after the active-exchange suppression expires, unless it continues a reply from the last 12 hours or carries only symbols (`docs/UMI-CUSTOMER-ACK-CONTINUATION-SPEC.md`).
 - Day: each new public incoming message may schedule a check five minutes later. At execution, re-read current conversation and messages. Send only during business hours, for an open conversation, when the current incoming burst has waited at least five minutes and has not received a successful public human response or a previous acknowledgement in either mode. A fresh daytime message after an unanswered night acknowledgement does not produce another acknowledgement; the operator still owes the original answer. Additional incoming messages do not restart the five-minute clock or create repeated acknowledgements.
-- A genuine public human reply ends that burst; a later customer question may begin a new one. Private notes, classification notes, bot messages and template acknowledgements do not end the burst.
+- A genuine public human reply ends that burst; a later customer message begins a new one, which is acknowledged only if its first message comes more than 12 hours after that reply and it carries more than symbols (`docs/UMI-CUSTOMER-ACK-CONTINUATION-SPEC.md`). Private notes, classification notes, bot messages and template acknowledgements do not end the burst.
 - Resolve/Snooze cancels the pending day acknowledgement; reopening without a new incoming message does not replay it. Night messages get their away reply, with no extra catch-up acknowledgement at 09:05. A day check that runs after closing time does not send.
 - Ignore private messages, automatic emails, deleted/recovered messages, activity and bot messages as triggers. Pure Instagram story mentions/system share events must not receive either acknowledgement; a customer's actual text/question following the share can trigger it. Existing spam-labelled conversations are excluded.
 - Only messages arriving after activation trigger jobs. Configuration stores an activation timestamp and allowed inbox IDs; pending jobs are tied to that activation timestamp so a later activation cannot replay old work. A delayed job older than the standard messaging window is discarded. Feature disable/inbox removal cancels pending sends.
@@ -89,6 +89,8 @@ Inherited transport limitation: native Instagram echo deduplication assumes the 
 **Automatic acknowledgements (Facebook and Instagram)**
 
 Customers receive a short automatic confirmation immediately outside 09:00–21:00 Bangkok, or after five minutes during those hours if no team member has answered. It is sent once while the customer is waiting; extra messages do not trigger repeated apologies. A new question after a team member answers can start a new wait. Pure story mentions and known spam are excluded.
+
+The sentence about a new question starting a new wait is superseded by `docs/UMI-CUSTOMER-ACK-CONTINUATION-SPEC.md`, which carries the proposed replacement wording.
 
 This automatic message is not your reply. Read the actual question, answer it, and finish any promised check. The five-minute human-response target and Telegram reminders keep running. Resolve when finished; Snooze when intentionally postponing. Do not enable a second away/instant reply in Meta Business Suite.
 

@@ -10,6 +10,14 @@ class Umi::CustomerAcknowledgement
                "เราจะกลับมาตอบข้อความตั้งแต่เวลา 09:00 น. ค่ะ\n\n" \
                'Thank you for contacting UMI. Our team is available daily, 09:00–21:00 Bangkok time. ' \
                'We’ll be back to reply from 09:00.'
+  # A burst whose first eligible message follows a human-direction reply in the
+  # same conversation within this window continues that exchange.
+  CONTINUATION_WINDOW = 12.hours
+  # Any of these makes a message a possible nudge on an unanswered question.
+  QUESTION_MARKS = '?？﹖¿؟‽⁇⁈⁉❓❔'
+  # Text that carries no words, digits or question: punctuation, symbols, emoji
+  # and the invisible characters emoji sequences are built from.
+  SYMBOL_TEXT = /\A[\p{P}\p{S}\p{Extended_Pictographic}\p{Space}\p{Cf}\u{FE0E}\u{FE0F}\u{20E3}]*\z/
 
   def self.configuration
     InstallationConfig.find_by(name: CONFIG_NAME)&.value
@@ -64,10 +72,44 @@ class Umi::CustomerAcknowledgement
     return unless first
     return if mode == 'day' && first.created_at > 5.minutes.ago
     return if mode == 'night' && recent_human_reply?
+    return if continuation?(first) || symbols_only?(messages)
 
     @conversation.messages.create!(account_id: @conversation.account_id, inbox_id: @inbox.id,
                                    message_type: :template, content: mode == 'day' ? DAY_COPY : NIGHT_COPY,
                                    content_attributes: { MARKER => { mode: mode, first_message_id: first.id } })
+  end
+
+  # Judged from the burst's first eligible message, not from execution time, so
+  # a burst that starts as a continuation stays one however late its jobs run.
+  # The whole conversation counts: the resolve/snooze boundary and the
+  # activation time bound the burst, not this history.
+  def continuation?(first)
+    @conversation.messages.where(message_type: :outgoing, private: false,
+                                 created_at: (first.created_at - CONTINUATION_WINDOW)..first.created_at)
+                 .includes(:sender).any? { |item| successful_human?(item) }
+  end
+
+  # Every public incoming row of the burst counts, including events that
+  # cannot trigger an acknowledgement themselves (recovered rows, pure story
+  # events), so their content and media are judged too. Deleted and
+  # unsupported rows carry content nobody can read, so they block the veto.
+  def symbols_only?(messages) # rubocop:disable Metrics/CyclomaticComplexity
+    inputs = messages.select { |item| item.incoming? && !item.private? && !item.auto_reply_email? }
+    inputs.none? { |item| item.content_attributes['deleted'] || item.content_attributes['is_unsupported'] } &&
+      inputs.all? { |item| symbol_only?(item) }
+  end
+
+  # Only a story reply's own story attachment is context; any other attachment,
+  # stickers included (they arrive as images), is substantive.
+  def symbol_only?(message) # rubocop:disable Metrics/CyclomaticComplexity
+    story_reply = message.content_attributes['image_type'] == 'ig_story_reply'
+    return false unless message.attachments.all? { |attachment| story_reply && attachment.file_type == 'ig_story' }
+    # Blank text without even a story attachment is content Chatwoot failed to
+    # read (for example a media download that failed), not symbols.
+    return false if message.content.blank? && message.attachments.empty?
+
+    text = message.content.to_s
+    !text.match?(/[\p{L}\p{N}]/) && text.count(QUESTION_MARKS).zero? && text.match?(SYMBOL_TEXT)
   end
 
   def recent_human_reply?
@@ -91,7 +133,7 @@ class Umi::CustomerAcknowledgement
   def current_messages
     boundary = @conversation.additional_attributes.fetch(BOUNDARY, 0)
     messages = @conversation.messages.where('id > ?', boundary).where(created_at: @started_at..)
-                            .includes(:sender, :attachments).order(:created_at, :id).to_a
+                            .includes(:sender, :attachments, :inbox).order(:created_at, :id).to_a
     last_human = messages.reverse.find { |item| successful_human?(item) }
     return messages unless last_human
 
