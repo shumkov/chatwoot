@@ -274,6 +274,66 @@ RSpec.describe 'Umi::ShumabitReply::Loader' do
     end
   end
 
+  # English assistance lives only in the private note: the marker may carry the customer's and the reply's English
+  # translations next to the staff text, but the composer gets the customer-language reply and nothing else, whether
+  # the translations are valid, missing or malformed. The case is the bridge's synthetic English-assistance loader
+  # fixture; database ids and the cutoff are mapped as in the membership cases below.
+  describe 'shared English assistance case' do
+    let(:fixture) do
+      { cutoff: 50, source: { content: 'มีไซซ์ M ไหมคะ', at: 70 }, note_at: 200, reply: 'มีค่ะ',
+        customer_english: [{ 'language' => 'other', 'english' => 'Is size M available?' }],
+        reply_english: { 'language' => 'other', 'english' => 'It is available.' },
+        must_not_expose: ['customer_english', 'reply_english', 'Is size M available?', 'It is available.'] }
+    end
+
+    it 'loads only marker.reply for valid, missing and malformed translations, never a translation or the staff text' do
+      malformed = { 'language' => 'french', 'english' => 'Is size M available?', 'extra' => 1 }
+      variants = {
+        valid: lambda { |id|
+          { 'customer_english' => fixture[:customer_english].map do |entry|
+            entry.merge('id' => id)
+          end, 'reply_english' => fixture[:reply_english] }
+        },
+        missing: ->(_id) { {} },
+        malformed: ->(id) { { 'customer_english' => [malformed.merge('id' => id)] * 2, 'reply_english' => ['It is available.'] } }
+      }
+      staff_texts = [nil, 'Stock checked in Shopify.']
+      InstallationConfig.find_by(name: 'UMI_SHUMABIT_REPLY').update!(value: { 'inbox_ids' => [inbox.id],
+                                                                              'eligible_after_ms' => fixture[:cutoff] * 1000 })
+
+      variants.to_a.product(staff_texts).each do |(name, english), staff|
+        Message.where(conversation: conversation).destroy_all
+        source = create(:message, conversation: conversation, message_type: :incoming, sender: contact,
+                                  content: fixture[:source][:content], created_at: Time.zone.at(fixture[:source][:at]))
+        marker = { 'source_message_id' => source.id, 'policy_version' => 'draft-v1', 'contract' => 'assist-v1', 'outcome' => 'reply',
+                   'row_key' => "#{account.id}:#{source.id}", 'covered_message_ids' => [source.id], 'eligible_after' => fixture[:cutoff],
+                   'seen_digest' => evidence_class.seen_digest([source.id]), 'reply' => fixture[:reply], 'staff' => staff }
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, content: 'Shumabit draft',
+                         created_at: Time.zone.at(fixture[:note_at]),
+                         content_attributes: { 'shumabit_bridge' => true, 'shumabit_draft' => marker.merge(english.call(source.id)) })
+
+        answer = loader.new(conversation: conversation.reload, config: Umi::ShumabitReply::Configuration.current, mode: :tap).call
+
+        expect([answer.http, answer.body]).to eq([200, { message: fixture[:reply] }]), "#{name} staff=#{staff.inspect}"
+        (fixture[:must_not_expose] + [staff].compact).each do |text|
+          expect(answer.body.to_json).not_to include(text), "#{name}: #{text}"
+        end
+      end
+    end
+
+    it 'gives no text for an outcome without a reply, even when it carries the customer translation' do
+      bridge_note(covered: [question.id], outcome: 'needs_staff',
+                  extra: { 'staff' => 'Price unknown.',
+                           'customer_english' => [{ 'id' => question.id, 'language' => 'other', 'english' => 'How much is it?' }] })
+
+      answer = loader.new(conversation: conversation, config: config, mode: :tap).call
+
+      expect(answer.code).to eq(:needs_staff)
+      expect(answer.body.to_json).not_to include('How much is it?')
+      expect(answer.body.to_json).not_to include('Price unknown.')
+    end
+  end
+
   # The seven synthetic cases shared with the bridge (shumabit-claude tools/chatwoot-bridge/test-support/assist-cases.cjs).
   # Fixture ids and times are kept apart: database ids follow the fixture id order, timestamps are the fixture times.
   describe 'shared membership cases' do

@@ -56,6 +56,29 @@ RSpec.describe 'Shumabit reply loader behind the native Suggest reply button', t
                      created_at: Time.zone.at(cutoff + 100), content_attributes: { 'shumabit_bridge' => true, 'shumabit_draft' => marker })
   end
 
+  it 'answers the tap with only the customer-language reply of a note that carries English translations' do
+    marker = { 'source_message_id' => question.id, 'policy_version' => 'draft-v1', 'contract' => 'assist-v1', 'outcome' => 'reply',
+               'row_key' => "#{account.id}:#{question.id}", 'covered_message_ids' => [question.id], 'eligible_after' => cutoff,
+               'seen_digest' => Digest::SHA256.hexdigest("assist-seen-v1:#{question.id}"), 'reply' => 'มีไซซ์ M ค่ะ',
+               'staff' => 'Stock checked in Shopify.',
+               'customer_english' => [{ 'id' => question.id, 'language' => 'other', 'english' => 'Do you have size M?' }],
+               'reply_english' => { 'language' => 'other', 'english' => 'We have size M.' } }
+    create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
+                     content: "Shumabit draft — review before sending:\nCustomer, in English:\nDo you have size M?\n\nReply to send:\n" \
+                              "มีไซซ์ M ค่ะ\n\nReply, in English: We have size M.\n\nStaff only — not for the customer: Stock checked in Shopify.",
+                     created_at: Time.zone.at(cutoff + 100), content_attributes: { 'shumabit_bridge' => true, 'shumabit_draft' => marker })
+
+    headers = signed_in(admin)
+    hidden = ['Do you have size M?', 'We have size M.', 'Stock checked', 'Reply to send', 'in English', 'english']
+    [-> { tap(headers) }, -> { get completion_path, headers: headers }].each do |request|
+      request.call
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body).to eq('message' => 'มีไซซ์ M ค่ะ')
+      hidden.each { |text| expect(response.body).not_to include(text) }
+    end
+  end
+
   def active_status
     { status: 200, headers: { 'Content-Type' => 'application/json' },
       body: { draft_status: 'running', terminal_reason: nil, note_id: nil, disposition: nil, validation_code: nil, output_bytes: nil,
