@@ -274,6 +274,178 @@ RSpec.describe 'Umi::ShumabitReply::Loader' do
     end
   end
 
+  # English assistance lives only in the private note: the marker may carry the customer's and the reply's English
+  # translations next to the staff text, but the composer gets the customer-language reply and nothing else, whether
+  # the translations are valid, missing or malformed. The case is the bridge's synthetic English-assistance loader
+  # fixture; database ids and the cutoff are mapped as in the membership cases below.
+  describe 'shared English assistance case' do
+    let(:fixture) do
+      { cutoff: 50, source: { content: 'มีไซซ์ M ไหมคะ', at: 70 }, note_at: 200, reply: 'มีค่ะ',
+        customer_english: [{ 'language' => 'other', 'english' => 'Is size M available?' }],
+        reply_english: { 'language' => 'other', 'english' => 'It is available.' },
+        must_not_expose: ['customer_english', 'reply_english', 'Is size M available?', 'It is available.'] }
+    end
+
+    it 'loads only marker.reply for valid, missing and malformed translations, never a translation or the staff text' do
+      malformed = { 'language' => 'french', 'english' => 'Is size M available?', 'extra' => 1 }
+      variants = {
+        valid: lambda { |id|
+          { 'customer_english' => fixture[:customer_english].map do |entry|
+            entry.merge('id' => id)
+          end, 'reply_english' => fixture[:reply_english] }
+        },
+        missing: ->(_id) { {} },
+        malformed: ->(id) { { 'customer_english' => [malformed.merge('id' => id)] * 2, 'reply_english' => ['It is available.'] } }
+      }
+      staff_texts = [nil, 'Stock checked in Shopify.']
+      InstallationConfig.find_by(name: 'UMI_SHUMABIT_REPLY').update!(value: { 'inbox_ids' => [inbox.id],
+                                                                              'eligible_after_ms' => fixture[:cutoff] * 1000 })
+
+      variants.to_a.product(staff_texts).each do |(name, english), staff|
+        Message.where(conversation: conversation).destroy_all
+        source = create(:message, conversation: conversation, message_type: :incoming, sender: contact,
+                                  content: fixture[:source][:content], created_at: Time.zone.at(fixture[:source][:at]))
+        marker = { 'source_message_id' => source.id, 'policy_version' => 'draft-v1', 'contract' => 'assist-v1', 'outcome' => 'reply',
+                   'row_key' => "#{account.id}:#{source.id}", 'covered_message_ids' => [source.id], 'eligible_after' => fixture[:cutoff],
+                   'seen_digest' => evidence_class.seen_digest([source.id]), 'reply' => fixture[:reply], 'staff' => staff }
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, content: 'Shumabit draft',
+                         created_at: Time.zone.at(fixture[:note_at]),
+                         content_attributes: { 'shumabit_bridge' => true, 'shumabit_draft' => marker.merge(english.call(source.id)) })
+
+        answer = loader.new(conversation: conversation.reload, config: Umi::ShumabitReply::Configuration.current, mode: :tap).call
+
+        expect([answer.http, answer.body]).to eq([200, { message: fixture[:reply] }]), "#{name} staff=#{staff.inspect}"
+        (fixture[:must_not_expose] + [staff].compact).each do |text|
+          expect(answer.body.to_json).not_to include(text), "#{name}: #{text}"
+        end
+      end
+    end
+
+    it 'gives no text for an outcome without a reply, even when it carries the customer translation' do
+      bridge_note(covered: [question.id], outcome: 'needs_staff',
+                  extra: { 'staff' => 'Price unknown.',
+                           'customer_english' => [{ 'id' => question.id, 'language' => 'other', 'english' => 'How much is it?' }] })
+
+      answer = loader.new(conversation: conversation, config: config, mode: :tap).call
+
+      expect(answer.code).to eq(:needs_staff)
+      expect(answer.body.to_json).not_to include('How much is it?')
+      expect(answer.body.to_json).not_to include('Price unknown.')
+    end
+  end
+
+  # A staff request can make Shumabit post a revision R of the current draft T. R names T's customer messages (for a
+  # re-issued T, also the messages of T's origin), carries T's seen digest and revision_of, and its row key is the staff
+  # note's. The loader needs no rule for it: the newest current note wins. The cases are the bridge's synthetic
+  # staff-direction loader fixture; database ids and the cutoff are mapped as in the membership cases below.
+  describe 'shared staff direction cases' do
+    let(:texts) do
+      { draft: 'มีค่ะ', revised: 'มีค่ะ ขอเช็กสต็อกก่อนนะคะ', staff: 'Verify current stock.',
+        revised_staff: 'Verify current stock; shorter wording follows the staff request.',
+        customer_english: 'Is size M available?', reply_english: 'It is available.' }
+    end
+
+    before do
+      InstallationConfig.find_by(name: 'UMI_SHUMABIT_REPLY').update!(value: { 'inbox_ids' => [inbox.id], 'eligible_after_ms' => 50_000 })
+    end
+
+    def customer(at)
+      create(:message, conversation: conversation, message_type: :incoming, sender: contact, content: 'มีไซซ์ M ไหมคะ',
+                       created_at: Time.zone.at(at))
+    end
+
+    # A revision (extra carries revision_of) has the revised reply and staff text; every other note has the draft's.
+    def draft(at:, covered:, row: covered.max, extra: {})
+      revised = extra.key?('revision_of')
+      marker = { 'policy_version' => 'draft-v1', 'contract' => 'assist-v1', 'row_key' => "#{account.id}:#{row}",
+                 'source_message_id' => covered.max, 'covered_message_ids' => covered.sort, 'eligible_after' => 50,
+                 'seen_digest' => evidence_class.seen_digest(covered), 'outcome' => 'reply',
+                 'reply' => texts[revised ? :revised : :draft], 'staff' => texts[revised ? :revised_staff : :staff],
+                 'customer_english' => [{ 'id' => covered.min, 'language' => 'other', 'english' => texts[:customer_english] }],
+                 'reply_english' => { 'language' => 'other', 'english' => texts[:reply_english] } }.merge(extra)
+      create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, content: 'Shumabit draft',
+                       created_at: Time.zone.at(at), content_attributes: { 'shumabit_bridge' => true, 'shumabit_draft' => marker })
+    end
+
+    # A signed-in request is created the way the messages request marks it; a token one carries no mark.
+    def staff_request(at, signed_in:)
+      build = lambda do
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
+                         content: '@shumabit make it shorter', created_at: Time.zone.at(at))
+      end
+      request = signed_in ? Umi::SignedInNoteProvenance.signed_in_sender(bridge.id, &build) : build.call
+      expect(request.reload.content_attributes['umi_signed_in_sender_id']).to eq(signed_in ? bridge.id : nil)
+      request
+    end
+
+    def answer
+      loader.new(conversation: conversation.reload, config: Umi::ShumabitReply::Configuration.current, mode: :tap).call
+    end
+
+    def expect_message(text)
+      result = answer
+      expect([result.http, result.body]).to eq([200, { message: text }])
+      [texts[:staff], texts[:revised_staff], texts[:customer_english], texts[:reply_english], 'customer_english', 'reply_english',
+       '"staff"'].each { |hidden| expect(result.body.to_json).not_to include(hidden) }
+    end
+
+    it 'serves the newest verified revision, and the target again only once the revision is deleted' do
+      question = customer(70)
+      request = staff_request(130, signed_in: true)
+      target = draft(at: 200, covered: [question.id])
+      expect_message(texts[:draft])
+
+      revision = draft(at: 201, covered: [question.id], row: request.id, extra: { 'revision_of' => target.id })
+      expect_message(texts[:revised])
+
+      revision.update!(content_attributes: { 'deleted' => true })
+      expect_message(texts[:draft])
+    end
+
+    it 'keeps serving the revision when its target is deleted' do
+      question = customer(70)
+      request = staff_request(130, signed_in: true)
+      target = draft(at: 200, covered: [question.id])
+      draft(at: 201, covered: [question.id], row: request.id, extra: { 'revision_of' => target.id })
+
+      target.update!(content_attributes: { 'deleted' => true })
+
+      expect_message(texts[:revised])
+    end
+
+    it 'serves the target while a revision is in flight or after a failed one, whatever the staff note carries' do
+      question = customer(70)
+      draft(at: 200, covered: [question.id])
+
+      [true, false].each do |signed_in|
+        request = staff_request(130, signed_in: signed_in)
+        expect_message(texts[:draft])
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
+                         content: 'Shumabit: could not finish this request (error); the current draft is unchanged.',
+                         created_at: Time.zone.at(202), content_attributes: { 'shumabit_bridge' => true })
+        expect_message(texts[:draft])
+        request.destroy!
+      end
+    end
+
+    it "serves a revision of a re-issued draft, which also names the origin's question" do
+      question = customer(70)
+      thanks = customer(80)
+      request = staff_request(130, signed_in: true)
+      origin = draft(at: 200, covered: [question.id])
+      reissue = draft(at: 201, covered: [thanks.id],
+                      extra: { 'outcome' => 'still_applies', 'origin_note_id' => origin.id, 'origin_covered_message_ids' => [question.id],
+                               'origin_created_at' => 200, 'seen_digest' => evidence_class.seen_digest([question.id, thanks.id]),
+                               'customer_english' => [{ 'id' => question.id, 'language' => 'other',
+                                                        'english' => texts[:customer_english] }] })
+      expect_message(texts[:draft])
+
+      draft(at: 202, covered: [question.id, thanks.id], row: request.id, extra: { 'revision_of' => reissue.id })
+
+      expect_message(texts[:revised])
+    end
+  end
+
   # The seven synthetic cases shared with the bridge (shumabit-claude tools/chatwoot-bridge/test-support/assist-cases.cjs).
   # Fixture ids and times are kept apart: database ids follow the fixture id order, timestamps are the fixture times.
   describe 'shared membership cases' do

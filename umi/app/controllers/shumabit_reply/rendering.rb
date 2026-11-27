@@ -7,6 +7,8 @@
 # access token, and a devise client that belongs to one of the user's session rows) and must be allowed to open the
 # conversation natively. A refusal is a 403, never a Pundit error, so the mobile app is not logged out.
 module Umi::ShumabitReply::Rendering
+  include Umi::Conversations::SignedInSession
+
   LOG_TAG = '[umi-shumabit-reply]'
 
   private
@@ -40,9 +42,7 @@ module Umi::ShumabitReply::Rendering
   end
 
   def shumabit_reply_caller?(conversation)
-    return false if authenticate_by_access_token? || !Current.user.is_a?(User)
-
-    client = @token&.client
-    client.present? && Current.user.user_sessions.exists?(client_id: client) && policy(conversation).show?
+    user, client = signed_in_session_candidate
+    user.present? && signed_in_session?(user, client) && policy(conversation).show?
   end
 end
