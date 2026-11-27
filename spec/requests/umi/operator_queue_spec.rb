@@ -116,6 +116,29 @@ RSpec.describe 'UMI operator queue', type: :request do
     expect(response).to have_http_status(:unauthorized)
   end
 
+  it 'omits unsent Shumabit drafts from the list and detail JSON but keeps staff notes by the same shared user', :aggregate_failures do
+    bridge = create(:user, account: account)
+    incoming = create(:message, conversation: conversation, message_type: :incoming)
+    with_modified_env UMI_COMMERCE_BRIDGE_USER_ID: bridge.id.to_s do
+      get "#{url}/#{conversation.reload.display_id}", params: { since: since }, headers: user.create_new_auth_token
+      before = response.parsed_body['conversation']['revision']
+      create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
+                       content: 'Shumabit draft — review before sending: we will ship it tomorrow.',
+                       content_attributes: { shumabit_bridge: true, shumabit_draft: { source_message_id: incoming.id, policy_version: 'draft-v1' } })
+      get "#{url}/#{conversation.display_id}", params: { since: since }, headers: user.create_new_auth_token
+      expect(response.parsed_body['conversation']['messages'].pluck('id')).to eq([incoming.id])
+      expect(response.parsed_body['conversation']['revision']).to eq(before)
+      expect(response.body).not_to include('we will ship it tomorrow')
+      get url, params: { since: since }, headers: user.create_new_auth_token
+      expect(response.parsed_body['conversations'].sole['revision']).to eq(before)
+
+      staff = create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, content: 'Courier booked')
+      get "#{url}/#{conversation.display_id}", params: { since: since }, headers: user.create_new_auth_token
+      expect(response.parsed_body['conversation']['messages'].last).to include('id' => staff.id, 'private' => true, 'human' => true)
+      expect(response.parsed_body['conversation']['revision']).not_to eq(before)
+    end
+  end
+
   it 'requires a valid activation boundary and valid cursors' do
     [{}, { since: 'invalid' }, { since: since, after_id: '-1' }, { since: since, through_id: '1x' }].each do |parameters|
       get url, params: parameters, headers: user.create_new_auth_token

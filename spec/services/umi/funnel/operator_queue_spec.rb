@@ -709,4 +709,86 @@ RSpec.describe 'Umi::Funnel::OperatorQueue' do
     expect(second[:next_after_id]).to be_nil
     expect(first[:conversations].pluck(:id) & second[:conversations].pluck(:id)).to be_empty
   end
+
+  # The Shumabit bridge posts unsent reply drafts as private notes through the same User account staff also use.
+  # A draft is a suggestion: it must never reach the reminder consumers as staff evidence, a promise or a schedule.
+  describe 'Shumabit draft notes' do
+    let(:bridge) { create(:user, account: account) }
+    let!(:incoming) { create(:message, conversation: conversation, message_type: :incoming, content: 'Can you ship today?', created_at: start) }
+    let(:draft_marker) { { source_message_id: incoming.id, policy_version: 'draft-v1' } }
+
+    around do |example|
+      with_modified_env(UMI_COMMERCE_BRIDGE_USER_ID: bridge.id.to_s) { example.run }
+    end
+
+    it 'does not export an unsent draft as a human message, a revision change or a factual reply', :aggregate_failures do
+      before = queue.show(conversation.reload.display_id)[:conversation]
+      create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, created_at: start + 1.minute,
+                       content: "Shumabit draft — review before sending:\nWe will ship it tomorrow.",
+                       content_attributes: { shumabit_bridge: true, shumabit_draft: draft_marker })
+      detail = queue.show(conversation.display_id)[:conversation]
+      expect(detail[:messages].pluck(:id)).to eq([incoming.id])
+      expect(detail[:revision]).to eq(before[:revision])
+      expect(queue.index[:conversations].sole[:revision]).to eq(before[:revision])
+      expect(detail[:waiting]).to eq(before[:waiting])
+      expect(detail[:waiting]).to include(message_id: incoming.id)
+    end
+
+    it 'excludes every draft-path note shape: discovery, staff-review-only and assist outcomes' do
+      [{ shumabit_draft: draft_marker, shumabit_discovery_suggestion: true },
+       { shumabit_draft: draft_marker.merge(contract: 'assist-v1', outcome: 'needs_staff', covered_after: 0, covered_through: incoming.id) },
+       { shumabit_draft: draft_marker }].each_with_index do |attributes, index|
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, created_at: start + index.minutes,
+                         content: "Shumabit — staff review only\nCheck stock #{index}",
+                         content_attributes: attributes.merge(shumabit_bridge: true))
+      end
+      expect(queue.show(conversation.reload.display_id)[:conversation][:messages].pluck(:id)).to eq([incoming.id])
+    end
+
+    it 'keeps genuine staff notes, mention answers and receipts from the same shared user as human evidence' do
+      before = queue.show(conversation.reload.display_id)[:conversation][:revision]
+      notes = [{}, { shumabit_bridge: true }, { shumabit_bridge: true, shumabit_commerce: { source_message_id: incoming.id } }].map do |attributes|
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, created_at: start + 1.minute,
+                         content: 'Courier booked for tomorrow', content_attributes: attributes)
+      end
+      detail = queue.show(conversation.display_id)[:conversation]
+      expect(detail[:messages].pluck(:id)).to eq([incoming.id] + notes.map(&:id))
+      expect(detail[:messages].drop(1)).to all(include(private: true, direction: 'outgoing', human: true))
+      expect(detail[:revision]).not_to eq(before)
+    end
+
+    it 'keeps a draft marker that is not a private note posted by the bridge user with an object marker' do
+      agent_note = create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: agent, created_at: start + 1.minute,
+                                    content: 'Copied draft', content_attributes: { shumabit_bridge: true, shumabit_draft: draft_marker })
+      scalar_marker = create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
+                                       created_at: start + 2.minutes, content: 'Scalar',
+                                       content_attributes: { shumabit_bridge: true, shumabit_draft: 'draft-v1' })
+      unbridged = create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, created_at: start + 3.minutes,
+                                   content: 'Unbridged', content_attributes: { shumabit_draft: draft_marker })
+      public_reply = create(:message, conversation: conversation, message_type: :outgoing, sender: bridge, created_at: start + 4.minutes,
+                                      content: 'Sent reply', content_attributes: { shumabit_bridge: true, shumabit_draft: draft_marker })
+      bot_note = create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: create(:agent_bot, id: bridge.id),
+                                  created_at: start + 5.minutes, content: 'Bot note',
+                                  content_attributes: { shumabit_bridge: true, shumabit_draft: draft_marker })
+      kept = [incoming, agent_note, scalar_marker, unbridged, public_reply, bot_note].map(&:id)
+      expect(queue.show(conversation.reload.display_id)[:conversation][:messages].pluck(:id)).to eq(kept)
+    end
+
+    it 'excludes nothing when the bridge user is not configured' do
+      draft = create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, created_at: start + 1.minute,
+                               content: 'Draft', content_attributes: { shumabit_bridge: true, shumabit_draft: draft_marker })
+      with_modified_env UMI_COMMERCE_BRIDGE_USER_ID: nil do
+        expect(queue.show(conversation.reload.display_id)[:conversation][:messages].pluck(:id)).to eq([incoming.id, draft.id])
+      end
+    end
+
+    it 'projects only the draft facts, never marker content' do
+      create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge, created_at: start + 1.minute,
+                       content: 'Draft', content_attributes: { shumabit_bridge: true, shumabit_draft: draft_marker })
+      queue.show(conversation.reload.display_id)
+      projected = queue.instance_variable_get(:@messages).values.flatten.map(&:content_attributes)
+      expect(projected.to_json).not_to include('draft-v1')
+      expect(projected.map { |attributes| attributes['shumabit_draft_object'] == true }).to eq([false, true])
+    end
+  end
 end
