@@ -367,10 +367,15 @@ RSpec.describe 'Umi::ShumabitReply::Loader' do
                        created_at: Time.zone.at(at), content_attributes: { 'shumabit_bridge' => true, 'shumabit_draft' => marker })
     end
 
+    # A signed-in request is created the way the messages request marks it; a token one carries no mark.
     def staff_request(at, signed_in:)
-      create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
-                       content: '@shumabit make it shorter', created_at: Time.zone.at(at),
-                       content_attributes: signed_in ? { 'umi_signed_in_sender_id' => bridge.id } : {})
+      build = lambda do
+        create(:message, conversation: conversation, message_type: :outgoing, private: true, sender: bridge,
+                         content: '@shumabit make it shorter', created_at: Time.zone.at(at))
+      end
+      request = signed_in ? Umi::SignedInNoteProvenance.signed_in_sender(bridge.id, &build) : build.call
+      expect(request.reload.content_attributes['umi_signed_in_sender_id']).to eq(signed_in ? bridge.id : nil)
+      request
     end
 
     def answer
@@ -430,7 +435,9 @@ RSpec.describe 'Umi::ShumabitReply::Loader' do
       origin = draft(at: 200, covered: [question.id])
       reissue = draft(at: 201, covered: [thanks.id],
                       extra: { 'outcome' => 'still_applies', 'origin_note_id' => origin.id, 'origin_covered_message_ids' => [question.id],
-                               'origin_created_at' => 200, 'seen_digest' => evidence_class.seen_digest([question.id, thanks.id]) })
+                               'origin_created_at' => 200, 'seen_digest' => evidence_class.seen_digest([question.id, thanks.id]),
+                               'customer_english' => [{ 'id' => question.id, 'language' => 'other',
+                                                        'english' => texts[:customer_english] }] })
       expect_message(texts[:draft])
 
       draft(at: 202, covered: [question.id, thanks.id], row: request.id, extra: { 'revision_of' => reissue.id })
