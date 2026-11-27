@@ -16,6 +16,7 @@
 # docs/UMI-FIRST-RESPONDER-CLAIM-SPEC.md.
 module Umi::Conversations::FirstResponderClaim
   extend ActiveSupport::Concern
+  include Umi::Conversations::SignedInSession
 
   CONFIG_NAME = 'UMI_FIRST_RESPONDER_CLAIM'
   LOG_TAG = '[umi-first-responder-claim]'
@@ -30,10 +31,7 @@ module Umi::Conversations::FirstResponderClaim
   # Recorded before the action, after authentication and authorisation, so code
   # inside the action that swaps Current.user cannot change who is answering.
   def capture_first_responder_session
-    return if authenticate_by_access_token? || !Current.user.is_a?(User)
-
-    @first_responder = Current.user
-    @first_responder_client = @token&.client
+    @first_responder, @first_responder_client = signed_in_session_candidate
   end
 
   def claim_for_first_responder
@@ -62,12 +60,12 @@ module Umi::Conversations::FirstResponderClaim
 
   # Cheap checks first; the configuration and the session row are read last.
   def first_responder_reply? # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
-    return false unless @first_responder && @first_responder_client.present? && response.status < 400
+    return false unless @first_responder && response.status < 400
     return false unless @message.outgoing? && !@message.private?
     return false unless @message.sender == @first_responder && @message.send(:human_response?)
     return false unless Array(InstallationConfig.find_by(name: CONFIG_NAME)&.value&.fetch('inbox_ids', nil)).include?(@conversation.inbox_id)
     return false unless @conversation.inbox.inbox_members.exists?(user_id: @first_responder.id)
 
-    @first_responder.user_sessions.exists?(client_id: @first_responder_client)
+    signed_in_session?(@first_responder, @first_responder_client)
   end
 end
