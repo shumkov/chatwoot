@@ -174,11 +174,13 @@ class Umi::Funnel::OperatorQueue
   end
 
   def message_metadata
-    # Message's store coder wraps its JSON as a string; select only timer facts, never embedded email bodies.
+    # Message's store coder wraps its JSON as a string; select only timer and draft-note facts, never embedded email
+    # bodies or draft marker content.
     attributes = "CASE WHEN json_typeof(content_attributes) = 'string' THEN (content_attributes #>> '{}')::json ELSE content_attributes END"
-    keys = %w[deleted umi_recovered external_created_at automation_rule_id external_echo]
+    keys = %w[deleted umi_recovered external_created_at automation_rule_id external_echo shumabit_bridge]
     pairs = keys.map { |key| "'#{key}', (#{attributes}) -> '#{key}'" }
     pairs << "'email', json_build_object('auto_reply', (#{attributes}) #> '{email,auto_reply}')"
+    pairs << "'shumabit_draft_object', json_typeof((#{attributes}) -> 'shumabit_draft') = 'object'"
     [Arel.sql("to_json(json_build_object(#{pairs.join(', ')})::text) AS content_attributes"),
      Arel.sql("jsonb_build_object('campaign_id', additional_attributes -> 'campaign_id') AS additional_attributes")]
   end
@@ -287,7 +289,15 @@ class Umi::Funnel::OperatorQueue
   end
 
   def visible_messages(conversation)
-    Array(@messages[conversation.id]).reject { |message| message.content_attributes['deleted'] }
+    Array(@messages[conversation.id]).reject { |message| message.content_attributes['deleted'] || shumabit_draft_note?(message) }
+  end
+
+  # The bridge posts its unsent draft-path notes (reply drafts, staff-review and assist outcomes) as private notes from
+  # the User account staff also use. They are suggestions, not staff evidence or promises; the bridge flag plus the
+  # object draft marker is what separates them from that user's real notes.
+  def shumabit_draft_note?(message)
+    message.private? && message.outgoing? && message.sender_type == 'User' && message.sender_id.to_s == ENV['UMI_COMMERCE_BRIDGE_USER_ID'] &&
+      message.content_attributes['shumabit_bridge'] == true && message.content_attributes['shumabit_draft_object'] == true
   end
 
   def message_rows(conversation, digest_content: false)
